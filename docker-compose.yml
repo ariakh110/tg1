@@ -1,0 +1,20 @@
+version: "4.42.1"
+services:
+  db:
+    image: postgres:16 # می توانید از نسخه های جدیدتر (مانند 14, 15, 16) استفاده کنید
+    environment:
+      POSTGRES_DB: alibackend_db # نام دیتابیس شما
+      POSTGRES_USER: ariakh # نام کاربری دیتابیس
+      POSTGRES_PASSWORD: 123456 # رمز عبور دیتابیس (در محیط پروداکشن از رمز عبور قوی و متغیرهای محیطی استفاده کنید)
+    volumes:
+      - pgdata:/var/lib/postgresql/data # داده ها را در یک volume پایدار ذخیره می کند
+    ports:
+      - "5432:5432" # پورت دیتابیس را به هاست مپ می کند (اختیاری است اگر فقط Django از آن استفاده کند)
+    healthcheck: # بررسی سلامت دیتابیس
+      test: ["CMD-SHELL", "pg_isready -U alibaba_user -d alibaba_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
