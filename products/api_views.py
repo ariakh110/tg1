@@ -1,8 +1,6 @@
 from django.db.models import Min
 from rest_framework import viewsets
-from rest_framework.response import Response
-
-from .models import Product, Offer, PricingTier
+from .models import Product
 from .serializers import ProductSummarySerializer  # فقط برای الهام، اینجا خلاصه می‌سازیم
 
 class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
