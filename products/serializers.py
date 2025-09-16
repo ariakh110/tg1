@@ -224,7 +224,17 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
         extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
 
+class ProductSummarySerializer(serializers.ModelSerializer):
+    min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    thumbnail = serializers.SerializerMethodField()
 
+    class Meta:
+        model = Product
+        fields = ["id", "name", "min_price", "thumbnail"]
+
+    def get_thumbnail(self, obj):
+        first_image = obj.images.first()
+        return self.context["request"].build_absolute_uri(first_image.image.url) if first_image else None
 # -------------------------
 # Utility: small factory mapping for views
 # -------------------------

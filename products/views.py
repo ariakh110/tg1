@@ -22,6 +22,7 @@ from .serializers import (
 )
 
 from .filters import ProductFilter, OfferFilter  
+from .permissions import IsAdminOrReadOnly, HasSellerProfile, IsOfferOwner
 
 # Pagination
 class StandardResultsSetPagination(PageNumberPagination):
@@ -34,7 +35,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     queryset = ProductCategory.objects.all()
     serializer_class = ProductCategorySerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["parent", "hscode"]
     search_fields = ["name", "hscode"]
@@ -45,11 +46,11 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.select_related("category").prefetch_related("images", "documents", "offers", "dynamic_specs") \
         .annotate(min_price=Min('offers__pricing_tiers__unit_price'))
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ProductFilter    
     search_fields = ["name", "short_description", "description", "slug"]
-    ordering_fields = ["created_at", "updated_at", "name"]
+    ordering_fields = ["created_at", "updated_at", "name","min_price"]
     pagination_class = StandardResultsSetPagination
 
     def get_serializer_class(self):
@@ -72,7 +73,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 # ---------- ProductSpecification ----------
 class ProductSpecificationViewSet(viewsets.ModelViewSet):
     queryset = ProductSpecification.objects.select_related("product", "standard")
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     serializer_class = ProductSpecificationSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["product", "steel_grade", "material_type"]
@@ -83,14 +84,14 @@ class ProductSpecificationViewSet(viewsets.ModelViewSet):
 class SpecificationAttributeViewSet(viewsets.ModelViewSet):
     queryset = SpecificationAttribute.objects.all()
     serializer_class = SpecificationAttributeSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     search_fields = ["name"]
 
 
 class SpecificationValueViewSet(viewsets.ModelViewSet):
     queryset = SpecificationValue.objects.select_related("product", "attribute")
     serializer_class = SpecificationValueSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["product", "attribute"]
     search_fields = ["value"]
@@ -100,7 +101,7 @@ class SpecificationValueViewSet(viewsets.ModelViewSet):
 class ProductImageViewSet(viewsets.ModelViewSet):
     queryset = ProductImage.objects.select_related("product")
     serializer_class = ProductImageSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["product", "is_featured"]
 
@@ -113,7 +114,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
 class ProductDocumentViewSet(viewsets.ModelViewSet):
     queryset = ProductDocument.objects.select_related("product")
     serializer_class = ProductDocumentSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["product"]
 
@@ -121,7 +122,7 @@ class ProductDocumentViewSet(viewsets.ModelViewSet):
 # ---------- Offer ----------
 class OfferViewSet(viewsets.ModelViewSet):
     queryset = Offer.objects.select_related("product", "seller").prefetch_related("pricing_tiers", "delivery_options")
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = OfferFilter
     search_fields = ["product__name", "seller__company_name"]
@@ -135,16 +136,43 @@ class OfferViewSet(viewsets.ModelViewSet):
 
     # when creating/updating, OfferWriteSerializer expects product and seller as PKs
     # no additional override needed here
-
+    def get_permissions(self):
+    # when creating/updating, OfferWriteSerializer expects product and seller as PKs
+        """
+    # no additional override needed here
+        - list/retrieve: AllowAny (inherited IsAuthenticatedOrReadOnly will permit)
+        - create: require authenticated + HasSellerProfile
+        - update/partial_update/destroy: require authenticated + IsOfferOwner
+        """
+        if self.action in ["list", "retrieve"]:
+            return [permissions.AllowAny()]
+        if self.action == "create":
+            return [permissions.IsAuthenticated(), HasSellerProfile()]
+        # for update/delete require ownership
+        return [permissions.IsAuthenticated(), IsOfferOwner()]
+    def perform_create(self, serializer):
+        """
+        هنگام ایجاد Offer، seller از روی request.user.seller_profile گرفته می‌شود.
+        """
+        user = self.request.user
+        if not hasattr(user, "seller_profile"):
+            raise PermissionError("User does not have a seller profile.")
+        seller = user.seller_profile
+        serializer.save(seller=seller)
 
 # ---------- PricingTier ----------
 class PricingTierViewSet(viewsets.ModelViewSet):
     queryset = PricingTier.objects.select_related("offer", "offer__product")
     serializer_class = PricingTierSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["offer", "offer__product"]
-
+    
+    def get_permissions(self):
+        # list/retrieve: any, write/remove: only owner of associated offer
+        if self.action in ["list", "retrieve"]:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), IsOfferOwner()]
     def create(self, request, *args, **kwargs):
         """
         PricingTier serializer marks 'offer' as read-only in the shared serializer.
@@ -155,6 +183,12 @@ class PricingTierViewSet(viewsets.ModelViewSet):
         if not offer_id:
             return Response({"detail": "offer (id) is required."}, status=status.HTTP_400_BAD_REQUEST)
         offer = get_object_or_404(Offer, pk=offer_id)
+        
+        # check ownership
+        user = request.user
+        if not (user.is_staff or user.is_superuser or (hasattr(user, "seller_profile") and offer.seller == user.seller_profile)):
+            return Response({"detail": "You are not the owner of this offer."}, status=status.HTTP_403_FORBIDDEN)
+        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         # pass offer explicitly to save (even if field set read_only)
@@ -168,16 +202,24 @@ class PricingTierViewSet(viewsets.ModelViewSet):
 class DeliveryLocationViewSet(viewsets.ModelViewSet):
     queryset = DeliveryLocation.objects.select_related("offer")
     serializer_class = DeliveryLocationSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["offer", "incoterm", "country"]
     search_fields = ["country", "city", "port"]
+    
+    def get_permissions(self):
+        if self.action in ["list", "retrieve"]:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), IsOfferOwner()]
 
     def create(self, request, *args, **kwargs):
         offer_id = request.data.get("offer") or request.data.get("offer_id")
         if not offer_id:
             return Response({"detail": "offer (id) is required."}, status=status.HTTP_400_BAD_REQUEST)
         offer = get_object_or_404(Offer, pk=offer_id)
+        user = request.user
+        if not (user.is_staff or user.is_superuser or (hasattr(user, "seller_profile") and offer.seller == user.seller_profile)):
+            return Response({"detail": "You are not the owner of this offer."}, status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(offer=offer)
@@ -189,7 +231,7 @@ class DeliveryLocationViewSet(viewsets.ModelViewSet):
 class ProductStandardViewSet(viewsets.ModelViewSet):
     queryset = ProductStandard.objects.all()
     serializer_class = ProductStandardSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     
 # # ---------- SellerViewSet ---------- 
 class SellerViewSet(viewsets.ModelViewSet):
@@ -198,3 +240,8 @@ class SellerViewSet(viewsets.ModelViewSet):
     filterset_fields = ['is_verified', 'business_type']
     search_fields = ['company_name', 'location']
     ordering_fields = ['created_at']
+    def get_permissions(self):
+        # anyone can list/retrieve sellers, but only admin can create/update/delete sellers
+        if self.action in ["list", "retrieve"]:
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]

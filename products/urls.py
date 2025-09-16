@@ -8,6 +8,8 @@ from .views import (
     OfferViewSet, PricingTierViewSet, DeliveryLocationViewSet,
     ProductDocumentViewSet, SellerViewSet
 )
+from .api_views import ProductSummaryViewSet
+
 
 router = DefaultRouter()
 router.register(r'products', ProductViewSet, basename='product')
@@ -22,7 +24,7 @@ router.register(r'offers', OfferViewSet, basename='offer')
 router.register(r'pricing-tiers', PricingTierViewSet, basename='pricingtier')
 router.register(r'delivery-locations', DeliveryLocationViewSet, basename='deliverylocation')
 router.register(r'sellers', SellerViewSet, basename='seller')
-
+router.register(r'products-summary', ProductSummaryViewSet, basename='product-summary')
 urlpatterns = [
     path('', include(router.urls)),
 ]
