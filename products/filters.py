@@ -4,6 +4,8 @@ from .models import Product, Offer
 class ProductFilter(filters.FilterSet):
     # filter on category id and active
     category = filters.NumberFilter(field_name='category', lookup_expr='exact')
+    # allow filtering by category name (case-insensitive)
+    category_name = filters.CharFilter(field_name='category__name', lookup_expr='iexact')
     is_active = filters.BooleanFilter(field_name='is_active')
 
     # filters on specifications (related one-to-one)
@@ -13,7 +15,7 @@ class ProductFilter(filters.FilterSet):
 
     class Meta:
         model = Product
-        fields = ['category', 'is_active', 'steel_grade', 'min_thickness', 'max_thickness']
+        fields = ['category', 'category_name', 'is_active', 'steel_grade', 'min_thickness', 'max_thickness']
 
 
 class OfferFilter(filters.FilterSet):
