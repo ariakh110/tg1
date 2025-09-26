@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'mptt',
     'companypage',
     "corsheaders",
+    'accounts',
     
 ]
 REST_FRAMEWORK = {

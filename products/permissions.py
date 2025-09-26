@@ -1,54 +1,121 @@
+# products/permissions.py
 from rest_framework import permissions
 
 class IsAdminOrReadOnly(permissions.BasePermission):
     """
-    اجازهٔ نوشتن فقط برای ادمین/استاف. خواندن برای همه.
-    استفاده پیشنهادی برای مدل‌هایی که باید فقط ادمین آنها را تغییر دهد (مثلاً Product).
+    خواندن برای همه. نوشتن فقط برای staff / superuser.
+    مناسب برای مدل‌هایی که تغییرشان فقط توسط ادمین مجاز است.
     """
     def has_permission(self, request, view):
-        # همه می‌توانند GET/HEAD/OPTIONS
         if request.method in permissions.SAFE_METHODS:
             return True
-        # برای نوشتن فقط staff یا superuser
         return bool(request.user and request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser))
 
 
 class HasSellerProfile(permissions.BasePermission):
     """
-    اجازه ایجاد Offer فقط زمانی داده می‌شود که کاربر دارای یک Seller profile باشد.
-    چک می‌کند request.user.seller_profile وجود داشته باشد.
+    اجازهٔ نوشتن (create/update/delete) فقط در صورتی که:
+      - کاربر لاگین کرده و
+      - یا profile.role شامل SELLER/BOTH باشد
+      - یا کاربر قبلاً یک Seller مدل ساخته باشد (request.user.seller_profile)
+    این کلاس برای endpointهایی مثل ایجاد Offer یا PricingTier مناسب است.
     """
-    message = "You must have a seller profile to perform this action."
+    message = "You must have a seller profile (or role=SELLER) to perform this action."
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        # read allowed
+        if request.method in permissions.SAFE_METHODS:
+            return True
+
+        user = request.user
+        if not user or not user.is_authenticated:
             return False
-        # check related name: 'seller_profile'
-        return hasattr(request.user, "seller_profile")
+
+        # 1) explicit seller model (seller_profile) exists
+        if hasattr(user, "seller_profile"):
+            return True
+
+        # 2) profile.role allows seller actions
+        profile = getattr(user, "profile", None)
+        if profile is not None:
+            # profile.Role might be an enum-like class on Profile
+            try:
+                role_value = profile.role
+            except Exception:
+                role_value = None
+            if role_value in ("SELLER", "BOTH"):
+                return True
+
+        return False
 
 
 class IsOfferOwner(permissions.BasePermission):
     """
-    اجازهٔ تغییر (update/delete) روی Offer فقط به صاحب آن Offer (و admin) داده می‌شود.
-    این permission برای Offer و همچنین برای PricingTier/DeliveryLocation که به Offer وابسته‌اند کاربرد دارد.
+    اجازهٔ تغییر (update/delete) برای Offer و اشیائی که به Offer وابسته‌اند
+    (مثل PricingTier, DeliveryLocation) تنها برای مالک آن Offer یا admin است.
     """
     message = "Only the owner seller (or staff) can modify this object."
 
     def has_object_permission(self, request, view, obj):
-        # staff or superuser can do anything
-        if request.user and (request.user.is_staff or request.user.is_superuser):
+        # always allow read
+        if request.method in permissions.SAFE_METHODS:
             return True
 
-        # obj می‌تواند Offer باشد (در این صورت دسترسی مستقیم داریم)
+        user = request.user
+        # staff / superuser override
+        if user and (user.is_staff or user.is_superuser):
+            return True
+
+        # Find seller (robustly)
+        seller = None
+
+        # Direct Offer model with seller attribute
         if hasattr(obj, "seller"):
-            return obj.seller.user == request.user
+            seller = getattr(obj, "seller", None)
+        # Models linked to an offer (PricingTier, DeliveryLocation, etc.)
+        elif hasattr(obj, "offer"):
+            offer = getattr(obj, "offer", None)
+            if offer is not None:
+                seller = getattr(offer, "seller", None)
+        # Sometimes obj could be PricingTier with .offer attribute -> covered above
 
-        # obj ممکن است PricingTier یا DeliveryLocation باشد که فیلد offer دارد
-        if hasattr(obj, "offer"):
-            try:
-                return obj.offer.seller.user == request.user
-            except Exception:
-                return False
+        if not seller:
+            return False
 
-        # default deny
+        # Compare either by seller.user or by seller instance equality with request.user.seller_profile
+        try:
+            # if seller has a user FK
+            if hasattr(seller, "user") and seller.user == user:
+                return True
+        except Exception:
+            pass
+
+        # or compare seller object with request.user.seller_profile
+        if hasattr(user, "seller_profile") and user.seller_profile == seller:
+            return True
+
         return False
+
+
+class IsSellerOwnerOrAdmin(permissions.BasePermission):
+    """
+    برای مدل Seller: فقط صاحب (مالک) یا admin می‌تواند ویرایش/حذف کند.
+    خواندن برای همه (یا می‌توانید محدود کنید).
+    """
+    message = "Only the owner seller or admin can modify this seller profile."
+
+    def has_object_permission(self, request, view, obj):
+        # read allowed
+        if request.method in permissions.SAFE_METHODS:
+            return True
+
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_staff or user.is_superuser:
+            return True
+
+        # obj expected to be Seller instance with 'user' FK
+        owner_user = getattr(obj, "user", None)
+        return owner_user == user

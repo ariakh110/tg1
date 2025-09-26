@@ -17,13 +17,14 @@ urlpatterns += [
     path('api/', include('products.urls')),
     # expose contact API under /api/contact so frontend requests to `${API_BASE}/contact` work
     path('api/contact', core_views.ContactAPIView.as_view()),
-]
-
-
-urlpatterns += [
+    # include accounts URL patterns directly under /api/ so routes like
+    # /api/auth/profile/ and /api/auth/register/ match frontend expectations
+    path("api/", include("accounts.urls")),
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+
 ]
+
 
 
 # اضافه کردن این قسمت در آخر فایل

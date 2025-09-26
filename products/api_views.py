@@ -10,7 +10,7 @@ class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSummarySerializer  # ✅ این مهمه
 
     # enable filtering via django-filter and DRF SearchFilter
-    filter_backends = [DjangoFilterBackend, drf_filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, drf_filters.SearchFilter, drf_filters.OrderingFilter]
     filterset_class = ProductFilter
     # fields to be searched by ?search=...
     search_fields = ["name", "short_description", "description", "slug", "category__name"]
