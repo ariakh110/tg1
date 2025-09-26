@@ -346,3 +346,45 @@ class SellerViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), HasSellerProfile()]
         # ویرایش/حذف: فقط صاحب صفحه یا admin
         return [permissions.IsAuthenticated(), IsSellerOwnerOrAdmin()]
+
+    def perform_create(self, serializer):
+        """
+        هنگام ایجاد Seller، اطمینان حاصل کن که فیلد user از request.user پر شده است.
+        اگر به هر دلیلی request.user وجود نداشته باشد، خطای مناسبی برمی‌گردانیم.
+        """
+        user = getattr(self.request, 'user', None)
+        if not user or not user.is_authenticated:
+            # اجازه نمی‌دهیم seller بدون کاربر ایجاد شود؛ این حالت عادی نباید رخ دهد
+            raise PermissionError("Authentication required to create a seller.")
+        # If the user already has a Seller, avoid creating a duplicate.
+        # Use get_or_create to be race-safe for concurrent requests.
+        from django.db import IntegrityError, transaction
+
+        validated = getattr(serializer, 'validated_data', {})
+
+        try:
+            # Attempt atomic get_or_create using fields from validated_data
+            defaults = {
+                'company_name': validated.get('company_name'),
+                'business_type': validated.get('business_type'),
+                'location': validated.get('location'),
+                'is_verified': validated.get('is_verified', False),
+            }
+            with transaction.atomic():
+                seller_obj, created = Seller.objects.get_or_create(user=user, defaults=defaults)
+
+                # If created is True, we should ensure any additional fields validated
+                # are saved (get_or_create already saved defaults).
+                # Attach the instance to the serializer so the view returns serialized data.
+                serializer.instance = seller_obj
+                return
+        except IntegrityError:
+            # In rare race conditions, another transaction may have created the Seller
+            # between our check and create. Try to fetch the existing Seller and attach it.
+            try:
+                seller_obj = Seller.objects.get(user=user)
+                serializer.instance = seller_obj
+                return
+            except Seller.DoesNotExist:
+                # If we still can't find it, re-raise so the error surfaces for investigation
+                raise
