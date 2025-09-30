@@ -1,5 +1,5 @@
 # products/views.py
-from rest_framework import viewsets, permissions, filters, status
+from rest_framework import viewsets, permissions, filters, status, generics
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
@@ -388,3 +388,15 @@ class SellerViewSet(viewsets.ModelViewSet):
             except Seller.DoesNotExist:
                 # If we still can't find it, re-raise so the error surfaces for investigation
                 raise
+            
+# use in account/urls
+class SellerDetailView(generics.RetrieveUpdateAPIView):
+    queryset = Seller.objects.all()
+    serializer_class = SellerSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        obj = super().get_object()
+        if obj.user != self.request.user:
+            self.permission_denied(self.request)
+        return obj
