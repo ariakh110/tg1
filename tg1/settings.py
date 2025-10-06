@@ -166,3 +166,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
+
+# development email backend: print emails to console
+if DEBUG:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# used by registration to build verification link
+FRONTEND_BASE = "http://localhost:3000"
+DEFAULT_FROM_EMAIL = "noreply@example.com"

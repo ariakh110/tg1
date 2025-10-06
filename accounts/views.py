@@ -9,6 +9,10 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 from products.serializers import SellerSerializer  # اگر SellerSerializer آنجاست
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
+from django.core.mail import send_mail
+from django.conf import settings
+from django.shortcuts import redirect
 
 User = get_user_model()
 
@@ -30,15 +34,42 @@ class RegisterAPIView(APIView):
         if User.objects.filter(username=username).exists():
             return Response({"detail": "username already taken."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # create user as inactive until email confirmed
         user = User.objects.create_user(username=username, email=email, password=password)
-        # optionally: user.is_active = False -> email confirm flow
+        user.is_active = False
+        user.save()
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
+        # create signed token with timestamp
+        signer = TimestampSigner()
+        token = signer.sign(str(user.pk))
+
+        # build backend verify URL so clicking the link activates the account server-side
+        base = request.build_absolute_uri("/").rstrip("/")
+        verify_url = f"{base}/api/auth/verify-email/?token={token}"
+
+        # send email (in DEBUG console backend will print)
+        subject = "تایید ایمیل — فروشگاه"
+        message = (
+            "لطفا برای تایید ایمیل خود روی لینک زیر کلیک کنید:\n"
+            + verify_url
+            + "\n\nپس از تایید، به صفحهٔ تعیین نوع کاربری هدایت می‌شوید."
+        )
+        # send email and capture result (number of successfully delivered messages)
+        try:
+            sent = send_mail(subject, message, getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"), [user.email])
+        except Exception as e:
+            sent = 0
+
+        # return 201 but do not issue tokens until verified
+        resp = {
             "user": {"id": user.pk, "username": user.username, "email": user.email},
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-        }, status=status.HTTP_201_CREATED)
+            "detail": "verification_sent",
+            "email_sent": bool(sent),
+            "email_sent_count": int(sent),
+        }
+        if not sent:
+            resp["warning"] = "mail_send_failed_or_zero"
+        return Response(resp, status=status.HTTP_201_CREATED)
 
 
 class ProfileAPIView(APIView):
@@ -53,6 +84,9 @@ class ProfileAPIView(APIView):
     def get(self, request, *args, **kwargs):
         # defensive check: if not authenticated, return 401
         user = request.user
+        # block access if user's email not verified
+        if not user.is_active:
+            return Response({"detail": "email_not_verified"}, status=status.HTTP_403_FORBIDDEN)
         if not getattr(user, "is_authenticated", False):
             return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
         data = {
@@ -71,6 +105,27 @@ class ProfileAPIView(APIView):
             data["seller"] = None
 
         return Response(data)
+
+
+class VerifyEmailView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get("token")
+        signer = TimestampSigner()
+        try:
+            unsigned = signer.unsign(token, max_age=60 * 60 * 24)  # 1 day
+            user_pk = int(unsigned)
+            user = User.objects.get(pk=user_pk)
+            user.is_active = True
+            user.save()
+            # redirect the user to frontend profile-setup page
+            frontend_base = getattr(settings, "FRONTEND_BASE", "http://localhost:3000")
+            return redirect(f"{frontend_base}/auth/profile-setup?verified=1")
+        except SignatureExpired:
+            return Response({"detail": "token_expired"}, status=status.HTTP_400_BAD_REQUEST)
+        except (BadSignature, User.DoesNotExist, ValueError):
+            return Response({"detail": "invalid_token"}, status=status.HTTP_400_BAD_REQUEST)
     
 class ProfileDetailView(generics.RetrieveUpdateAPIView):
     """
