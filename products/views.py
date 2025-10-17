@@ -82,6 +82,12 @@ class ProductViewSet(viewsets.ModelViewSet):
             return ProductDetailSerializer
         return ProductWriteSerializer
 
+    def get_permissions(self):
+        # allow authenticated sellers to create products (they will then create Offers)
+        if self.action == 'create':
+            return [permissions.IsAuthenticated(), HasSellerProfile()]
+        return [p() for p in self.permission_classes]
+
     @action(detail=True, methods=["get"], url_path="offers")
     def product_offers(self, request, pk=None):
         """
@@ -99,11 +105,18 @@ class ProductViewSet(viewsets.ModelViewSet):
 class ProductSpecificationViewSet(viewsets.ModelViewSet):
     """
     مشخصات فنی محصول (OneToOne یا رکوردهای مربوطه).
-    نوشتن فقط برای Admin در اینجا (قابل تغییر بر اساس نیاز).
+    نوشتن: admin یا seller صاحب محصول (HasSellerProfile) می‌تواند مشخصات را ایجاد/ویرایش کند.
+    خواندن: همه
     """
     queryset = ProductSpecification.objects.select_related("product", "standard")
-    permission_classes = [IsAdminOrReadOnly]
     serializer_class = ProductSpecificationSerializer
+    # allow sellers to create specs for their own products; reads still public
+    def get_permissions(self):
+        if self.action in ["list", "retrieve"]:
+            return [permissions.AllowAny()]
+        if self.action == "create":
+            return [permissions.IsAuthenticated(), HasSellerProfile()]
+        return [permissions.IsAuthenticated(), IsSellerOwnerOrAdmin()]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["product", "steel_grade", "material_type"]
     search_fields = ["steel_grade", "material_type"]

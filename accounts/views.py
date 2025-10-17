@@ -13,6 +13,8 @@ from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 from django.core.mail import send_mail
 from django.conf import settings
 from django.shortcuts import redirect
+from django.utils import timezone
+from datetime import timedelta
 
 User = get_user_model()
 
@@ -119,13 +121,83 @@ class VerifyEmailView(APIView):
             user = User.objects.get(pk=user_pk)
             user.is_active = True
             user.save()
-            # redirect the user to frontend profile-setup page
+            # Issue JWT tokens for the user so frontend can auto-login immediately
+            try:
+                refresh = RefreshToken.for_user(user)
+                access_token = str(refresh.access_token)
+                refresh_token = str(refresh)
+            except Exception:
+                access_token = ""
+                refresh_token = ""
+
+            # redirect the user to frontend profile-setup page including tokens
             frontend_base = getattr(settings, "FRONTEND_BASE", "http://localhost:3000")
-            return redirect(f"{frontend_base}/auth/profile-setup?verified=1")
+            qs = f"verified=1"
+            if access_token:
+                qs += f"&access={access_token}&refresh={refresh_token}"
+            return redirect(f"{frontend_base}/auth/profile-setup?{qs}")
         except SignatureExpired:
             return Response({"detail": "token_expired"}, status=status.HTTP_400_BAD_REQUEST)
         except (BadSignature, User.DoesNotExist, ValueError):
             return Response({"detail": "invalid_token"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResendVerificationEmailView(APIView):
+    """
+    Endpoint to resend verification email to the currently authenticated user.
+    - Only for authenticated users who are not yet active.
+    - Returns {email_sent: bool, email_sent_count: int}
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.is_active:
+            return Response({"detail": "already_verified"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Rate limit: max N resends per WINDOW hours
+        WINDOW_HOURS = getattr(settings, 'VERIFICATION_RESEND_WINDOW_HOURS', 24)
+        MAX_RESENDS = getattr(settings, 'VERIFICATION_RESEND_MAX', 5)
+        from .models import VerificationResend
+
+        now = timezone.now()
+        vr, created = VerificationResend.objects.get_or_create(user=user, defaults={
+            'count': 0,
+            'window_start': now,
+        })
+
+        # reset window if expired
+        if not created and (now - vr.window_start) > timedelta(hours=WINDOW_HOURS):
+            vr.count = 0
+            vr.window_start = now
+
+        if vr.count >= MAX_RESENDS:
+            return Response({"detail": "rate_limited", "allowed": MAX_RESENDS}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # increment count and save
+        vr.count += 1
+        vr.save()
+
+        signer = TimestampSigner()
+        token = signer.sign(str(user.pk))
+        base = request.build_absolute_uri("/").rstrip("/")
+        verify_url = f"{base}/api/auth/verify-email/?token={token}"
+
+        subject = "تایید ایمیل — فروشگاه"
+        message = (
+            "لطفا برای تایید ایمیل خود روی لینک زیر کلیک کنید:\n"
+            + verify_url
+            + "\n\nپس از تایید، به صفحهٔ تعیین نوع کاربری هدایت می‌شوید."
+        )
+        try:
+            sent = send_mail(subject, message, getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"), [user.email])
+        except Exception:
+            sent = 0
+
+        resp = {"email_sent": bool(sent), "email_sent_count": int(sent), "resend_count": vr.count}
+        if not sent:
+            resp["warning"] = "mail_send_failed_or_zero"
+        return Response(resp, status=status.HTTP_200_OK)
     
 class ProfileDetailView(generics.RetrieveUpdateAPIView):
     """

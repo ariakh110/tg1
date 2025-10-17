@@ -174,3 +174,7 @@ if DEBUG:
 # used by registration to build verification link
 FRONTEND_BASE = "http://localhost:3000"
 DEFAULT_FROM_EMAIL = "noreply@example.com"
+
+# Verification resend rate-limit defaults
+VERIFICATION_RESEND_WINDOW_HOURS = 24
+VERIFICATION_RESEND_MAX = 5

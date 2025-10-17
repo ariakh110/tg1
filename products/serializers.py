@@ -73,6 +73,7 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
             "material_type",
             "steel_grade",
             "standard",
+            "height_mm",
             "standard_id",
             "thickness_mm",
             "width_mm",

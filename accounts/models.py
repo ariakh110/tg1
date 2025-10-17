@@ -25,3 +25,19 @@ class Profile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.role}"
+
+
+class VerificationResend(models.Model):
+    """Track resend attempts per user to enforce a simple rate limit.
+
+    Fields:
+    - user: FK to the User
+    - count: number of resends within the window
+    - window_start: when the current window started
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='verification_resend')
+    count = models.PositiveIntegerField(default=0)
+    window_start = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Resend({self.user.username})={self.count} since {self.window_start}"

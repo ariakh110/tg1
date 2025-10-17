@@ -31,6 +31,10 @@ class HasSellerProfile(permissions.BasePermission):
         if not user or not user.is_authenticated:
             return False
 
+        # Require verified (active) users for seller actions
+        if not getattr(user, "is_active", False):
+            return False
+
         # 1) explicit seller model (seller_profile) exists
         if hasattr(user, "seller_profile"):
             return True

@@ -68,6 +68,7 @@ class ProductSpecification(models.Model):
     thickness_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     width_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     length_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    height_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     weight_kg_per_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     surface_finish = models.CharField(max_length=100, null=True, blank=True)
     manufacturing_process = models.CharField(max_length=100, null=True, blank=True)
