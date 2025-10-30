@@ -3,6 +3,60 @@ from django.conf import settings
 from mptt.models import MPTTModel, TreeForeignKey
 from django.utils.text import slugify
 
+# Optional Jalali support using the `jdatetime` package
+try:
+    import jdatetime
+except Exception:
+    jdatetime = None
+
+
+class JalaliDateTimeField(models.DateTimeField):
+    """A DateTimeField wrapper that returns jdatetime.datetime on read when
+    the `jdatetime` package is available, and accepts jdatetime values on write
+    (converting them back to Gregorian datetimes for DB storage).
+
+    If `jdatetime` is not installed this behaves exactly like a normal
+    DateTimeField.
+    """
+
+    def from_db_value(self, value, expression, connection):
+        if value is None:
+            return None
+        if jdatetime is None:
+            return value
+        try:
+            return jdatetime.datetime.fromgregorian(datetime=value)
+        except Exception:
+            return value
+
+    def to_python(self, value):
+        # value can be jdatetime.datetime, datetime.datetime or string
+        if value is None:
+            return None
+        if jdatetime is None:
+            return super().to_python(value)
+        if isinstance(value, jdatetime.datetime):
+            return value
+        # If it's a native datetime, convert to jdatetime
+        try:
+            return jdatetime.datetime.fromgregorian(datetime=value)
+        except Exception:
+            return super().to_python(value)
+
+    def get_prep_value(self, value):
+        # Convert jdatetime to gregorian datetime for DB storage
+        if value is None:
+            return None
+        if jdatetime is None:
+            return super().get_prep_value(value)
+        if isinstance(value, jdatetime.datetime):
+            try:
+                return value.togregorian()
+            except Exception:
+                return super().get_prep_value(value)
+        return super().get_prep_value(value)
+
+
 # ----------- فروشنده -----------
 class Seller(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='seller_profile')
@@ -10,8 +64,8 @@ class Seller(models.Model):
     business_type = models.CharField(max_length=100)
     location = models.CharField(max_length=255)
     is_verified = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = JalaliDateTimeField(auto_now_add=True)
+    updated_at = JalaliDateTimeField(auto_now=True)
 
     def __str__(self):
         return self.company_name
@@ -38,8 +92,8 @@ class Product(models.Model):
     short_description = models.CharField(max_length=500, default="")
     description = models.TextField()
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = JalaliDateTimeField(auto_now_add=True)
+    updated_at = JalaliDateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -100,7 +154,7 @@ class Offer(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="offers")
     seller = models.ForeignKey(Seller, on_delete=models.CASCADE, related_name="offers")
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = JalaliDateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.product.name} - by {self.seller.company_name}"
