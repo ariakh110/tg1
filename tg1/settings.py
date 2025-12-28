@@ -48,8 +48,19 @@ INSTALLED_APPS = [
     'companypage',
     "corsheaders",
     'accounts',
+    'tags',
     
 ]
+# Optionally enable drf-spectacular if it's installed in the environment.
+# This avoids import-time failures when running management commands before
+# installing development-only packages.
+try:
+    import drf_spectacular  # type: ignore
+except Exception:
+    SPECTACULAR_AVAILABLE = False
+else:
+    SPECTACULAR_AVAILABLE = True
+    INSTALLED_APPS.append('drf_spectacular')
 REST_FRAMEWORK = {
     # Pagination global (در صورت تمایل می‌توان کلاس سفارشی هم انتخاب کرد)
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -66,15 +77,24 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
-    # Auth (مثلاً اگر بعدا JWT می‌خواهی اضافه کنی اینجا تنظیم خواهد شد)
-    'DEFAULT_AUTHENTICATION_CLASSES': [
+
+    # Authentication: include JWT (simplejwt) and session auth as fallbacks
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
-    ],
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+
 }
+
+# Configure drf-spectacular schema class only if the package is available
+if globals().get('SPECTACULAR_AVAILABLE'):
+    REST_FRAMEWORK['DEFAULT_SCHEMA_CLASS'] = 'drf_spectacular.openapi.AutoSchema'
+    SPECTACULAR_SETTINGS = {
+        'TITLE': 'kavehmetal API',
+        'DESCRIPTION': 'API schema for the kavehmetal backend',
+        'VERSION': '1.0.0',
+    }
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

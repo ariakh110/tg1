@@ -7,6 +7,12 @@ from rest_framework import routers
 from core import views as core_views
 from rest_framework_simplejwt.views import TokenRefreshView
 from accounts.auth_views import ActiveUserTokenObtainPairView
+from django.conf import settings
+if settings.DEBUG:
+    try:
+        from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+    except Exception:
+        SpectacularAPIView = SpectacularSwaggerView = None
 
 router = routers.DefaultRouter()
 
@@ -31,3 +37,10 @@ urlpatterns += [
 # اضافه کردن این قسمت در آخر فایل
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# OpenAPI / Swagger UI (development only)
+if settings.DEBUG and 'SpectacularAPIView' in globals() and SpectacularAPIView is not None:
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    ]

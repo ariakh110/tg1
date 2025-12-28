@@ -1,0 +1,10 @@
+Django>=4.2
+djangorestframework
+drf-spectacular
+django-filter
+django-extensions
+psycopg2-binary
+django-cors-headers
+djangorestframework-simplejwt
+jdatetime
+mptt
