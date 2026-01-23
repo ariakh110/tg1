@@ -27,6 +27,8 @@ urlpatterns += [
     # include accounts URL patterns directly under /api/ so routes like
     # /api/auth/profile/ and /api/auth/register/ match frontend expectations
     path("api/", include("accounts.urls")),
+    path("api/v1/", include("accounts.urls_v1")),
+    path("api/v1/", include("orders.urls_v1")),
     path("api/token/", ActiveUserTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 

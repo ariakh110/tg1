@@ -1,0 +1,2149 @@
+openapi: 3.0.3
+info:
+  title: Steel Marketplace API (بازارگاه آهن‌آلات)
+  version: 1.0.0
+  description: 'قرارداد API برای پلتفرم خرید/فروش آهن‌آلات و خدمات صنعتی (برشکاری،
+    حمل‌ونقل، کنترل کیفیت) با Django REST Framework.
+
+
+    نکته: برخی endpointها (مثل callback پرداخت) ممکن است با محدودیت‌های درگاه پرداخت
+    و محیط اجرا تنظیم شوند.'
+servers:
+- url: https://api.example.com
+  description: Production (نمونه)
+- url: https://staging-api.example.com
+  description: Staging (نمونه)
+tags:
+- name: auth
+  description: ثبت‌نام/ورود و توکن‌ها
+- name: users
+  description: پروفایل کاربر و نقش‌ها
+- name: kyc
+  description: احراز هویت و مدارک
+- name: catalog
+  description: کاتالوگ نوع کالا/محصول
+- name: warehouses
+  description: انبارها (فروشندگان)
+- name: orders
+  description: سفارش‌ها (BUY/SELL/CUT/SHIP/QC/COMBO)
+- name: offers
+  description: پیشنهادها (Offer/Proposal)
+- name: payments
+  description: پرداخت‌ها و escrow
+- name: reviews
+  description: امتیازدهی و بازخورد
+- name: notifications
+  description: اعلان‌ها
+- name: admin
+  description: Endpointهای مدیریتی
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'JWT Bearer Token. Header: Authorization: Bearer <token>'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: ورودی نامعتبر است.
+            details:
+              type: object
+              additionalProperties: true
+          required:
+          - code
+          - message
+      required:
+      - error
+    Money:
+      type: object
+      description: نمایش مبلغ به صورت integer در کوچک‌ترین واحد پولی (مثلاً ریال).
+      properties:
+        amount:
+          type: integer
+          example: 150000000
+        currency:
+          type: string
+          example: IRR
+      required:
+      - amount
+      - currency
+    Address:
+      type: object
+      properties:
+        city:
+          type: string
+          example: Tehran
+        province:
+          type: string
+          example: Tehran
+        address_line:
+          type: string
+          example: خیابان ... پلاک ...
+        postal_code:
+          type: string
+          example: '1234567890'
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+      required:
+      - city
+      - address_line
+    RoleCode:
+      type: string
+      enum:
+      - BUYER
+      - SELLER
+      - CUTTER
+      - DRIVER
+      - QC
+      - STRUCTURAL_DESIGNER
+      - ADMIN
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          example: شرکت فولاد مثال
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleCode'
+        is_verified:
+          type: boolean
+          example: true
+        rating_avg:
+          type: number
+          format: float
+          nullable: true
+          example: 4.6
+        rating_count:
+          type: integer
+          example: 120
+      required:
+      - id
+      - display_name
+      - roles
+      - is_verified
+    UserMe:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          example: '+989121234567'
+        email:
+          type: string
+          format: email
+          nullable: true
+        display_name:
+          type: string
+          example: علی رضایی
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleCode'
+        is_verified:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - phone
+      - display_name
+      - roles
+      - is_verified
+      - created_at
+    RegisterRequest:
+      type: object
+      properties:
+        phone:
+          type: string
+          example: '+989121234567'
+        password:
+          type: string
+          format: password
+          example: StrongPass!123
+        display_name:
+          type: string
+          example: شرکت سازه گستر
+      required:
+      - phone
+      - password
+      - display_name
+    LoginRequest:
+      type: object
+      properties:
+        phone:
+          type: string
+          example: '+989121234567'
+        password:
+          type: string
+          format: password
+      required:
+      - phone
+      - password
+    TokenPair:
+      type: object
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    RefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+      required:
+      - refresh
+    KYCStatus:
+      type: string
+      enum:
+      - PENDING
+      - APPROVED
+      - REJECTED
+    KYCRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/UserSummary'
+        status:
+          $ref: '#/components/schemas/KYCStatus'
+        submitted_at:
+          type: string
+          format: date-time
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        reject_reason:
+          type: string
+          nullable: true
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              file_url:
+                type: string
+                description: URL امضا شده/یا لینک داخلی
+            required:
+            - name
+            - file_url
+      required:
+      - id
+      - user
+      - status
+      - submitted_at
+      - documents
+    KYCRequestCreate:
+      type: object
+      properties:
+        requested_roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleCode'
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              file_id:
+                type: string
+            required:
+            - name
+            - file_id
+      required:
+      - requested_roles
+      - documents
+    Warehouse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          $ref: '#/components/schemas/UserSummary'
+        title:
+          type: string
+          example: انبار مرکزی
+        address:
+          $ref: '#/components/schemas/Address'
+        contact_phone:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - owner
+      - title
+      - address
+      - created_at
+    WarehouseCreate:
+      type: object
+      properties:
+        title:
+          type: string
+          example: انبار یزد
+        address:
+          $ref: '#/components/schemas/Address'
+        contact_phone:
+          type: string
+          nullable: true
+      required:
+      - title
+      - address
+    ProductType:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: SHEET
+        title:
+          type: string
+          example: ورق
+        unit:
+          type: string
+          example: kg
+        is_active:
+          type: boolean
+          example: true
+      required:
+      - id
+      - code
+      - title
+      - unit
+      - is_active
+    ProductTypeCreate:
+      type: object
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        unit:
+          type: string
+          example: kg
+      required:
+      - code
+      - title
+      - unit
+    OrderType:
+      type: string
+      enum:
+      - BUY
+      - SELL
+      - CUT
+      - SHIP
+      - QC
+      - COMBO
+    OrderStatus:
+      type: string
+      enum:
+      - OPEN
+      - OFFER_SELECTED
+      - DEPOSIT_PENDING
+      - DEPOSIT_PAID
+      - PROVIDER_CONFIRMED
+      - PAYMENT_IN_PROGRESS
+      - READY_FOR_PICKUP
+      - LOADING
+      - LOADED_AWAITING_WEIGHT
+      - AWAITING_FINAL_PAYMENT
+      - READY_FOR_DELIVERY
+      - IN_TRANSIT
+      - DELIVERED
+      - COMPLETED
+      - CANCELLED
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/OrderType'
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        buyer:
+          $ref: '#/components/schemas/UserSummary'
+          nullable: true
+          description: برای سفارش SELL تا زمان انتخاب خریدار می‌تواند خالی باشد.
+        assigned_provider:
+          $ref: '#/components/schemas/UserSummary'
+          nullable: true
+          description: برای BUY مجری/فروشنده انتخاب‌شده؛ برای SELL فروشنده/مالک بار.
+        parent_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          example: درخواست خرید 10 تن ورق
+        description:
+          type: string
+          nullable: true
+        product_type_id:
+          type: string
+          format: uuid
+          nullable: true
+        grade:
+          type: string
+          nullable: true
+          example: ST37
+        dimensions:
+          type: string
+          nullable: true
+          example: 2x6 mm
+        quantity:
+          type: number
+          nullable: true
+          example: 10
+        quantity_unit:
+          type: string
+          nullable: true
+          example: ton
+        approx_weight_kg:
+          type: integer
+          nullable: true
+          example: 10000
+        origin:
+          $ref: '#/components/schemas/Address'
+          nullable: true
+        destination:
+          $ref: '#/components/schemas/Address'
+          nullable: true
+        requested_at:
+          type: string
+          format: date-time
+        deadline_at:
+          type: string
+          format: date-time
+          nullable: true
+        selected_offer_id:
+          type: string
+          format: uuid
+          nullable: true
+        price_agreed:
+          $ref: '#/components/schemas/Money'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - type
+      - status
+      - requested_at
+      - created_at
+      - updated_at
+    OrderCreate:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/OrderType'
+        parent_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        product_type_id:
+          type: string
+          format: uuid
+          nullable: true
+        grade:
+          type: string
+          nullable: true
+        dimensions:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        quantity_unit:
+          type: string
+          nullable: true
+        approx_weight_kg:
+          type: integer
+          nullable: true
+        origin:
+          $ref: '#/components/schemas/Address'
+          nullable: true
+        destination:
+          $ref: '#/components/schemas/Address'
+          nullable: true
+        deadline_at:
+          type: string
+          format: date-time
+          nullable: true
+        attachments:
+          type: array
+          description: شناسه فایل‌های آپلودشده (نقشه برش/اسناد).
+          items:
+            type: string
+          nullable: true
+      required:
+      - type
+      - title
+    OrderUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        approx_weight_kg:
+          type: integer
+          nullable: true
+        destination:
+          $ref: '#/components/schemas/Address'
+          nullable: true
+        deadline_at:
+          type: string
+          format: date-time
+          nullable: true
+    Offer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        offered_by:
+          $ref: '#/components/schemas/UserSummary'
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        price_total:
+          $ref: '#/components/schemas/Money'
+        price_unit:
+          $ref: '#/components/schemas/Money'
+          nullable: true
+        deposit_percent:
+          type: integer
+          nullable: true
+          example: 20
+        lead_time_days:
+          type: integer
+          nullable: true
+          example: 2
+        terms:
+          type: object
+          additionalProperties: true
+          nullable: true
+        status:
+          type: string
+          enum:
+          - PENDING
+          - ACCEPTED
+          - DECLINED
+          - WITHDRAWN
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - order_id
+      - offered_by
+      - price_total
+      - status
+      - created_at
+      - updated_at
+    OfferCreate:
+      type: object
+      properties:
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        price_total:
+          $ref: '#/components/schemas/Money'
+        price_unit:
+          $ref: '#/components/schemas/Money'
+          nullable: true
+        deposit_percent:
+          type: integer
+          nullable: true
+        lead_time_days:
+          type: integer
+          nullable: true
+        terms:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+      - price_total
+    OfferUpdate:
+      type: object
+      properties:
+        price_total:
+          $ref: '#/components/schemas/Money'
+          nullable: true
+        deposit_percent:
+          type: integer
+          nullable: true
+        lead_time_days:
+          type: integer
+          nullable: true
+        terms:
+          type: object
+          additionalProperties: true
+          nullable: true
+    PaymentType:
+      type: string
+      enum:
+      - DEPOSIT
+      - INSTALLMENT
+      - FINAL
+      - SERVICE_FEE
+      - SHIPPING_FEE
+      - QC_FEE
+    PaymentStatus:
+      type: string
+      enum:
+      - PENDING
+      - SUCCESS
+      - FAILED
+      - REFUNDED
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/PaymentType'
+        amount:
+          $ref: '#/components/schemas/Money'
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        gateway_ref:
+          type: string
+          nullable: true
+        gateway_url:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - order_id
+      - type
+      - amount
+      - status
+      - created_at
+    PaymentCreate:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/PaymentType'
+        amount:
+          $ref: '#/components/schemas/Money'
+        return_url:
+          type: string
+          description: URL بازگشت کاربر پس از پرداخت موفق/ناموفق
+          example: https://app.example.com/payments/return
+      required:
+      - type
+      - amount
+      - return_url
+    FinalWeightRequest:
+      type: object
+      properties:
+        final_weight_kg:
+          type: integer
+          example: 10200
+        scale_ticket_attachment_id:
+          type: string
+          nullable: true
+      required:
+      - final_weight_kg
+    OrderStatusHistoryItem:
+      type: object
+      properties:
+        from_status:
+          $ref: '#/components/schemas/OrderStatus'
+          nullable: true
+        to_status:
+          $ref: '#/components/schemas/OrderStatus'
+        event:
+          type: string
+          example: payment_succeeded
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        at:
+          type: string
+          format: date-time
+        meta:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+      - to_status
+      - event
+      - at
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        reviewer:
+          $ref: '#/components/schemas/UserSummary'
+        reviewee:
+          $ref: '#/components/schemas/UserSummary'
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          example: 5
+        comment:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - order_id
+      - reviewer
+      - reviewee
+      - rating
+      - created_at
+    ReviewCreate:
+      type: object
+      properties:
+        reviewee_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          nullable: true
+      required:
+      - reviewee_id
+      - rating
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: NEW_OFFER
+        title:
+          type: string
+          example: پیشنهاد جدید دریافت شد
+        message:
+          type: string
+        is_read:
+          type: boolean
+          example: false
+        related_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - type
+      - title
+      - message
+      - is_read
+      - created_at
+    PaginatedOrders:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+      required:
+      - count
+      - results
+    PaginatedOffers:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Offer'
+      required:
+      - count
+      - results
+    PaginatedNotifications:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+      required:
+      - count
+      - results
+  responses:
+    BadRequest:
+      description: درخواست نامعتبر
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: نیازمند احراز هویت
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: عدم مجوز
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: یافت نشد
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: تضاد/وضعیت نامعتبر
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  parameters:
+    order_id:
+      name: order_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    offer_id:
+      name: offer_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    payment_id:
+      name: payment_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    warehouse_id:
+      name: warehouse_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    notification_id:
+      name: notification_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    kyc_id:
+      name: kyc_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    review_id:
+      name: review_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+security:
+- BearerAuth: []
+paths:
+  /api/v1/auth/register:
+    post:
+      tags:
+      - auth
+      summary: ثبت‌نام کاربر
+      description: ایجاد حساب کاربری جدید.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: کاربر ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - auth
+      summary: ورود و دریافت توکن
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: توکن‌های JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/auth/token/refresh:
+    post:
+      tags:
+      - auth
+      summary: رفرش توکن
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: توکن جدید
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: خروج (اختیاری)
+      description: در صورت استفاده از blacklist کردن refresh token یا مدیریت سشن.
+      responses:
+        '204':
+          description: خروج انجام شد
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/users/me:
+    get:
+      tags:
+      - users
+      summary: دریافت پروفایل من
+      responses:
+        '200':
+          description: پروفایل
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags:
+      - users
+      summary: ویرایش پروفایل من
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                  nullable: true
+      responses:
+        '200':
+          description: پروفایل به‌روز شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/kyc/requests:
+    get:
+      tags:
+      - kyc
+      summary: لیست درخواست‌های KYC من
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KYCRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - kyc
+      summary: ارسال درخواست KYC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KYCRequestCreate'
+      responses:
+        '201':
+          description: درخواست ثبت شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/kyc/requests/{kyc_id}:
+    get:
+      tags:
+      - kyc
+      summary: جزئیات درخواست KYC
+      parameters:
+      - $ref: '#/components/parameters/kyc_id'
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/admin/kyc/requests:
+    get:
+      tags:
+      - admin
+      - kyc
+      summary: لیست درخواست‌های KYC (ادمین)
+      description: فقط برای ادمین.
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KYCRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/kyc/requests/{kyc_id}/approve:
+    post:
+      tags:
+      - admin
+      - kyc
+      summary: تایید KYC
+      parameters:
+      - $ref: '#/components/parameters/kyc_id'
+      responses:
+        '200':
+          description: تایید شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/admin/kyc/requests/{kyc_id}/reject:
+    post:
+      tags:
+      - admin
+      - kyc
+      summary: رد KYC
+      parameters:
+      - $ref: '#/components/parameters/kyc_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+              - reason
+      responses:
+        '200':
+          description: رد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/catalog/product-types:
+    get:
+      tags:
+      - catalog
+      summary: لیست نوع کالاها
+      security: []
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProductType'
+  /api/v1/admin/catalog/product-types:
+    post:
+      tags:
+      - admin
+      - catalog
+      summary: ایجاد نوع کالا (ادمین)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductTypeCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/warehouses:
+    get:
+      tags:
+      - warehouses
+      summary: 'لیست انبارها (برای فروشنده: انبارهای خود)'
+      description: در MVP، فروشنده فقط انبارهای خودش را می‌بیند. ادمین می‌تواند همه
+        را ببیند.
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Warehouse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - warehouses
+      summary: ایجاد انبار (فروشنده)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WarehouseCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/warehouses/{warehouse_id}:
+    get:
+      tags:
+      - warehouses
+      summary: جزئیات انبار
+      parameters:
+      - $ref: '#/components/parameters/warehouse_id'
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - warehouses
+      summary: ویرایش انبار
+      parameters:
+      - $ref: '#/components/parameters/warehouse_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WarehouseCreate'
+      responses:
+        '200':
+          description: به‌روز شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+      - warehouses
+      summary: حذف انبار
+      parameters:
+      - $ref: '#/components/parameters/warehouse_id'
+      responses:
+        '204':
+          description: حذف شد
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/orders:
+    get:
+      tags:
+      - orders
+      summary: لیست سفارش‌های من
+      description: 'برای Buyer: سفارش‌های ایجاد شده توسط من. برای Provider: سفارش‌های
+        تخصیص داده شده به من.'
+      parameters:
+      - name: type
+        in: query
+        schema:
+          $ref: '#/components/schemas/OrderType'
+        required: false
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/OrderStatus'
+        required: false
+      - name: page
+        in: query
+        schema:
+          type: integer
+        required: false
+      responses:
+        '200':
+          description: لیست صفحه‌بندی شده
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOrders'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - orders
+      summary: ایجاد سفارش
+      description: ایجاد سفارش BUY/SELL/CUT/SHIP/QC/COMBO (BUY معمولاً توسط Buyer و SELL توسط Seller).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/marketplace/orders:
+    get:
+      tags:
+      - orders
+      summary: لیست سفارش‌های قابل مشاهده برای ارائه پیشنهاد (Marketplace Feed)
+      description: 'برای Seller/Cutter/Driver/QC: سفارش‌های OPEN مرتبط با نقش/شهر.
+
+
+        در MVP می‌توان فیلترها را ساده نگه داشت.'
+      parameters:
+      - name: type
+        in: query
+        schema:
+          $ref: '#/components/schemas/OrderType'
+        required: false
+      - name: city
+        in: query
+        schema:
+          type: string
+        required: false
+      - name: page
+        in: query
+        schema:
+          type: integer
+        required: false
+      responses:
+        '200':
+          description: لیست صفحه‌بندی شده
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOrders'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/orders/{order_id}:
+    get:
+      tags:
+      - orders
+      summary: جزئیات سفارش
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - orders
+      summary: ویرایش سفارش (محدود)
+      description: فقط مالک سفارش (Buyer) و فقط در وضعیت OPEN مجاز است.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdate'
+      responses:
+        '200':
+          description: به‌روز شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/cancel:
+    post:
+      tags:
+      - orders
+      summary: لغو سفارش
+      description: لغو توسط Buyer (یا Admin). قوانین refund/penalty در سرویس اجرا
+        می‌شود.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: لغو شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/children:
+    post:
+      tags:
+      - orders
+      summary: ایجاد زیرسفارش
+      description: ایجاد زیرسفارش برای سفارش COMBO یا BUY. (Buyer/System)
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/status-history:
+    get:
+      tags:
+      - orders
+      summary: تاریخچه وضعیت سفارش
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: لیست تاریخچه
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderStatusHistoryItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/orders/{order_id}/confirm-inventory:
+    post:
+      tags:
+      - orders
+      summary: تایید موجودی (Seller)
+      description: Seller موجود بودن کالا/آمادگی را تایید می‌کند. فقط برای BUY و بعد
+        از DEPOSIT_PAID.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: تایید شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/mark-ready-for-loading:
+    post:
+      tags:
+      - orders
+      summary: علامت‌گذاری آماده بارگیری (Seller)
+      description: Seller اعلام می‌کند بار آماده بارگیری است.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: ثبت شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/final-weight:
+    post:
+      tags:
+      - orders
+      summary: ثبت وزن نهایی
+      description: ثبت وزن نهایی برای BUY (Seller/Driver/Admin).
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinalWeightRequest'
+      responses:
+        '200':
+          description: ثبت شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/confirm-delivery:
+    post:
+      tags:
+      - orders
+      summary: تایید تحویل
+      description: Buyer تحویل را تایید می‌کند و سفارش به COMPLETED می‌رود (در صورت
+        نبود شرط دیگر).
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: تایید شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/claim:
+    post:
+      tags:
+      - orders
+      summary: Claim کردن سفارش (مدل پذیرش مستقیم)
+      description: 'برای برخی سفارش‌ها (مثلاً SHIP با dispatch_mode=AUTO) ارائه‌دهنده
+        می‌تواند بدون offer، سفارش را claim کند.
+
+
+        برای جلوگیری از race، این عملیات باید با lock انجام شود.'
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: اختصاص داده شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/offers:
+    get:
+      tags:
+      - offers
+      summary: لیست پیشنهادهای یک سفارش
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: لیست صفحه‌بندی شده
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOffers'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - offers
+      summary: ارسال پیشنهاد برای یک سفارش
+      description: Seller/Provider برای سفارش BUY و Buyer برای سفارش SELL پیشنهاد ثبت می‌کند.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfferCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/offers/{offer_id}:
+    get:
+      tags:
+      - offers
+      summary: جزئیات پیشنهاد
+      parameters:
+      - $ref: '#/components/parameters/offer_id'
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - offers
+      summary: ویرایش پیشنهاد (قبل از انتخاب)
+      parameters:
+      - $ref: '#/components/parameters/offer_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfferUpdate'
+      responses:
+        '200':
+          description: به‌روز شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/offers/{offer_id}/accept:
+    post:
+      tags:
+      - offers
+      summary: پذیرش پیشنهاد توسط مالک سفارش
+      description: مالک سفارش یک پیشنهاد را انتخاب می‌کند (BUY: Buyer، SELL: Seller).
+        این کار باید سایر پیشنهادها را declined کند و سفارش را به مرحله پرداخت ببرد.
+      parameters:
+      - $ref: '#/components/parameters/offer_id'
+      responses:
+        '200':
+          description: پذیرفته شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/offers/{offer_id}/withdraw:
+    post:
+      tags:
+      - offers
+      summary: پس گرفتن پیشنهاد
+      description: Provider می‌تواند قبل از انتخاب شدن، پیشنهاد خود را withdraw کند.
+      parameters:
+      - $ref: '#/components/parameters/offer_id'
+      responses:
+        '200':
+          description: پس گرفته شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/payments:
+    get:
+      tags:
+      - payments
+      summary: لیست پرداخت‌های یک سفارش
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - payments
+      summary: ایجاد پرداخت و دریافت لینک درگاه
+      description: یک پرداخت جدید ایجاد می‌کند و URL درگاه را برمی‌گرداند.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+      responses:
+        '201':
+          description: ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/payments/{payment_id}:
+    get:
+      tags:
+      - payments
+      summary: جزئیات پرداخت
+      parameters:
+      - $ref: '#/components/parameters/payment_id'
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/payments/gateway/callback:
+    post:
+      tags:
+      - payments
+      summary: Callback/Webhook درگاه پرداخت
+      description: 'این endpoint توسط درگاه پرداخت فراخوانی می‌شود. باید idempotent
+        باشد.
+
+
+        پیشنهاد: استفاده از امضای درگاه یا shared secret header.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gateway_ref:
+                  type: string
+                payment_id:
+                  type: string
+                  format: uuid
+                status:
+                  type: string
+                  enum:
+                  - SUCCESS
+                  - FAILED
+                raw:
+                  type: object
+                  additionalProperties: true
+              required:
+              - gateway_ref
+              - payment_id
+              - status
+      responses:
+        '200':
+          description: پردازش شد
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/admin/payments/{payment_id}/refund:
+    post:
+      tags:
+      - admin
+      - payments
+      summary: Refund پرداخت (ادمین)
+      parameters:
+      - $ref: '#/components/parameters/payment_id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Refund انجام شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/orders/{order_id}/reviews:
+    get:
+      tags:
+      - reviews
+      summary: لیست reviewهای یک سفارش
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Review'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - reviews
+      summary: ثبت review برای سفارش
+      description: فقط پس از COMPLETED و فقط توسط participantها.
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewCreate'
+      responses:
+        '201':
+          description: ثبت شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/reviews/{review_id}:
+    get:
+      tags:
+      - reviews
+      summary: جزئیات review
+      parameters:
+      - $ref: '#/components/parameters/review_id'
+      security: []
+      responses:
+        '200':
+          description: جزئیات
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/notifications:
+    get:
+      tags:
+      - notifications
+      summary: لیست اعلان‌های من
+      parameters:
+      - name: is_read
+        in: query
+        schema:
+          type: boolean
+        required: false
+      - name: page
+        in: query
+        schema:
+          type: integer
+        required: false
+      responses:
+        '200':
+          description: لیست صفحه‌بندی شده
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedNotifications'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/notifications/{notification_id}/read:
+    post:
+      tags:
+      - notifications
+      summary: علامت‌گذاری اعلان به عنوان خوانده‌شده
+      parameters:
+      - $ref: '#/components/parameters/notification_id'
+      responses:
+        '200':
+          description: به‌روزرسانی شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/admin/orders:
+    get:
+      tags:
+      - admin
+      - orders
+      summary: لیست سفارش‌ها (ادمین)
+      parameters:
+      - name: type
+        in: query
+        schema:
+          $ref: '#/components/schemas/OrderType'
+        required: false
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/OrderStatus'
+        required: false
+      - name: page
+        in: query
+        schema:
+          type: integer
+        required: false
+      responses:
+        '200':
+          description: لیست
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOrders'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/orders/{order_id}/force-cancel:
+    post:
+      tags:
+      - admin
+      - orders
+      summary: لغو اجباری سفارش (ادمین)
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: لغو شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/admin/orders/{order_id}/force-complete:
+    post:
+      tags:
+      - admin
+      - orders
+      summary: تکمیل اجباری سفارش (ادمین)
+      parameters:
+      - $ref: '#/components/parameters/order_id'
+      responses:
+        '200':
+          description: تکمیل شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'

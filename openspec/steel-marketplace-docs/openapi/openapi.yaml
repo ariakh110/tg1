@@ -1,0 +1,1675 @@
+
+openapi: 3.0.3
+info:
+  title: Steel Marketplace API
+  version: "1.0.0"
+  description: |
+    REST API for a B2B marketplace platform that supports:
+      - Goods procurement (RFQ/offer/selection) for steel products
+      - Industrial services (cutting, shipping, quality inspection)
+      - Composite orders (parent/child)
+      - Milestone payments with escrow-like holding and final weight adjustment
+
+    Backend: Django + Django REST Framework.
+servers:
+  - url: https://api.example.com/api/v1
+    description: Production (example)
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+tags:
+  - name: Auth
+  - name: Users
+  - name: Warehouses
+  - name: Catalog
+  - name: Orders
+  - name: Offers
+  - name: Payments
+  - name: Reviews
+  - name: Notifications
+  - name: Admin
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user account
+      description: |
+        Creates a user account. Roles can be assigned at registration, but provider roles
+        (seller/cutter/driver/qc) require verification before they can participate.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+            examples:
+              example:
+                value:
+                  email: buyer@example.com
+                  password: "StrongPassword123!"
+                  full_name: "ACME Construction"
+                  roles: ["BUYER"]
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and obtain JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/token/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh an access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRefreshRequest"
+      responses:
+        "200":
+          description: Access token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      tags: [Users]
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /warehouses:
+    get:
+      tags: [Warehouses]
+      summary: List warehouses
+      description: |
+        Sellers can list their own warehouses.
+        Admin can list all. Buyers typically do not list warehouses.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Warehouses list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedWarehouses"
+    post:
+      tags: [Warehouses]
+      summary: Create a warehouse (seller only)
+      description: |
+        Requires SELLER role and verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseCreateRequest"
+      responses:
+        "201":
+          description: Warehouse created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Warehouse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /warehouses/{warehouse_id}:
+    get:
+      tags: [Warehouses]
+      summary: Get a warehouse
+      parameters:
+        - $ref: "#/components/parameters/WarehouseId"
+      responses:
+        "200":
+          description: Warehouse detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Warehouse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Warehouses]
+      summary: Update a warehouse (owner seller or admin)
+      parameters:
+        - $ref: "#/components/parameters/WarehouseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseUpdateRequest"
+      responses:
+        "200":
+          description: Updated warehouse
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Warehouse"
+
+  /product-types:
+    get:
+      tags: [Catalog]
+      summary: List product/material types
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Product types list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedProductTypes"
+    post:
+      tags: [Catalog, Admin]
+      summary: Create product type (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductTypeCreateRequest"
+      responses:
+        "201":
+          description: Product type created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductType"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List orders visible to the current user
+      description: |
+        - Buyers: their own orders.
+        - Providers: orders assigned to them + "available marketplace feed" orders
+          (depending on endpoint policy; many teams implement a dedicated /marketplace/orders).
+        - Admin: all orders.
+
+        Use query params to filter by type/status/parent_order_id.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: order_type
+          in: query
+          schema:
+            $ref: "#/components/schemas/OrderType"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+        - name: parent_order_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedOrders"
+    post:
+      tags: [Orders]
+      summary: Create an order (BUY/CUT/SHIP/QC/COMBO)
+      description: |
+        Creates a new order. For COMBO orders, the server may create child orders in one call
+        if `children` are provided.
+
+        Note: Providers typically cannot create BUY orders as buyers; role checks apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCreateRequest"
+            examples:
+              buy_order:
+                value:
+                  order_type: BUY
+                  title: "Buy ~10 tons steel sheet"
+                  product_type_id: "9b84a7c2-9c6a-4b22-8a1a-9f4d2f6e0d6e"
+                  material_spec:
+                    grade: "ST37"
+                    thickness_mm: 10
+                    width_mm: 1500
+                    length_mm: 6000
+                  quantity:
+                    unit: TON
+                    estimated_value: 10.0
+                    tolerance_percent: 2.0
+                  delivery:
+                    city: "Tehran"
+                    address: "Project site address..."
+                    window_start: "2026-01-10T08:00:00Z"
+                    window_end: "2026-01-15T18:00:00Z"
+                  requested_services: ["SHIP", "QC"]
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orders/{order_id}:
+    get:
+      tags: [Orders]
+      summary: Get order details
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Orders]
+      summary: Update an order (limited fields)
+      description: |
+        Only allowed for certain fields and only while the order is in early states.
+        Status changes are NOT performed by patch; use action endpoints.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderUpdateRequest"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orders/{order_id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Cancel an order
+      description: |
+        Cancels an order if allowed by the current state and policy.
+        In some stages, cancellation may require admin approval.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelRequest"
+      responses:
+        "200":
+          description: Order cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orders/{order_id}/choose-offer:
+    post:
+      tags: [Orders, Offers]
+      summary: Choose an offer for an order (buyer only)
+      description: |
+        Selects a single offer as the winning offer for this order.
+        - For BUY/CUT/QC: buyer selects provider offer.
+        - For SHIP: buyer can select driver offer (if using bidding model).
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChooseOfferRequest"
+      responses:
+        "200":
+          description: Offer selected; order updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orders/{order_id}/confirm-availability:
+    post:
+      tags: [Orders]
+      summary: Seller confirms inventory availability (BUY orders)
+      description: |
+        Seller confirms that the goods are available in the selected warehouse.
+        Requires SELLER role and the order must be assigned to this seller.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmAvailabilityRequest"
+      responses:
+        "200":
+          description: Availability confirmed; order updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orders/{order_id}/record-weight:
+    post:
+      tags: [Orders, Payments]
+      summary: Record actual weight for a BUY order
+      description: |
+        Records the actual measured weight (e.g., weighbridge ticket).
+        This triggers calculation of the final invoice adjustment.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordWeightRequest"
+      responses:
+        "200":
+          description: Weight recorded; order updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orders/{order_id}/confirm-delivery:
+    post:
+      tags: [Orders]
+      summary: Buyer confirms delivery
+      description: |
+        Confirms delivery of goods/service completion. This usually triggers escrow release and payout.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmDeliveryRequest"
+      responses:
+        "200":
+          description: Delivery confirmed; order updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orders/{order_id}/offers:
+    get:
+      tags: [Offers]
+      summary: List offers for an order
+      description: |
+        - Buyer: sees all offers for their order.
+        - Providers: see only their own offers for that order.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Offers list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedOffers"
+    post:
+      tags: [Offers]
+      summary: Submit an offer for an order (provider)
+      description: |
+        Provider submits an offer. Role must match the order_type:
+          - BUY -> SELLER
+          - CUT -> CUTTER
+          - SHIP -> DRIVER
+          - QC  -> QC_EXPERT
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OfferCreateRequest"
+      responses:
+        "201":
+          description: Offer created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Offer"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /offers/{offer_id}:
+    get:
+      tags: [Offers]
+      summary: Get offer details
+      parameters:
+        - $ref: "#/components/parameters/OfferId"
+      responses:
+        "200":
+          description: Offer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Offer"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Offers]
+      summary: Update an offer (before selection)
+      description: |
+        Providers may update their own offer only before it is selected.
+      parameters:
+        - $ref: "#/components/parameters/OfferId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OfferUpdateRequest"
+      responses:
+        "200":
+          description: Updated offer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Offer"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /offers/{offer_id}/withdraw:
+    post:
+      tags: [Offers]
+      summary: Withdraw an offer (before selection)
+      parameters:
+        - $ref: "#/components/parameters/OfferId"
+      responses:
+        "200":
+          description: Offer withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Offer"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orders/{order_id}/payments:
+    get:
+      tags: [Payments]
+      summary: List payments for an order
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Payments list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedPayments"
+    post:
+      tags: [Payments]
+      summary: Initiate a payment for an order
+      description: |
+        Creates a payment intent/session with the payment gateway.
+        Use Idempotency-Key to prevent duplicates.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCreateRequest"
+            examples:
+              deposit:
+                value:
+                  payment_type: DEPOSIT
+                  amount:
+                    currency: IRR
+                    value: 250000000
+              final_adjustment:
+                value:
+                  payment_type: FINAL_ADJUSTMENT
+                  amount:
+                    currency: IRR
+                    value: 35000000
+      responses:
+        "201":
+          description: Payment initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /payments/{payment_id}:
+    get:
+      tags: [Payments]
+      summary: Get payment details
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Payment detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /payments/{payment_id}/verify:
+    post:
+      tags: [Payments]
+      summary: Verify a payment (gateway callback / server-side verification)
+      description: |
+        This endpoint is typically called by the backend after receiving a gateway callback,
+        or by the gateway itself depending on integration style.
+
+        Must be idempotent.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentVerifyRequest"
+      responses:
+        "200":
+          description: Payment verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /orders/{order_id}/reviews:
+    get:
+      tags: [Reviews]
+      summary: List reviews for an order
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Reviews list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedReviews"
+    post:
+      tags: [Reviews]
+      summary: Create a review for an order participant
+      description: |
+        Allowed only after completion. Only participants can review each other.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewCreateRequest"
+      responses:
+        "201":
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for current user
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: unread_only
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedNotifications"
+
+  /notifications/{notification_id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Notification updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+
+  /admin/users/{user_id}/verify:
+    post:
+      tags: [Admin]
+      summary: Verify or reject a user (admin only)
+      description: |
+        Admin endpoint to approve or reject KYC for provider roles.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminVerifyUserRequest"
+      responses:
+        "200":
+          description: User verification updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: |
+        Optional idempotency key to prevent duplicate requests on retries.
+    OrderId:
+      name: order_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OfferId:
+      name: offer_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PaymentId:
+      name: payment_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    WarehouseId:
+      name: warehouse_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: ORDER_INVALID_TRANSITION
+            message:
+              type: string
+              example: Cannot transition order from DEPOSIT_PAID to FINALIZED.
+            details:
+              type: object
+              additionalProperties: true
+
+    Role:
+      type: string
+      description: User role. One user can have multiple roles.
+      enum: [BUYER, SELLER, CUTTER, DRIVER, QC_EXPERT, DESIGNER, ADMIN]
+
+    KycStatus:
+      type: string
+      enum: [NOT_SUBMITTED, PENDING, APPROVED, REJECTED]
+
+    User:
+      type: object
+      required: [id, email, full_name, roles, kyc_status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        kyc_status:
+          $ref: "#/components/schemas/KycStatus"
+        is_verified_provider:
+          type: boolean
+          description: True if user is approved to act as seller/service provider.
+        created_at:
+          type: string
+          format: date-time
+
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        full_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Initial role selection (provider roles still require verification).
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    TokenPair:
+      type: object
+      required: [access, refresh]
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+
+    TokenRefreshRequest:
+      type: object
+      required: [refresh]
+      properties:
+        refresh:
+          type: string
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+
+    Money:
+      type: object
+      required: [currency, value]
+      properties:
+        currency:
+          type: string
+          example: IRR
+        value:
+          type: integer
+          description: Integer minor units (e.g., IRR without decimals).
+
+    Warehouse:
+      type: object
+      required: [id, seller_id, name, city, address, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        seller_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Yazd Main Warehouse"
+        city:
+          type: string
+          example: "Yazd"
+        address:
+          type: string
+        lat:
+          type: number
+          format: float
+          nullable: true
+        lng:
+          type: number
+          format: float
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    WarehouseCreateRequest:
+      type: object
+      required: [name, city, address]
+      properties:
+        name:
+          type: string
+        city:
+          type: string
+        address:
+          type: string
+        lat:
+          type: number
+          format: float
+        lng:
+          type: number
+          format: float
+
+    WarehouseUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        city:
+          type: string
+        address:
+          type: string
+        lat:
+          type: number
+          format: float
+        lng:
+          type: number
+          format: float
+
+    ProductType:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Steel Sheet"
+        description:
+          type: string
+          nullable: true
+
+    ProductTypeCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    OrderType:
+      type: string
+      enum: [BUY, CUT, SHIP, QC, COMBO]
+
+    OrderStatus:
+      type: string
+      description: |
+        High-level statuses. Some order types may not use all statuses.
+      enum:
+        - POSTED
+        - OFFER_SELECTED
+        - DEPOSIT_PENDING
+        - DEPOSIT_PAID
+        - SELLER_CONFIRM_PENDING
+        - CONFIRMED
+        - PAYMENT_IN_PROGRESS
+        - READY_FOR_LOADING
+        - LOADING
+        - WEIGHING_PENDING
+        - FINAL_PAYMENT_PENDING
+        - FINALIZED
+        - DRIVER_ASSIGNED
+        - PICKUP_PENDING
+        - IN_TRANSIT
+        - DELIVERED
+        - REPORT_SUBMITTED
+        - COMPLETED
+        - CANCELLED
+        - EXPIRED
+        - DISPUTED
+
+    Quantity:
+      type: object
+      required: [unit, estimated_value]
+      properties:
+        unit:
+          type: string
+          enum: [KG, TON, PIECE, METER]
+        estimated_value:
+          type: number
+          format: float
+        tolerance_percent:
+          type: number
+          format: float
+          nullable: true
+
+    DeliveryWindow:
+      type: object
+      required: [city, address]
+      properties:
+        city:
+          type: string
+        address:
+          type: string
+        window_start:
+          type: string
+          format: date-time
+          nullable: true
+        window_end:
+          type: string
+          format: date-time
+          nullable: true
+
+    MaterialSpec:
+      type: object
+      description: Semi-structured specs for steel materials (extend as needed).
+      additionalProperties: true
+      example:
+        grade: ST52
+        thickness_mm: 12
+        standard: DIN
+
+    Order:
+      type: object
+      required: [id, order_type, status, buyer_id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_type:
+          $ref: "#/components/schemas/OrderType"
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        title:
+          type: string
+          nullable: true
+        buyer_id:
+          type: string
+          format: uuid
+        provider_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Assigned provider (seller/cutter/driver/qc) after selection.
+        parent_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_type_id:
+          type: string
+          format: uuid
+          nullable: true
+        material_spec:
+          $ref: "#/components/schemas/MaterialSpec"
+        quantity:
+          $ref: "#/components/schemas/Quantity"
+        delivery:
+          $ref: "#/components/schemas/DeliveryWindow"
+        requested_services:
+          type: array
+          items:
+            type: string
+            enum: [CUT, SHIP, QC]
+          description: For BUY or COMBO orders.
+        chosen_offer_id:
+          type: string
+          format: uuid
+          nullable: true
+        pricing:
+          type: object
+          nullable: true
+          properties:
+            unit_price:
+              $ref: "#/components/schemas/Money"
+            total_estimated:
+              $ref: "#/components/schemas/Money"
+            total_final:
+              $ref: "#/components/schemas/Money"
+        weight:
+          type: object
+          nullable: true
+          properties:
+            estimated:
+              type: number
+              format: float
+              nullable: true
+            actual:
+              type: number
+              format: float
+              nullable: true
+            unit:
+              type: string
+              enum: [KG, TON]
+              nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    OrderCreateRequest:
+      type: object
+      required: [order_type]
+      properties:
+        order_type:
+          $ref: "#/components/schemas/OrderType"
+        title:
+          type: string
+        product_type_id:
+          type: string
+          format: uuid
+        material_spec:
+          $ref: "#/components/schemas/MaterialSpec"
+        quantity:
+          $ref: "#/components/schemas/Quantity"
+        delivery:
+          $ref: "#/components/schemas/DeliveryWindow"
+        requested_services:
+          type: array
+          items:
+            type: string
+            enum: [CUT, SHIP, QC]
+        parent_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        children:
+          type: array
+          description: Optional child orders for COMBO creation.
+          items:
+            type: object
+            properties:
+              order_type:
+                $ref: "#/components/schemas/OrderType"
+              title:
+                type: string
+              material_spec:
+                $ref: "#/components/schemas/MaterialSpec"
+              quantity:
+                $ref: "#/components/schemas/Quantity"
+              delivery:
+                $ref: "#/components/schemas/DeliveryWindow"
+
+    OrderUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        material_spec:
+          $ref: "#/components/schemas/MaterialSpec"
+        delivery:
+          $ref: "#/components/schemas/DeliveryWindow"
+
+    Offer:
+      type: object
+      required: [id, order_id, offered_by_id, price, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        offered_by_id:
+          type: string
+          format: uuid
+        price:
+          $ref: "#/components/schemas/Money"
+        deposit_required_percent:
+          type: number
+          format: float
+          nullable: true
+        lead_time_days:
+          type: integer
+          nullable: true
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [PENDING, SELECTED, REJECTED, WITHDRAWN, EXPIRED]
+          default: PENDING
+        created_at:
+          type: string
+          format: date-time
+
+    OfferCreateRequest:
+      type: object
+      required: [price]
+      properties:
+        price:
+          $ref: "#/components/schemas/Money"
+        deposit_required_percent:
+          type: number
+          format: float
+          nullable: true
+        lead_time_days:
+          type: integer
+          nullable: true
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
+    OfferUpdateRequest:
+      type: object
+      properties:
+        price:
+          $ref: "#/components/schemas/Money"
+        deposit_required_percent:
+          type: number
+          format: float
+        lead_time_days:
+          type: integer
+        warehouse_id:
+          type: string
+          format: uuid
+        notes:
+          type: string
+
+    ChooseOfferRequest:
+      type: object
+      required: [offer_id]
+      properties:
+        offer_id:
+          type: string
+          format: uuid
+
+    ConfirmAvailabilityRequest:
+      type: object
+      properties:
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        evidence_file_id:
+          type: string
+          format: uuid
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    RecordWeightRequest:
+      type: object
+      required: [actual_weight, unit]
+      properties:
+        actual_weight:
+          type: number
+          format: float
+        unit:
+          type: string
+          enum: [KG, TON]
+        weighbridge_ticket_file_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    ConfirmDeliveryRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+        delivery_proof_file_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    CancelRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+
+    PaymentType:
+      type: string
+      enum: [DEPOSIT, INSTALLMENT, FINAL_ADJUSTMENT, SERVICE_FEE, DELIVERY_FEE]
+
+    PaymentStatus:
+      type: string
+      enum: [PENDING, PROCESSING, COMPLETED, FAILED, CANCELLED, REFUNDED]
+
+    Payment:
+      type: object
+      required: [id, order_id, payer_id, amount, payment_type, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        payer_id:
+          type: string
+          format: uuid
+        amount:
+          $ref: "#/components/schemas/Money"
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        gateway_reference:
+          type: string
+          nullable: true
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    PaymentCreateRequest:
+      type: object
+      required: [payment_type, amount]
+      properties:
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        amount:
+          $ref: "#/components/schemas/Money"
+
+    PaymentVerifyRequest:
+      type: object
+      required: [gateway_reference, success]
+      properties:
+        gateway_reference:
+          type: string
+        success:
+          type: boolean
+        raw_payload:
+          type: object
+          additionalProperties: true
+
+    Review:
+      type: object
+      required: [id, order_id, reviewer_id, reviewee_id, rating, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        reviewer_id:
+          type: string
+          format: uuid
+        reviewee_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ReviewCreateRequest:
+      type: object
+      required: [reviewee_id, rating]
+      properties:
+        reviewee_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+
+    Notification:
+      type: object
+      required: [id, type, message, is_read, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: OFFER_SUBMITTED
+        message:
+          type: string
+        is_read:
+          type: boolean
+        related_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AdminVerifyUserRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [APPROVED, REJECTED]
+        note:
+          type: string
+          nullable: true
+
+    PaginatedOrders:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+
+    PaginatedOffers:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Offer"
+
+    PaginatedPayments:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Payment"
+
+    PaginatedWarehouses:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warehouse"
+
+    PaginatedProductTypes:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductType"
+
+    PaginatedReviews:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Review"
+
+    PaginatedNotifications:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"

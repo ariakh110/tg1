@@ -1,6 +1,9 @@
 # products/permissions.py
 from rest_framework import permissions
 
+from accounts.models import RoleCode
+from accounts.services import user_has_role
+
 class IsAdminOrReadOnly(permissions.BasePermission):
     """
     خواندن برای همه. نوشتن فقط برای staff / superuser.
@@ -35,9 +38,11 @@ class HasSellerProfile(permissions.BasePermission):
         if not getattr(user, "is_active", False):
             return False
 
-        # 1) explicit seller model (seller_profile) exists
+        # 1) explicit seller model exists and is verified
         if hasattr(user, "seller_profile"):
-            return True
+            seller_profile = getattr(user, "seller_profile", None)
+            if seller_profile and seller_profile.is_verified:
+                return True
 
         # 2) profile.role allows seller actions
         profile = getattr(user, "profile", None)
@@ -47,8 +52,11 @@ class HasSellerProfile(permissions.BasePermission):
                 role_value = profile.role
             except Exception:
                 role_value = None
-            if role_value in ("SELLER", "BOTH"):
+            if role_value in ("SELLER", "BOTH") and user_has_role(user, RoleCode.SELLER, require_active=True):
                 return True
+
+        if user_has_role(user, RoleCode.SELLER, require_active=True):
+            return True
 
         return False
 

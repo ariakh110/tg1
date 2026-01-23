@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "corsheaders",
     'accounts',
     'tags',
+    'orders',
     
 ]
 # Optionally enable drf-spectacular if it's installed in the environment.

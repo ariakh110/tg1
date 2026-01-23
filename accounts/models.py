@@ -41,3 +41,58 @@ class VerificationResend(models.Model):
 
     def __str__(self):
         return f"Resend({self.user.username})={self.count} since {self.window_start}"
+
+
+class RoleCode(models.TextChoices):
+    BUYER = "BUYER", _("Buyer")
+    SELLER = "SELLER", _("Seller")
+    CUTTER = "CUTTER", _("Cutter")
+    DRIVER = "DRIVER", _("Driver")
+    QC = "QC", _("Quality Control")
+    STRUCTURAL_DESIGNER = "STRUCTURAL_DESIGNER", _("Structural Designer")
+    ADMIN = "ADMIN", _("Admin")
+
+
+class UserRole(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="roles")
+    role = models.CharField(max_length=32, choices=RoleCode.choices)
+    is_active = models.BooleanField(default=False)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("user", "role")
+
+    def __str__(self):
+        return f"{self.user} - {self.role}"
+
+
+class KYCStatus(models.TextChoices):
+    PENDING = "PENDING", _("Pending")
+    APPROVED = "APPROVED", _("Approved")
+    REJECTED = "REJECTED", _("Rejected")
+
+
+class KYCRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="kyc_requests")
+    requested_roles = models.JSONField(default=list)
+    status = models.CharField(max_length=16, choices=KYCStatus.choices, default=KYCStatus.PENDING)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reject_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-submitted_at",)
+
+    def __str__(self):
+        return f"KYCRequest({self.user})={self.status}"
+
+
+class KYCDocument(models.Model):
+    kyc_request = models.ForeignKey(KYCRequest, on_delete=models.CASCADE, related_name="documents")
+    name = models.CharField(max_length=255)
+    file = models.FileField(upload_to="kyc_docs/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"KYCDocument({self.kyc_request_id}) - {self.name}"
