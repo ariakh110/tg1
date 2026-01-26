@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -87,6 +88,16 @@ REST_FRAMEWORK = {
     ),
 
 }
+
+# KYC document validation
+KYC_DOCUMENT_MAX_SIZE_MB = int(os.environ.get("KYC_DOCUMENT_MAX_SIZE_MB", 10))
+KYC_DOCUMENT_ALLOWED_EXTENSIONS = [".pdf", ".zip"]
+KYC_DOCUMENT_ALLOWED_MIME_TYPES = [
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "multipart/x-zip",
+]
 
 # Configure drf-spectacular schema class only if the package is available
 if globals().get('SPECTACULAR_AVAILABLE'):

@@ -1,0 +1,26 @@
+{% extends "admin/base.html" %}
+{% load admin_extras %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}">Kaveh Metal Admin</a></h1>
+{% pending_kyc_count as pending %}
+{% if pending %}
+  <span class="kyc-badge">Pending KYC: {{ pending }}</span>
+{% endif %}
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .kyc-badge {
+    display: inline-block;
+    margin-left: 12px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    background: #dc2626;
+    color: #fff;
+  }
+</style>
+{% endblock %}
