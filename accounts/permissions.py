@@ -32,3 +32,19 @@ class HasRole(permissions.BasePermission):
         if user.is_staff or user.is_superuser:
             return True
         return UserRole.objects.filter(user=user, role=self.role_code).exists()
+
+
+class IsAdminOrActiveAdminRole(permissions.BasePermission):
+    message = "Admin access is required."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
+            return True
+        return UserRole.objects.filter(
+            user=user,
+            role=RoleCode.ADMIN,
+            is_active=True,
+        ).exists()

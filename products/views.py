@@ -5,6 +5,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 
 from django.db.models import Min
 
@@ -26,7 +27,13 @@ from .serializers import (
 
 # فیلترها و مجوزها (permissions)
 from .filters import ProductFilter, OfferFilter  
-from .permissions import IsAdminOrReadOnly, HasSellerProfile, IsOfferOwner, IsSellerOwnerOrAdmin
+from .permissions import (
+    HasSellerProfile,
+    IsAdminOrReadOnly,
+    IsOfferOwner,
+    IsProductAssetOwnerOrAdmin,
+    IsSellerOwnerOrAdmin,
+)
 
 # ---------------- Pagination استاندارد برای viewset ها ----------------
 class StandardResultsSetPagination(PageNumberPagination):
@@ -163,22 +170,20 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         # کنترل مجوزها بر اساس action فعلی
         if self.action in ["list", "retrieve"]:
             return [permissions.AllowAny()]
-        if self.action == "create":
-            # upload image: seller باید باشد یا admin
-            return [permissions.IsAuthenticated(), HasSellerProfile()]
-        # update/delete: تنها مالک (یا admin) بتواند
-        return [permissions.IsAuthenticated(), IsOfferOwner()]
+        return [permissions.IsAuthenticated(), IsProductAssetOwnerOrAdmin()]
 
     def perform_create(self, serializer):
-        """
-        هنگام ایجاد تصویر، مطمئن می‌شویم کاربر صاحب محصول است.
-        (در مدل ما Product ممکن است seller داشته باشد؛ اگر ندارد این چک نادیده گرفته می‌شود)
-        """
         product = serializer.validated_data.get("product")
         user = self.request.user
-        if product and hasattr(product, "seller"):
-            if not (user.is_staff or user.is_superuser or (hasattr(user, "seller_profile") and user.seller_profile == product.seller)):
-                raise PermissionError("You are not the owner of the product.")
+        seller_profile = getattr(user, "seller_profile", None)
+        can_manage = bool(user.is_staff or user.is_superuser)
+        if not can_manage:
+            can_manage = bool(
+                seller_profile
+                and Offer.objects.filter(product=product, seller=seller_profile).exists()
+            )
+        if not can_manage:
+            raise PermissionDenied("You are not allowed to upload image for this product.")
         serializer.save()
 
 
@@ -196,9 +201,21 @@ class ProductDocumentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
             return [permissions.AllowAny()]
-        if self.action == "create":
-            return [permissions.IsAuthenticated(), HasSellerProfile()]
-        return [permissions.IsAuthenticated(), IsOfferOwner()]
+        return [permissions.IsAuthenticated(), IsProductAssetOwnerOrAdmin()]
+
+    def perform_create(self, serializer):
+        product = serializer.validated_data.get("product")
+        user = self.request.user
+        seller_profile = getattr(user, "seller_profile", None)
+        can_manage = bool(user.is_staff or user.is_superuser)
+        if not can_manage:
+            can_manage = bool(
+                seller_profile
+                and Offer.objects.filter(product=product, seller=seller_profile).exists()
+            )
+        if not can_manage:
+            raise PermissionDenied("You are not allowed to upload document for this product.")
+        serializer.save()
 
 
 # ---------------- OfferViewSet ----------------
@@ -246,7 +263,7 @@ class OfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not hasattr(user, "seller_profile"):
             # اگر دوست داری پیام و نوع خطا را تغییر دهی، اینجا تنظیم کن
-            raise PermissionError("User does not have a seller profile.")
+            raise PermissionDenied("User does not have a seller profile.")
         seller = user.seller_profile
         serializer.save(seller=seller)
 
@@ -339,11 +356,10 @@ class ProductStandardViewSet(viewsets.ModelViewSet):
 # ---------------- SellerViewSet ----------------
 class SellerViewSet(viewsets.ModelViewSet):
     """
-    مدیریت پروفایل فروشندگان (Seller model).
-    رفتار مجوزی:
-    - list/retrieve: عمومی (AllowAny) — همه می‌توانند صفحهٔ شرکت‌ها را ببینند
-    - create: نیاز به کاربر لاگین‌شده و دارای seller-role یا seller_profile (HasSellerProfile)
-    - update/delete: فقط صاحب Seller (IsSellerOwnerOrAdmin) یا admin
+    Manage seller profile records.
+    - list/retrieve: public
+    - create: authenticated user (idempotent)
+    - update/delete: owner or admin
     """
     queryset = Seller.objects.all()
     serializer_class = SellerSerializer
@@ -355,53 +371,22 @@ class SellerViewSet(viewsets.ModelViewSet):
         if self.action in ["list", "retrieve"]:
             return [permissions.AllowAny()]
         if self.action == "create":
-            # برای ساخت صفحهٔ شرکت، کاربر باید لاگین کرده و HasSellerProfile را داشته باشد
-            return [permissions.IsAuthenticated(), HasSellerProfile()]
-        # ویرایش/حذف: فقط صاحب صفحه یا admin
+            return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsSellerOwnerOrAdmin()]
 
+    def create(self, request, *args, **kwargs):
+        existing = getattr(request.user, "seller_profile", None)
+        if existing:
+            serializer = self.get_serializer(existing, context={"request": request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
-        """
-        هنگام ایجاد Seller، اطمینان حاصل کن که فیلد user از request.user پر شده است.
-        اگر به هر دلیلی request.user وجود نداشته باشد، خطای مناسبی برمی‌گردانیم.
-        """
-        user = getattr(self.request, 'user', None)
+        user = getattr(self.request, "user", None)
         if not user or not user.is_authenticated:
-            # اجازه نمی‌دهیم seller بدون کاربر ایجاد شود؛ این حالت عادی نباید رخ دهد
-            raise PermissionError("Authentication required to create a seller.")
-        # If the user already has a Seller, avoid creating a duplicate.
-        # Use get_or_create to be race-safe for concurrent requests.
-        from django.db import IntegrityError, transaction
+            raise PermissionDenied("Authentication required to create a seller profile.")
+        serializer.save(user=user, is_verified=False)
 
-        validated = getattr(serializer, 'validated_data', {})
-
-        try:
-            # Attempt atomic get_or_create using fields from validated_data
-            defaults = {
-                'company_name': validated.get('company_name'),
-                'business_type': validated.get('business_type'),
-                'location': validated.get('location'),
-                'is_verified': validated.get('is_verified', False),
-            }
-            with transaction.atomic():
-                seller_obj, created = Seller.objects.get_or_create(user=user, defaults=defaults)
-
-                # If created is True, we should ensure any additional fields validated
-                # are saved (get_or_create already saved defaults).
-                # Attach the instance to the serializer so the view returns serialized data.
-                serializer.instance = seller_obj
-                return
-        except IntegrityError:
-            # In rare race conditions, another transaction may have created the Seller
-            # between our check and create. Try to fetch the existing Seller and attach it.
-            try:
-                seller_obj = Seller.objects.get(user=user)
-                serializer.instance = seller_obj
-                return
-            except Seller.DoesNotExist:
-                # If we still can't find it, re-raise so the error surfaces for investigation
-                raise
-            
 # use in account/urls
 class SellerDetailView(generics.RetrieveUpdateAPIView):
     queryset = Seller.objects.all()
@@ -413,3 +398,4 @@ class SellerDetailView(generics.RetrieveUpdateAPIView):
         if obj.user != self.request.user:
             self.permission_denied(self.request)
         return obj
+

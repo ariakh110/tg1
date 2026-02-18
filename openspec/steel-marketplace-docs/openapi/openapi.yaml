@@ -23,6 +23,7 @@ tags:
   - name: Warehouses
   - name: Catalog
   - name: Orders
+  - name: Order Requests
   - name: Offers
   - name: Payments
   - name: Reviews
@@ -319,6 +320,212 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /marketplace/feed/:
+    get:
+      tags: [Order Requests]
+      summary: List marketplace request feed
+      description: |
+        Returns only active requests:
+        - BUY requests (active)
+        - SELL requests with warehouse status APPROVED
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/OrderRequestType"
+        - name: category
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/OrderRequestStatus"
+      responses:
+        "200":
+          description: Marketplace feed list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedOrderRequestFeedItems"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /my/requests/:
+    get:
+      tags: [Order Requests]
+      summary: List my request history
+      description: Includes active and deactivated requests for the current user.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: My requests list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedOrderRequests"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Order Requests]
+      summary: Create BUY or SELL request
+      description: |
+        - BUY requires active BUYER role and starts as APPROVED.
+        - SELL requires active SELLER role and starts as PENDING_WAREHOUSE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequestCreateRequest"
+      responses:
+        "201":
+          description: Request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /my/requests/{request_id}/:
+    get:
+      tags: [Order Requests]
+      summary: Get my request details
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Request details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Order Requests]
+      summary: Update or deactivate my request
+      description: |
+        Use `is_active=false` to soft-delete (deactivate) request.
+        Material edits on an approved SELL request reset status to PENDING_WAREHOUSE.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequestUpdateRequest"
+      responses:
+        "200":
+          description: Request updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Order Requests]
+      summary: Deactivate my request (soft-delete)
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "204":
+          description: Request deactivated
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /my/requests/{request_id}/documents/:
+    post:
+      tags: [Order Requests]
+      summary: Upload request documents
+      description: "Accepts one or multiple files. Allowed file types: PDF, ZIP."
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "201":
+          description: Documents uploaded
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrderRequestDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /warehouse/requests/:
+    get:
+      tags: [Order Requests]
+      summary: List SELL requests pending warehouse verification
+      description: Accessible to warehouse manager role and admins.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Pending warehouse verification queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedOrderRequests"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /warehouse/verify/{request_id}/:
+    post:
+      tags: [Order Requests]
+      summary: Approve or reject SELL request by warehouse manager
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseVerificationRequest"
+      responses:
+        "200":
+          description: Request verification status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /orders/{order_id}:
     get:
@@ -828,6 +1035,13 @@ components:
       schema:
         type: string
         format: uuid
+    RequestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     OfferId:
       name: offer_id
       in: path
@@ -898,7 +1112,7 @@ components:
     Role:
       type: string
       description: User role. One user can have multiple roles.
-      enum: [BUYER, SELLER, CUTTER, DRIVER, QC_EXPERT, DESIGNER, ADMIN]
+      enum: [BUYER, SELLER, WAREHOUSE_MANAGER, CUTTER, DRIVER, QC, STRUCTURAL_DESIGNER, ADMIN]
 
     KycStatus:
       type: string
@@ -1086,6 +1300,310 @@ components:
           type: string
         description:
           type: string
+
+    UserSummary:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+
+    MoneyAmount:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          description: Integer amount in smallest business unit.
+        currency:
+          type: string
+          example: IRR
+
+    OrderRequestType:
+      type: string
+      enum: [BUY, SELL]
+
+    OrderRequestStatus:
+      type: string
+      enum: [DRAFT, PENDING_WAREHOUSE, APPROVED, REJECTED, DEACTIVATED, COMPLETED]
+
+    OrderRequestStatusHistory:
+      type: object
+      required: [to_status, event, at]
+      properties:
+        from_status:
+          allOf:
+            - $ref: "#/components/schemas/OrderRequestStatus"
+          nullable: true
+        to_status:
+          $ref: "#/components/schemas/OrderRequestStatus"
+        event:
+          type: string
+        actor_user:
+          allOf:
+            - $ref: "#/components/schemas/UserSummary"
+          nullable: true
+        meta:
+          type: object
+          additionalProperties: true
+        at:
+          type: string
+          format: date-time
+
+    OrderRequestDocument:
+      type: object
+      required: [id, name, uploaded_at]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        file:
+          type: string
+          description: Relative file path in media storage.
+        file_url:
+          type: string
+          format: uri
+          nullable: true
+        uploaded_by:
+          allOf:
+            - $ref: "#/components/schemas/UserSummary"
+          nullable: true
+        uploaded_at:
+          type: string
+          format: date-time
+
+    OrderRequest:
+      type: object
+      required: [id, type, status, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          $ref: "#/components/schemas/UserSummary"
+        type:
+          $ref: "#/components/schemas/OrderRequestType"
+        status:
+          $ref: "#/components/schemas/OrderRequestStatus"
+        is_active:
+          type: boolean
+        category:
+          type: integer
+          nullable: true
+        category_name:
+          type: string
+          nullable: true
+        product_title:
+          type: string
+          nullable: true
+        grade:
+          type: string
+          nullable: true
+        dimensions:
+          type: string
+          nullable: true
+        quantity:
+          type: string
+          nullable: true
+        quantity_unit:
+          type: string
+          nullable: true
+        target_price:
+          allOf:
+            - $ref: "#/components/schemas/MoneyAmount"
+          nullable: true
+        loading_city:
+          type: string
+          nullable: true
+        unloading_city:
+          type: string
+          nullable: true
+        loading_location:
+          type: string
+          nullable: true
+        unloading_location:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        verified_by:
+          type: integer
+          nullable: true
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        warehouse_reject_reason:
+          type: string
+          nullable: true
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderRequestDocument"
+        status_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderRequestStatusHistory"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderRequestFeedItem:
+      type: object
+      required: [id, owner, type, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          $ref: "#/components/schemas/UserSummary"
+        type:
+          $ref: "#/components/schemas/OrderRequestType"
+        status:
+          $ref: "#/components/schemas/OrderRequestStatus"
+        category:
+          type: integer
+          nullable: true
+        category_name:
+          type: string
+          nullable: true
+        product_title:
+          type: string
+          nullable: true
+        grade:
+          type: string
+          nullable: true
+        dimensions:
+          type: string
+          nullable: true
+        quantity:
+          type: string
+          nullable: true
+        quantity_unit:
+          type: string
+          nullable: true
+        target_price:
+          allOf:
+            - $ref: "#/components/schemas/MoneyAmount"
+          nullable: true
+        loading_city:
+          type: string
+          nullable: true
+        unloading_city:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    OrderRequestCreateRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/OrderRequestType"
+        category:
+          type: integer
+          nullable: true
+        product_title:
+          type: string
+        grade:
+          type: string
+        dimensions:
+          type: string
+        quantity:
+          type: number
+          format: double
+          nullable: true
+        quantity_unit:
+          type: string
+        target_price:
+          allOf:
+            - $ref: "#/components/schemas/MoneyAmount"
+          nullable: true
+        loading_city:
+          type: string
+        unloading_city:
+          type: string
+        loading_location:
+          type: string
+        unloading_location:
+          type: string
+        notes:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    OrderRequestUpdateRequest:
+      type: object
+      properties:
+        is_active:
+          type: boolean
+        category:
+          type: integer
+          nullable: true
+        product_title:
+          type: string
+        grade:
+          type: string
+        dimensions:
+          type: string
+        quantity:
+          type: number
+          format: double
+          nullable: true
+        quantity_unit:
+          type: string
+        target_price:
+          allOf:
+            - $ref: "#/components/schemas/MoneyAmount"
+          nullable: true
+        loading_city:
+          type: string
+        unloading_city:
+          type: string
+        loading_location:
+          type: string
+        unloading_location:
+          type: string
+        notes:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    WarehouseVerificationRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVE, REJECT]
+        reason:
+          type: string
+          nullable: true
+          description: Required when decision is REJECT.
 
     OrderType:
       type: string
@@ -1554,6 +2072,40 @@ components:
         note:
           type: string
           nullable: true
+
+    PaginatedOrderRequests:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderRequest"
+
+    PaginatedOrderRequestFeedItems:
+      type: object
+      required: [count, results]
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderRequestFeedItem"
 
     PaginatedOrders:
       type: object

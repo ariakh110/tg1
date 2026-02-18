@@ -1,32 +1,26 @@
-from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Profile, UserRole, RoleCode, KYCRequest, KYCDocument
-from products.models import Seller
+from rest_framework import serializers
+
 from products.serializers import SellerSerializer
 
+from .models import KYCDocument, KYCRequest, KYCStatus, RoleCode, Profile, UserRole
+
 User = get_user_model()
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id","username","email","first_name","last_name")
+        fields = ("id", "username", "email", "first_name", "last_name")
+
 
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
-    # expose the related Seller (if any) so /me/ contains company fields
-    seller = SellerSerializer(source='user.seller_profile', read_only=True)
+    seller = SellerSerializer(source="user.seller_profile", read_only=True)
+
     class Meta:
         model = Profile
-        fields = ("id","user","role","phone","country","language","company_requested","vat_number","seller")
-        read_only_fields = ("company_requested",)
-
-class SetRoleSerializer(serializers.Serializer):
-    role = serializers.ChoiceField(choices=Profile.Role.choices)
-
-class SellerCreateFromProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Seller
-        fields = ("company_name","business_type","location")
+        fields = ("id", "user", "phone", "country", "language", "vat_number", "seller")
 
 
 class UserRoleSerializer(serializers.ModelSerializer):
@@ -55,6 +49,7 @@ class KYCDocumentSerializer(serializers.ModelSerializer):
 
 
 class KYCRequestSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
     requested_roles = serializers.ListField(
         child=serializers.ChoiceField(choices=RoleCode.choices)
     )
@@ -64,6 +59,7 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         model = KYCRequest
         fields = (
             "id",
+            "user",
             "requested_roles",
             "status",
             "submitted_at",
@@ -71,7 +67,16 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "reject_reason",
             "documents",
         )
-        read_only_fields = ("status", "submitted_at", "reviewed_at", "reject_reason")
+        read_only_fields = ("user", "status", "submitted_at", "reviewed_at", "reject_reason")
+
+    def validate_requested_roles(self, roles):
+        if not roles:
+            raise serializers.ValidationError("At least one role is required.")
+        disallowed = {RoleCode.BUYER, RoleCode.ADMIN}
+        invalid = [role for role in roles if role in disallowed]
+        if invalid:
+            raise serializers.ValidationError("Requested role does not require KYC.")
+        return roles
 
     def create(self, validated_data):
         documents_data = validated_data.pop("documents", [])
@@ -94,8 +99,44 @@ class UserMeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "username", "email", "roles", "kyc_status")
+        fields = (
+            "id",
+            "username",
+            "email",
+            "is_staff",
+            "is_superuser",
+            "roles",
+            "kyc_status",
+        )
 
     def get_kyc_status(self, obj):
         latest = obj.kyc_requests.order_by("-submitted_at").first()
         return latest.status if latest else None
+
+
+class AdminUserSummarySerializer(serializers.ModelSerializer):
+    roles = UserRoleSerializer(many=True, read_only=True)
+    kyc_status = serializers.SerializerMethodField()
+    pending_kyc_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "email",
+            "is_active",
+            "is_staff",
+            "is_superuser",
+            "date_joined",
+            "roles",
+            "kyc_status",
+            "pending_kyc_count",
+        )
+
+    def get_kyc_status(self, obj):
+        latest = obj.kyc_requests.order_by("-submitted_at").first()
+        return latest.status if latest else None
+
+    def get_pending_kyc_count(self, obj):
+        return obj.kyc_requests.filter(status=KYCStatus.PENDING).count()

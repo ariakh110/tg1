@@ -46,6 +46,7 @@ class VerificationResend(models.Model):
 class RoleCode(models.TextChoices):
     BUYER = "BUYER", _("Buyer")
     SELLER = "SELLER", _("Seller")
+    WAREHOUSE_MANAGER = "WAREHOUSE_MANAGER", _("Warehouse Manager")
     CUTTER = "CUTTER", _("Cutter")
     DRIVER = "DRIVER", _("Driver")
     QC = "QC", _("Quality Control")

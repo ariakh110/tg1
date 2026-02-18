@@ -1,70 +1,86 @@
+from datetime import timedelta
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+from django.shortcuts import redirect
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .serializers import ProfileSerializer, SetRoleSerializer, SellerCreateFromProfileSerializer, UserSerializer
-from .models import Profile
-from products.models import Seller
-from django.shortcuts import get_object_or_404
-from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.tokens import RefreshToken
-from products.serializers import SellerSerializer  # اگر SellerSerializer آنجاست
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
-from django.core.mail import send_mail
-from django.conf import settings
-from django.shortcuts import redirect
-from django.utils import timezone
-from datetime import timedelta
+
+from products.serializers import SellerSerializer
+
+from .models import Profile, VerificationResend
+from .serializers import ProfileSerializer
 
 User = get_user_model()
 
+
+def _build_verification_url(request, user_pk):
+    signer = TimestampSigner()
+    token = signer.sign(str(user_pk))
+    base = request.build_absolute_uri("/").rstrip("/")
+    return f"{base}/api/auth/verify-email/?token={token}"
+
+
+def _send_verification_email(user, verify_url):
+    subject = "Email verification"
+    message = (
+        "Please click this link to verify your email address:\n"
+        f"{verify_url}\n\n"
+        "After verification, sign in to your account."
+    )
+    try:
+        return send_mail(
+            subject,
+            message,
+            getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
+            [user.email],
+        )
+    except Exception:
+        return 0
+
+
 class RegisterAPIView(APIView):
-    """
-    ثبت‌نام ساده: کاربر ساخته می‌شود و توکن JWT برگشت داده می‌شود.
-    Frontend پس از دریافت توکن، کاربر را به صفحهٔ تکمیل پروفایل هدایت کند.
-    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-        username = request.data.get("username")
-        email = request.data.get("email")
+        username = (request.data.get("username") or "").strip()
+        email = (request.data.get("email") or "").strip()
         password = request.data.get("password")
 
-        if not username or not password:
-            return Response({"detail": "username and password required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not username or not password or not email:
+            return Response(
+                {"detail": "username, email and password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if User.objects.filter(username=username).exists():
-            return Response({"detail": "username already taken."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "username already taken."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # create user as inactive until email confirmed
-        user = User.objects.create_user(username=username, email=email, password=password)
-        user.is_active = False
-        user.save()
-
-        # create signed token with timestamp
-        signer = TimestampSigner()
-        token = signer.sign(str(user.pk))
-
-        # build backend verify URL so clicking the link activates the account server-side
-        base = request.build_absolute_uri("/").rstrip("/")
-        verify_url = f"{base}/api/auth/verify-email/?token={token}"
-
-        # send email (in DEBUG console backend will print)
-        subject = "تایید ایمیل — فروشگاه"
-        message = (
-            "لطفا برای تایید ایمیل خود روی لینک زیر کلیک کنید:\n"
-            + verify_url
-            + "\n\nپس از تایید، به صفحهٔ تعیین نوع کاربری هدایت می‌شوید."
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            is_active=False,
         )
-        # send email and capture result (number of successfully delivered messages)
-        try:
-            sent = send_mail(subject, message, getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"), [user.email])
-        except Exception as e:
-            sent = 0
 
-        # return 201 but do not issue tokens until verified
+        verify_url = _build_verification_url(request, user.pk)
+        sent = _send_verification_email(user, verify_url)
+
         resp = {
-            "user": {"id": user.pk, "username": user.username, "email": user.email},
+            "user": {
+                "id": user.pk,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+            },
             "detail": "verification_sent",
             "email_sent": bool(sent),
             "email_sent_count": int(sent),
@@ -75,37 +91,27 @@ class RegisterAPIView(APIView):
 
 
 class ProfileAPIView(APIView):
-    """
-    برگرداندن اطلاعات کاربر جاری و پروفایل فروشنده اگر داشته باشد.
-    GET /api/auth/profile/
-    """
-    # ensure only JWT auth is accepted here (no session auth leakage)
     authentication_classes = [JWTAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        # defensive check: if not authenticated, return 401
         user = request.user
-        # block access if user's email not verified
         if not user.is_active:
-            return Response({"detail": "email_not_verified"}, status=status.HTTP_403_FORBIDDEN)
-        if not getattr(user, "is_authenticated", False):
-            return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": "email_not_verified"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         data = {
             "id": user.pk,
             "username": user.username,
             "email": user.email,
+            "is_active": user.is_active,
+            "is_staff": user.is_staff,
+            "is_superuser": user.is_superuser,
         }
-        # اگر Seller profile وجود دارد اضافه شود (related name seller_profile)
-        try:
-            seller = getattr(user, "seller_profile", None)
-            if seller:
-                data["seller"] = SellerSerializer(seller).data
-            else:
-                data["seller"] = None
-        except Exception:
-            data["seller"] = None
-
+        seller = getattr(user, "seller_profile", None)
+        data["seller"] = SellerSerializer(seller).data if seller else None
         return Response(data)
 
 
@@ -114,28 +120,23 @@ class VerifyEmailView(APIView):
 
     def get(self, request):
         token = request.query_params.get("token")
+        if not token:
+            return Response(
+                {"detail": "invalid_token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         signer = TimestampSigner()
         try:
-            unsigned = signer.unsign(token, max_age=60 * 60 * 24)  # 1 day
+            unsigned = signer.unsign(token, max_age=60 * 60 * 24)
             user_pk = int(unsigned)
             user = User.objects.get(pk=user_pk)
-            user.is_active = True
-            user.save()
-            # Issue JWT tokens for the user so frontend can auto-login immediately
-            try:
-                refresh = RefreshToken.for_user(user)
-                access_token = str(refresh.access_token)
-                refresh_token = str(refresh)
-            except Exception:
-                access_token = ""
-                refresh_token = ""
+            if not user.is_active:
+                user.is_active = True
+                user.save(update_fields=["is_active"])
 
-            # redirect the user to frontend profile-setup page including tokens
             frontend_base = getattr(settings, "FRONTEND_BASE", "http://localhost:3000")
-            qs = f"verified=1"
-            if access_token:
-                qs += f"&access={access_token}&refresh={refresh_token}"
-            return redirect(f"{frontend_base}/auth/profile-setup?{qs}")
+            return redirect(f"{frontend_base}/auth/login?verified=1")
         except SignatureExpired:
             return Response({"detail": "token_expired"}, status=status.HTTP_400_BAD_REQUEST)
         except (BadSignature, User.DoesNotExist, ValueError):
@@ -143,112 +144,77 @@ class VerifyEmailView(APIView):
 
 
 class ResendVerificationEmailView(APIView):
-    """
-    Endpoint to resend verification email to the currently authenticated user.
-    - Only for authenticated users who are not yet active.
-    - Returns {email_sent: bool, email_sent_count: int}
-    """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        user = request.user
-        if user.is_active:
-            return Response({"detail": "already_verified"}, status=status.HTTP_400_BAD_REQUEST)
+        user = None
 
-        # Rate limit: max N resends per WINDOW hours
-        WINDOW_HOURS = getattr(settings, 'VERIFICATION_RESEND_WINDOW_HOURS', 24)
-        MAX_RESENDS = getattr(settings, 'VERIFICATION_RESEND_MAX', 5)
-        from .models import VerificationResend
+        if request.user and request.user.is_authenticated:
+            user = request.user
+        else:
+            email = (request.data.get("email") or "").strip()
+            if not email:
+                return Response(
+                    {"detail": "email_required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user = User.objects.filter(email__iexact=email).first()
+            if not user:
+                return Response(
+                    {"detail": "user_not_found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        if user.is_active:
+            return Response(
+                {"detail": "already_verified"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not user.email:
+            return Response(
+                {"detail": "email_missing"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        window_hours = getattr(settings, "VERIFICATION_RESEND_WINDOW_HOURS", 24)
+        max_resends = getattr(settings, "VERIFICATION_RESEND_MAX", 5)
 
         now = timezone.now()
-        vr, created = VerificationResend.objects.get_or_create(user=user, defaults={
-            'count': 0,
-            'window_start': now,
-        })
-
-        # reset window if expired
-        if not created and (now - vr.window_start) > timedelta(hours=WINDOW_HOURS):
-            vr.count = 0
-            vr.window_start = now
-
-        if vr.count >= MAX_RESENDS:
-            return Response({"detail": "rate_limited", "allowed": MAX_RESENDS}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-        # increment count and save
-        vr.count += 1
-        vr.save()
-
-        signer = TimestampSigner()
-        token = signer.sign(str(user.pk))
-        base = request.build_absolute_uri("/").rstrip("/")
-        verify_url = f"{base}/api/auth/verify-email/?token={token}"
-
-        subject = "تایید ایمیل — فروشگاه"
-        message = (
-            "لطفا برای تایید ایمیل خود روی لینک زیر کلیک کنید:\n"
-            + verify_url
-            + "\n\nپس از تایید، به صفحهٔ تعیین نوع کاربری هدایت می‌شوید."
+        resend, created = VerificationResend.objects.get_or_create(
+            user=user,
+            defaults={"count": 0, "window_start": now},
         )
-        try:
-            sent = send_mail(subject, message, getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"), [user.email])
-        except Exception:
-            sent = 0
 
-        resp = {"email_sent": bool(sent), "email_sent_count": int(sent), "resend_count": vr.count}
+        if not created and (now - resend.window_start) > timedelta(hours=window_hours):
+            resend.count = 0
+            resend.window_start = now
+
+        if resend.count >= max_resends:
+            return Response(
+                {"detail": "rate_limited", "allowed": max_resends},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        resend.count += 1
+        resend.save(update_fields=["count", "window_start"])
+
+        verify_url = _build_verification_url(request, user.pk)
+        sent = _send_verification_email(user, verify_url)
+
+        resp = {
+            "email_sent": bool(sent),
+            "email_sent_count": int(sent),
+            "resend_count": resend.count,
+        }
         if not sent:
             resp["warning"] = "mail_send_failed_or_zero"
         return Response(resp, status=status.HTTP_200_OK)
-    
+
+
 class ProfileDetailView(generics.RetrieveUpdateAPIView):
-    """
-    GET/PUT profile of current user
-    """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ProfileSerializer
 
     def get_object(self):
-        return self.request.user.profile
-
-class SetRoleView(APIView):
-    """
-    User chooses role after login. If chooses SELLER, we can set company_requested flag
-    or create Seller on demand.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        serializer = SetRoleSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        role = serializer.validated_data["role"]
-        profile = request.user.profile
-        profile.role = role
-        if role == Profile.Role.SELLER:
-            profile.company_requested = True
-        profile.save()
-        return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
-
-class CreateSellerFromProfileView(APIView):
-    """
-    Create Seller (minisite) for authenticated user.
-    Only allowed if profile.role in (SELLER, BOTH) or user requested seller.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        profile = request.user.profile
-        # allow creation if role allows or user requested
-        if profile.role not in (Profile.Role.SELLER, Profile.Role.BOTH) and not profile.company_requested:
-            return Response({"detail": "role not permitted to create seller"}, status=status.HTTP_403_FORBIDDEN)
-        if hasattr(request.user, "seller_profile"):
-            return Response({"detail": "seller profile already exists"}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = SellerCreateFromProfileSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        seller = Seller.objects.create(user=request.user,
-                                       company_name=serializer.validated_data["company_name"],
-                                       business_type=serializer.validated_data.get("business_type",""),
-                                       location=serializer.validated_data.get("location",""))
-        # optionally set profile.role to BOTH
-        profile.role = Profile.Role.BOTH
-        profile.company_requested = False
-        profile.save()
-        return Response({"seller": {"id": seller.id, "company_name": seller.company_name}}, status=status.HTTP_201_CREATED)
+        profile, _created = Profile.objects.get_or_create(user=self.request.user)
+        return profile

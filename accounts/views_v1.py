@@ -1,14 +1,18 @@
 import os
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
-from rest_framework import permissions, status, viewsets
+from rest_framework import generics, permissions, status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import KYCDocument, KYCRequest, KYCStatus, RoleCode, UserRole
+from .permissions import IsAdminOrActiveAdminRole
 from .serializers import (
+    AdminUserSummarySerializer,
     KYCDocumentSerializer,
     KYCRequestSerializer,
     KYCRequestAdminUpdateSerializer,
@@ -16,6 +20,8 @@ from .serializers import (
     UserRoleSerializer,
 )
 from .services import activate_roles, ensure_user_role
+
+User = get_user_model()
 
 
 class UserMeAPIView(viewsets.ViewSet):
@@ -29,7 +35,22 @@ class UserMeAPIView(viewsets.ViewSet):
 class UserRoleViewSet(viewsets.ModelViewSet):
     queryset = UserRole.objects.select_related("user")
     serializer_class = UserRoleSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsAdminOrActiveAdminRole]
+
+
+class AdminUserListAPIView(generics.ListAPIView):
+    serializer_class = AdminUserSummarySerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def get_queryset(self):
+        queryset = User.objects.all().prefetch_related("roles", "kyc_requests").order_by("-date_joined")
+        q = (self.request.query_params.get("q") or "").strip()
+        role_code = (self.request.query_params.get("role") or "").strip()
+        if q:
+            queryset = queryset.filter(Q(username__icontains=q) | Q(email__icontains=q))
+        if role_code:
+            queryset = queryset.filter(roles__role=role_code).distinct()
+        return queryset
 
 
 class KYCRequestViewSet(viewsets.ModelViewSet):
@@ -37,11 +58,25 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
     serializer_class = KYCRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action in ("approve", "reject"):
+            return [permissions.IsAuthenticated(), IsAdminOrActiveAdminRole()]
+        return super().get_permissions()
+
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff or user.is_superuser:
-            return self.queryset
-        return self.queryset.filter(user=user)
+        queryset = self.queryset
+        is_admin_scope = user.is_staff or user.is_superuser or UserRole.objects.filter(
+            user=user,
+            role=RoleCode.ADMIN,
+            is_active=True,
+        ).exists()
+        if not is_admin_scope:
+            queryset = queryset.filter(user=user)
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        return queryset
 
     def create(self, request, *args, **kwargs):
         if KYCRequest.objects.filter(user=request.user, status=KYCStatus.PENDING).exists():
@@ -52,6 +87,16 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         requested_roles = serializer.validated_data.get("requested_roles", [])
+        active_roles = set(
+            UserRole.objects.filter(
+                user=request.user, role__in=requested_roles, is_active=True
+            ).values_list("role", flat=True)
+        )
+        if active_roles and active_roles == set(requested_roles):
+            return Response(
+                {"detail": "roles_already_active"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         for role_code in requested_roles:
             ensure_user_role(request.user, role_code, is_active=False)
         self.perform_create(serializer)
@@ -96,7 +141,12 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
     )
     def upload_document(self, request, pk=None):
         kyc = self.get_object()
-        if kyc.user != request.user and not (request.user.is_staff or request.user.is_superuser):
+        is_admin_scope = request.user.is_staff or request.user.is_superuser or UserRole.objects.filter(
+            user=request.user,
+            role=RoleCode.ADMIN,
+            is_active=True,
+        ).exists()
+        if kyc.user != request.user and not is_admin_scope:
             return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
         if kyc.status != KYCStatus.PENDING:
             return Response({"detail": "kyc_not_pending"}, status=status.HTTP_409_CONFLICT)
@@ -128,7 +178,7 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
             serializer = KYCDocumentSerializer(docs, many=True, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminOrActiveAdminRole])
     def approve(self, request, pk=None):
         kyc = self.get_object()
         kyc.status = KYCStatus.APPROVED
@@ -147,7 +197,7 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
         serializer = KYCRequestSerializer(kyc, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminOrActiveAdminRole])
     def reject(self, request, pk=None):
         kyc = self.get_object()
         serializer = KYCRequestAdminUpdateSerializer(data=request.data)

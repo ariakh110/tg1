@@ -21,12 +21,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-l4uxb3a8v8v^f26ehu4x6k#8@37mi7cqx42@$wx+mle#(hra2y'
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "change-me-local-dev-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
+]
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -98,6 +102,14 @@ KYC_DOCUMENT_ALLOWED_MIME_TYPES = [
     "application/x-zip-compressed",
     "multipart/x-zip",
 ]
+ORDER_REQUEST_DOC_MAX_SIZE_MB = int(os.environ.get("ORDER_REQUEST_DOC_MAX_SIZE_MB", 10))
+ORDER_REQUEST_DOC_ALLOWED_EXTENSIONS = [".pdf", ".zip"]
+ORDER_REQUEST_DOC_ALLOWED_MIME_TYPES = [
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "multipart/x-zip",
+]
 
 # Configure drf-spectacular schema class only if the package is available
 if globals().get('SPECTACULAR_AVAILABLE'):
@@ -144,12 +156,12 @@ WSGI_APPLICATION = 'tg1.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2', # موتور دیتابیس
-        'NAME': 'alibackend_db', # نام دیتابیس (همان که در docker-compose.yml تعریف کردید)
-        'USER': 'ariakh', # نام کاربری (همان که در docker-compose.yml تعریف کردید)
-        'PASSWORD': '123456', # رمز عبور (همان که در docker-compose.yml تعریف کردید)
-        'HOST': 'localhost', # نام سرویس دیتابیس در docker-compose.yml (نه localhost!)
-        'PORT': '5432', # پورت پیش فرض PostgreSQL
+        'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql_psycopg2'),
+        'NAME': os.environ.get('DB_NAME', 'alibackend_db'),
+        'USER': os.environ.get('DB_USER', 'ariakh'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', '123456'),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
     }
 }
 
@@ -196,7 +208,9 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
 ]
 
 # development email backend: print emails to console
@@ -204,8 +218,8 @@ if DEBUG:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # used by registration to build verification link
-FRONTEND_BASE = "http://localhost:3000"
-DEFAULT_FROM_EMAIL = "noreply@example.com"
+FRONTEND_BASE = os.environ.get("FRONTEND_BASE", "http://localhost:3000")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
 
 # Verification resend rate-limit defaults
 VERIFICATION_RESEND_WINDOW_HOURS = 24

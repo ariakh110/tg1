@@ -68,3 +68,15 @@ class IsOrderOfferParticipant(permissions.BasePermission):
             return True
         owner = get_order_owner(obj.order)
         return owner == user
+
+
+class IsWarehouseManager(permissions.BasePermission):
+    message = "Warehouse manager role required."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
+            return True
+        return user_has_role(user, RoleCode.WAREHOUSE_MANAGER, require_active=True)

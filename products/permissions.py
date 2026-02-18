@@ -3,6 +3,7 @@ from rest_framework import permissions
 
 from accounts.models import RoleCode
 from accounts.services import user_has_role
+from .models import Offer
 
 class IsAdminOrReadOnly(permissions.BasePermission):
     """
@@ -23,7 +24,7 @@ class HasSellerProfile(permissions.BasePermission):
       - یا کاربر قبلاً یک Seller مدل ساخته باشد (request.user.seller_profile)
     این کلاس برای endpointهایی مثل ایجاد Offer یا PricingTier مناسب است.
     """
-    message = "You must have a seller profile (or role=SELLER) to perform this action."
+    message = "Active SELLER role and seller profile are required."
 
     def has_permission(self, request, view):
         # read allowed
@@ -38,27 +39,11 @@ class HasSellerProfile(permissions.BasePermission):
         if not getattr(user, "is_active", False):
             return False
 
-        # 1) explicit seller model exists and is verified
-        if hasattr(user, "seller_profile"):
-            seller_profile = getattr(user, "seller_profile", None)
-            if seller_profile and seller_profile.is_verified:
-                return True
-
-        # 2) profile.role allows seller actions
-        profile = getattr(user, "profile", None)
-        if profile is not None:
-            # profile.Role might be an enum-like class on Profile
-            try:
-                role_value = profile.role
-            except Exception:
-                role_value = None
-            if role_value in ("SELLER", "BOTH") and user_has_role(user, RoleCode.SELLER, require_active=True):
-                return True
-
-        if user_has_role(user, RoleCode.SELLER, require_active=True):
+        if user.is_staff or user.is_superuser:
             return True
-
-        return False
+        if not user_has_role(user, RoleCode.SELLER, require_active=True):
+            return False
+        return bool(getattr(user, "seller_profile", None))
 
 
 class IsOfferOwner(permissions.BasePermission):
@@ -131,3 +116,26 @@ class IsSellerOwnerOrAdmin(permissions.BasePermission):
         # obj expected to be Seller instance with 'user' FK
         owner_user = getattr(obj, "user", None)
         return owner_user == user
+
+
+class IsProductAssetOwnerOrAdmin(permissions.BasePermission):
+    message = "Only seller with an offer on this product (or staff) can modify this asset."
+
+    def _can_access_product(self, user, product):
+        if user.is_staff or user.is_superuser:
+            return True
+        seller_profile = getattr(user, "seller_profile", None)
+        if not seller_profile:
+            return False
+        return Offer.objects.filter(product=product, seller=seller_profile).exists()
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        product = getattr(obj, "product", None)
+        if not product:
+            return False
+        return self._can_access_product(user, product)

@@ -7,6 +7,10 @@
 {% if pending %}
   <span class="kyc-badge">Pending KYC: {{ pending }}</span>
 {% endif %}
+{% pending_warehouse_request_count as pending_warehouse %}
+{% if pending_warehouse %}
+  <span class="warehouse-badge">Pending Warehouse Verifications: {{ pending_warehouse }}</span>
+{% endif %}
 {% endblock %}
 
 {% block extrastyle %}
@@ -20,6 +24,16 @@
     font-weight: 600;
     border-radius: 999px;
     background: #dc2626;
+    color: #fff;
+  }
+  .warehouse-badge {
+    display: inline-block;
+    margin-left: 12px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    background: #1d4ed8;
     color: #fff;
   }
 </style>

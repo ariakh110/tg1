@@ -1,8 +1,6 @@
 from django.urls import path
 from .views import (
     ProfileDetailView,
-    SetRoleView,
-    CreateSellerFromProfileView,
     RegisterAPIView,
     ProfileAPIView,
     VerifyEmailView,
@@ -14,8 +12,6 @@ from products.views import SellerDetailView
 # so the final routes become /api/auth/register/ and /api/auth/profile/.
 urlpatterns = [
     path("me/", ProfileDetailView.as_view(), name="profile-me"),
-    path("set-role/", SetRoleView.as_view(), name="set-role"),
-    path("create-seller/", CreateSellerFromProfileView.as_view(), name="create-seller"),
     path("auth/register/", RegisterAPIView.as_view(), name="api_register"),
     path("auth/profile/", ProfileAPIView.as_view(), name="api_profile"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),

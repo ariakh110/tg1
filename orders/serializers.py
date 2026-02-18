@@ -5,7 +5,16 @@ from accounts.models import RoleCode
 from accounts.services import user_has_role
 from products.models import ProductCategory
 
-from .models import Order, OrderOffer, OrderStatusHistory, OrderType
+from .models import (
+    Order,
+    OrderOffer,
+    OrderRequest,
+    OrderRequestDocument,
+    OrderRequestStatusHistory,
+    OrderRequestType,
+    OrderStatusHistory,
+    OrderType,
+)
 
 User = get_user_model()
 
@@ -28,7 +37,10 @@ class MoneyField(serializers.Field):
 
     def to_internal_value(self, data):
         if data is None:
-            return {}
+            return {
+                self.amount_field: None,
+                self.currency_field: "IRR",
+            }
         if not isinstance(data, dict):
             raise serializers.ValidationError("Invalid money payload.")
         amount = data.get("amount")
@@ -189,3 +201,184 @@ class OrderOfferCreateSerializer(serializers.ModelSerializer):
         if price_unit:
             validated_data.update(price_unit)
         return OrderOffer.objects.create(**validated_data)
+
+
+class OrderRequestDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by = UserSummarySerializer(read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderRequestDocument
+        fields = ("id", "name", "file", "file_url", "uploaded_by", "uploaded_at")
+        read_only_fields = ("file_url", "uploaded_by", "uploaded_at")
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.file:
+            return None
+        try:
+            url = obj.file.url
+        except ValueError:
+            return None
+        return request.build_absolute_uri(url) if request else url
+
+
+class OrderRequestStatusHistorySerializer(serializers.ModelSerializer):
+    actor_user = UserSummarySerializer(read_only=True)
+
+    class Meta:
+        model = OrderRequestStatusHistory
+        fields = ("from_status", "to_status", "event", "actor_user", "meta", "at")
+
+
+class OrderRequestReadSerializer(serializers.ModelSerializer):
+    owner = UserSummarySerializer(read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    target_price = MoneyField("target_price_amount", "target_price_currency", read_only=True)
+    documents = OrderRequestDocumentSerializer(many=True, read_only=True)
+    status_history = OrderRequestStatusHistorySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = OrderRequest
+        fields = (
+            "id",
+            "owner",
+            "type",
+            "status",
+            "is_active",
+            "category",
+            "category_name",
+            "product_title",
+            "grade",
+            "dimensions",
+            "quantity",
+            "quantity_unit",
+            "target_price",
+            "loading_city",
+            "unloading_city",
+            "loading_location",
+            "unloading_location",
+            "notes",
+            "expires_at",
+            "verified_by",
+            "verified_at",
+            "warehouse_reject_reason",
+            "documents",
+            "status_history",
+            "created_at",
+            "updated_at",
+        )
+
+
+class OrderRequestFeedSerializer(serializers.ModelSerializer):
+    owner = UserSummarySerializer(read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    target_price = MoneyField("target_price_amount", "target_price_currency", read_only=True)
+
+    class Meta:
+        model = OrderRequest
+        fields = (
+            "id",
+            "owner",
+            "type",
+            "status",
+            "category",
+            "category_name",
+            "product_title",
+            "grade",
+            "dimensions",
+            "quantity",
+            "quantity_unit",
+            "target_price",
+            "loading_city",
+            "unloading_city",
+            "notes",
+            "created_at",
+        )
+
+
+class OrderRequestCreateSerializer(serializers.ModelSerializer):
+    target_price = MoneyField("target_price_amount", "target_price_currency", required=False)
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=ProductCategory.objects.all(), required=False, allow_null=True
+    )
+
+    class Meta:
+        model = OrderRequest
+        fields = (
+            "id",
+            "type",
+            "category",
+            "product_title",
+            "grade",
+            "dimensions",
+            "quantity",
+            "quantity_unit",
+            "target_price",
+            "loading_city",
+            "unloading_city",
+            "loading_location",
+            "unloading_location",
+            "notes",
+            "expires_at",
+        )
+        read_only_fields = ("id",)
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        request_type = attrs.get("type")
+        if request_type == OrderRequestType.BUY:
+            if not user_has_role(user, RoleCode.BUYER, require_active=True):
+                raise serializers.ValidationError("Active BUYER role required.")
+        elif request_type == OrderRequestType.SELL:
+            if not user_has_role(user, RoleCode.SELLER, require_active=True):
+                raise serializers.ValidationError("Active SELLER role required.")
+        else:
+            raise serializers.ValidationError("Unsupported request type.")
+        return attrs
+
+class OrderRequestUpdateSerializer(serializers.ModelSerializer):
+    target_price = MoneyField("target_price_amount", "target_price_currency", required=False)
+    is_active = serializers.BooleanField(required=False)
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=ProductCategory.objects.all(), required=False, allow_null=True
+    )
+
+    class Meta:
+        model = OrderRequest
+        fields = (
+            "is_active",
+            "category",
+            "product_title",
+            "grade",
+            "dimensions",
+            "quantity",
+            "quantity_unit",
+            "target_price",
+            "loading_city",
+            "unloading_city",
+            "loading_location",
+            "unloading_location",
+            "notes",
+            "expires_at",
+        )
+
+    def update(self, instance, validated_data):
+        target_price = validated_data.pop("target_price", None)
+        if target_price is not None:
+            validated_data.update(target_price)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        return instance
+
+
+class WarehouseVerificationSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=("APPROVE", "REJECT"))
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        decision = attrs.get("decision")
+        reason = attrs.get("reason", "")
+        if decision == "REJECT" and not reason.strip():
+            raise serializers.ValidationError("Reject reason is required.")
+        return attrs
