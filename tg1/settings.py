@@ -47,6 +47,9 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'django_extensions',
+    'ckeditor',
+    'ckeditor_uploader',
+    # ************************
     'core',
     'products',
     'mptt',
@@ -55,6 +58,7 @@ INSTALLED_APPS = [
     'accounts',
     'tags',
     'orders',
+    'blog',
     
 ]
 # Optionally enable drf-spectacular if it's installed in the environment.
@@ -224,3 +228,5 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
 # Verification resend rate-limit defaults
 VERIFICATION_RESEND_WINDOW_HOURS = 24
 VERIFICATION_RESEND_MAX = 5
+
+CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"

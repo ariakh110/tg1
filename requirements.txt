@@ -3,8 +3,11 @@ djangorestframework
 drf-spectacular
 django-filter
 django-extensions
+django-ckeditor
 psycopg2-binary
 django-cors-headers
 djangorestframework-simplejwt
 jdatetime
 mptt
+Pillow
+bleach

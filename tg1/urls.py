@@ -24,6 +24,7 @@ urlpatterns += [
     path('api/', include('products.urls')),
     # expose contact API under /api/contact so frontend requests to `${API_BASE}/contact` work
     path('api/contact', core_views.ContactAPIView.as_view()),
+    path('api/blog/', include('blog.urls')), 
     # include accounts URL patterns directly under /api/ so routes like
     # /api/auth/profile/ and /api/auth/register/ match frontend expectations
     path("api/", include("accounts.urls")),
