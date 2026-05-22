@@ -702,6 +702,54 @@ class AdminProductImportTests(APITestCase):
         self.assertIsNone(log.product_id)
         self.assertEqual(log.payload["product_id"], product_id)
 
+    def test_admin_taxonomy_create_actions_are_logged(self):
+        self.client.force_authenticate(self.admin)
+        sheet = ProductCategory.objects.get(code="sheet")
+        black = ProductAttributeOption.objects.get(group="surface_finish", value="black")
+
+        category_res = self.client.post(
+            "/api/categories/",
+            {
+                "name": "ورق تست لاگ",
+                "code": "sheet-log-test",
+                "parent": sheet.id,
+                "product_kind": "sheet",
+                "spec_defaults": {"material_type": "sheet", "surface_finish": "black"},
+                "required_spec_fields": ["steel_grade", "thickness_mm", "width_mm"],
+                "sort_order": 999,
+                "is_active": True,
+            },
+            format="json",
+        )
+        option_res = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "steel_grade",
+                "value": "LOGTEST",
+                "label": "گرید تست لاگ",
+                "product_kind": "sheet",
+                "parent": black.id,
+                "sort_order": 999,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(category_res.status_code, status.HTTP_201_CREATED, category_res.data)
+        self.assertEqual(option_res.status_code, status.HTTP_201_CREATED, option_res.data)
+        self.assertTrue(
+            ProductAuditLog.objects.filter(
+                action="PRODUCT_CATEGORY_CREATED",
+                product_name="ورق تست لاگ",
+            ).exists()
+        )
+        self.assertTrue(
+            ProductAuditLog.objects.filter(
+                action="TAXONOMY_OPTION_CREATED",
+                product_name="گرید تست لاگ",
+            ).exists()
+        )
+
     def test_non_admin_cannot_use_admin_product_import(self):
         user = User.objects.create_user(username="regular_user", password="pass1234")
         self.client.force_authenticate(user)

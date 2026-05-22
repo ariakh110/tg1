@@ -57,6 +57,16 @@ def log_product_activity(product, action, actor, payload=None):
     )
 
 
+def log_catalog_activity(name, action, actor, payload=None):
+    ProductAuditLog.objects.create(
+        product=None,
+        product_name=name,
+        action=action,
+        actor_user=actor if getattr(actor, "is_authenticated", False) else None,
+        payload=payload or {},
+    )
+
+
 # ---------------- ProductCategoryViewSet ----------------
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     """
@@ -72,6 +82,25 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "hscode", "code"]
     ordering_fields = ["sort_order", "name"]
     ordering = ["tree_id", "lft"]
+
+    def perform_create(self, serializer):
+        category = serializer.save()
+        log_catalog_activity(
+            category.name,
+            "PRODUCT_CATEGORY_CREATED",
+            self.request.user,
+            {"category_id": category.id, "code": category.code, "parent_id": category.parent_id},
+        )
+
+    def perform_update(self, serializer):
+        fields = list(serializer.validated_data.keys())
+        category = serializer.save()
+        log_catalog_activity(
+            category.name,
+            "PRODUCT_CATEGORY_UPDATED",
+            self.request.user,
+            {"category_id": category.id, "code": category.code, "fields": fields},
+        )
 
     @action(detail=False, methods=["get"], url_path="active-with-products")
     def active_with_products(self, request):
@@ -519,6 +548,36 @@ class ProductAttributeOptionViewSet(viewsets.ModelViewSet):
     search_fields = ["label", "value", "group"]
     ordering_fields = ["group", "sort_order", "label"]
     ordering = ["group", "sort_order", "label"]
+
+    def perform_create(self, serializer):
+        option = serializer.save()
+        log_catalog_activity(
+            option.label,
+            "TAXONOMY_OPTION_CREATED",
+            self.request.user,
+            {
+                "option_id": option.id,
+                "group": option.group,
+                "value": option.value,
+                "product_kind": option.product_kind,
+                "parent_id": option.parent_id,
+            },
+        )
+
+    def perform_update(self, serializer):
+        fields = list(serializer.validated_data.keys())
+        option = serializer.save()
+        log_catalog_activity(
+            option.label,
+            "TAXONOMY_OPTION_UPDATED",
+            self.request.user,
+            {
+                "option_id": option.id,
+                "group": option.group,
+                "value": option.value,
+                "fields": fields,
+            },
+        )
 
 
 class SpecificationValueViewSet(viewsets.ModelViewSet):
