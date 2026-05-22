@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.utils.text import slugify
-from ckeditor.fields import RichTextField
+from django_ckeditor_5.fields import CKEditor5Field
 import math
 
 class Category(models.Model):
@@ -22,7 +22,7 @@ class Post(models.Model):
     title = models.CharField(max_length=255, verbose_name="عنوان خبر")
     slug = models.SlugField(unique=True, max_length=255, allow_unicode=True)
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blog_posts')
-    content = RichTextField(verbose_name="محتوا")
+    content = CKEditor5Field(verbose_name="محتوا", config_name="default")
     thumbnail = models.ImageField(upload_to='blog/thumbs/', verbose_name="تصویر شاخص")
     categories = models.ManyToManyField(Category, related_name='posts', verbose_name="دسته‌بندی‌ها")
 

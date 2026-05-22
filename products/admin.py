@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Product, ProductCategory, ProductImage, ProductSpecification, 
     ProductStandard, SpecificationAttribute, SpecificationValue, 
-    Offer, DeliveryLocation, PricingTier, ProductDocument, Seller
+    ProductAttributeOption, ProductAuditLog, Offer, DeliveryLocation, PricingTier, ProductDocument, Seller
 )
 
 # ---------- Inline ها ----------
@@ -39,21 +39,29 @@ class DeliveryLocationInline(admin.TabularInline):
 # ---------- دسته‌بندی ----------
 @admin.register(ProductCategory)
 class ProductCategoryAdmin(admin.ModelAdmin):
-    list_display = ("name", "parent", "hscode")
-    search_fields = ("name", "hscode")
-    list_filter = ("parent",)
+    list_display = ("name", "parent", "code", "product_kind", "sort_order", "is_active")
+    search_fields = ("name", "hscode", "code")
+    list_filter = ("parent", "product_kind", "is_active")
 
 
 # ---------- محصول ----------
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "category", "is_active", "created_at")
-    list_filter = ("is_active", "category")
+    list_display = ("name", "slug", "category", "availability_status", "is_active", "created_at")
+    list_filter = ("is_active", "availability_status", "category")
     search_fields = ("name", "slug", "short_description")
     prepopulated_fields = {"slug": ("name",)}
     ordering = ("-created_at",)
 
     inlines = [ProductImageInline, ProductDocumentInline, ProductSpecificationInline, SpecificationValueInline]
+
+
+@admin.register(ProductAuditLog)
+class ProductAuditLogAdmin(admin.ModelAdmin):
+    list_display = ("product_name", "action", "actor_user", "created_at")
+    list_filter = ("action", "created_at")
+    search_fields = ("product_name", "actor_user__username", "payload")
+    readonly_fields = ("product", "product_name", "action", "actor_user", "payload", "created_at")
 
 
 # ---------- استاندارد ----------
@@ -66,6 +74,13 @@ class ProductStandardAdmin(admin.ModelAdmin):
 @admin.register(SpecificationAttribute)
 class SpecificationAttributeAdmin(admin.ModelAdmin):
     list_display = ("name", "unit")
+
+
+@admin.register(ProductAttributeOption)
+class ProductAttributeOptionAdmin(admin.ModelAdmin):
+    list_display = ("group", "label", "value", "product_kind", "category", "parent", "sort_order", "is_active")
+    list_filter = ("group", "product_kind", "is_active")
+    search_fields = ("label", "value", "group")
 
 
 # ---------- پیشنهاد فروش ----------

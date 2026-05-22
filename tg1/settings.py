@@ -47,8 +47,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'django_extensions',
-    'ckeditor',
-    'ckeditor_uploader',
+    'django_ckeditor_5',
     # ************************
     'core',
     'products',
@@ -229,4 +228,53 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
 VERIFICATION_RESEND_WINDOW_HOURS = 24
 VERIFICATION_RESEND_MAX = 5
 
-CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"
+CKEDITOR_5_FILE_STORAGE = "tg1.storage_backends.CKEditor5Storage"
+CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"
+CKEDITOR_5_MAX_FILE_SIZE = int(os.environ.get("CKEDITOR_5_MAX_FILE_SIZE_MB", 5))
+CKEDITOR_5_UPLOAD_FILE_TYPES = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"]
+CKEDITOR_5_CONFIGS = {
+    "default": {
+        "toolbar": {
+            "items": [
+                "heading",
+                "|",
+                "bold",
+                "italic",
+                "underline",
+                "strikethrough",
+                "link",
+                "|",
+                "bulletedList",
+                "numberedList",
+                "blockQuote",
+                "|",
+                "insertTable",
+                "imageUpload",
+                "mediaEmbed",
+                "|",
+                "undo",
+                "redo",
+            ],
+            "shouldNotGroupWhenFull": True,
+        },
+        "image": {
+            "toolbar": [
+                "imageTextAlternative",
+                "toggleImageCaption",
+                "|",
+                "imageStyle:inline",
+                "imageStyle:block",
+                "imageStyle:side",
+            ],
+        },
+        "table": {
+            "contentToolbar": [
+                "tableColumn",
+                "tableRow",
+                "mergeTableCells",
+                "tableProperties",
+                "tableCellProperties",
+            ],
+        },
+    },
+}

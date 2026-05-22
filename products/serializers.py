@@ -4,7 +4,7 @@ from django.conf import settings
 from .models import (
     Product, ProductCategory, ProductImage, ProductSpecification,
     ProductStandard, SpecificationAttribute, SpecificationValue,
-    Offer, PricingTier, DeliveryLocation, ProductDocument, Seller
+    ProductAttributeOption, Offer, PricingTier, DeliveryLocation, ProductDocument, Seller
 )
 
 
@@ -12,13 +12,52 @@ from .models import (
 # Category
 # -------------------------
 class ProductCategorySerializer(serializers.ModelSerializer):
+    children_count = serializers.SerializerMethodField()
+    level = serializers.IntegerField(read_only=True)
+    full_path = serializers.SerializerMethodField()
+    resolved_product_kind = serializers.SerializerMethodField()
+    merged_spec_defaults = serializers.SerializerMethodField()
+    merged_required_spec_fields = serializers.SerializerMethodField()
+
     class Meta:
         model = ProductCategory
-        fields = ("id", "name", "parent", "hscode")
+        fields = (
+            "id",
+            "name",
+            "parent",
+            "hscode",
+            "code",
+            "product_kind",
+            "resolved_product_kind",
+            "spec_defaults",
+            "merged_spec_defaults",
+            "required_spec_fields",
+            "merged_required_spec_fields",
+            "sort_order",
+            "is_active",
+            "level",
+            "children_count",
+            "full_path",
+        )
         # parent: وقتی write انجام می‌شود باید id ارسال شود؛ برای نمایش فقط id برمی‌گردد.
         extra_kwargs = {
             "parent": {"required": False, "allow_null": True}
         }
+
+    def get_full_path(self, obj):
+        return " / ".join(category.name for category in obj.get_ancestors(include_self=True))
+
+    def get_children_count(self, obj):
+        return obj.get_children().count()
+
+    def get_resolved_product_kind(self, obj):
+        return obj.resolved_product_kind()
+
+    def get_merged_spec_defaults(self, obj):
+        return obj.merged_spec_defaults()
+
+    def get_merged_required_spec_fields(self, obj):
+        return obj.merged_required_spec_fields()
 
 
 # -------------------------
@@ -47,6 +86,22 @@ class SpecificationAttributeSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "unit")
 
 
+class ProductAttributeOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductAttributeOption
+        fields = (
+            "id",
+            "group",
+            "value",
+            "label",
+            "product_kind",
+            "category",
+            "parent",
+            "sort_order",
+            "is_active",
+        )
+
+
 class SpecificationValueSerializer(serializers.ModelSerializer):
     # نمایش attribute به صورت nested کوچک
     attribute = SpecificationAttributeSerializer(read_only=True)
@@ -64,6 +119,12 @@ class SpecificationValueSerializer(serializers.ModelSerializer):
 class ProductSpecificationSerializer(serializers.ModelSerializer):
     standard = ProductStandardSerializer(read_only=True)
     standard_id = serializers.PrimaryKeyRelatedField(source="standard", queryset=ProductStandard.objects.all(), write_only=True, allow_null=True, required=False)
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    steel_grade_label = serializers.SerializerMethodField()
+    surface_finish_label = serializers.SerializerMethodField()
+    manufacturing_process_label = serializers.SerializerMethodField()
+    factory_label = serializers.SerializerMethodField()
+    cut_type_label = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductSpecification
@@ -81,8 +142,136 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
             "weight_kg_per_unit",
             "surface_finish",
             "manufacturing_process",
+            "factory",
+            "cut_type",
+            "steel_grade_label",
+            "surface_finish_label",
+            "manufacturing_process_label",
+            "factory_label",
+            "cut_type_label",
+            "diameter_mm",
         )
-        read_only_fields = ("product",)
+
+    def _option_label(self, obj, group, value):
+        if value in (None, ""):
+            return ""
+        option = ProductAttributeOption.objects.filter(
+            group=group,
+            value=value,
+            is_active=True,
+        ).first()
+        return option.label if option else str(value)
+
+    def get_steel_grade_label(self, obj):
+        return self._option_label(obj, "steel_grade", obj.steel_grade)
+
+    def get_surface_finish_label(self, obj):
+        return self._option_label(obj, "surface_finish", obj.surface_finish)
+
+    def get_manufacturing_process_label(self, obj):
+        return self._option_label(obj, "manufacturing_process", obj.manufacturing_process)
+
+    def get_factory_label(self, obj):
+        return self._option_label(obj, "factory", obj.factory)
+
+    def get_cut_type_label(self, obj):
+        return self._option_label(obj, "cut_type", obj.cut_type)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        product = attrs.get("product") or getattr(self.instance, "product", None)
+        category = getattr(product, "category", None)
+        if not category:
+            return attrs
+
+        def current_value(field):
+            if field in attrs:
+                return attrs.get(field)
+            if self.instance is not None:
+                return getattr(self.instance, field, None)
+            return None
+
+        defaults = category.merged_spec_defaults()
+        for field, value in defaults.items():
+            if field in self.fields and current_value(field) in (None, "") and value not in (None, ""):
+                attrs[field] = value
+
+        required_fields = category.merged_required_spec_fields()
+        missing = [
+            field
+            for field in required_fields
+            if field in self.fields and current_value(field) in (None, "")
+        ]
+        if missing:
+            raise serializers.ValidationError(
+                {field: "این مشخصه برای این دسته‌بندی الزامی است." for field in missing}
+            )
+
+        if attrs.get("steel_grade"):
+            attrs["steel_grade"] = str(attrs["steel_grade"]).upper().replace(" ", "")
+        product_kind = category.resolved_product_kind()
+
+        def ensure_option(field, group, *, parent_field=None, parent_group=None):
+            value = current_value(field)
+            if value in (None, ""):
+                return
+            queryset = ProductAttributeOption.objects.filter(group=group, is_active=True)
+            if product_kind:
+                queryset = queryset.filter(product_kind__in=["", product_kind])
+            if not queryset.exists():
+                return
+            if parent_field and parent_group:
+                parent_value = current_value(parent_field)
+                if parent_value not in (None, ""):
+                    parent_queryset = ProductAttributeOption.objects.filter(
+                        group=parent_group,
+                        value=parent_value,
+                        is_active=True,
+                    )
+                    if product_kind:
+                        parent_queryset = parent_queryset.filter(product_kind__in=["", product_kind])
+                    parent_option = parent_queryset.first()
+                    if parent_option:
+                        scoped_queryset = queryset.filter(parent=parent_option)
+                        if scoped_queryset.exists():
+                            if not scoped_queryset.filter(value=value).exists():
+                                raise serializers.ValidationError(
+                                    {field: "این گزینه برای انتخاب قبلی مجاز نیست."}
+                                )
+                            return
+            if not queryset.filter(value=value).exists():
+                raise serializers.ValidationError({field: "این گزینه در مدیریت تعریف نشده است."})
+
+        for field, group in (
+            ("surface_finish", "surface_finish"),
+            ("manufacturing_process", "manufacturing_process"),
+            ("factory", "factory"),
+            ("cut_type", "cut_type"),
+        ):
+            ensure_option(field, group)
+        ensure_option(
+            "steel_grade",
+            "steel_grade",
+            parent_field="surface_finish" if product_kind == "sheet" else None,
+            parent_group="surface_finish" if product_kind == "sheet" else None,
+        )
+
+        if product_kind == "sheet":
+            sheet_required = ["manufacturing_process", "surface_finish", "factory", "thickness_mm", "width_mm"]
+            if current_value("manufacturing_process") == "sheet":
+                sheet_required.extend(["length_mm", "cut_type"])
+            missing_sheet = [
+                field
+                for field in sheet_required
+                if field in self.fields and current_value(field) in (None, "")
+            ]
+            if missing_sheet:
+                raise serializers.ValidationError(
+                    {field: "این مشخصه برای ورق/رول الزامی است." for field in missing_sheet}
+                )
+            if current_value("manufacturing_process") == "coil":
+                attrs["length_mm"] = None
+        return attrs
 
 
 # -------------------------
@@ -147,7 +336,7 @@ class PricingTierSerializer(serializers.ModelSerializer):
 class DeliveryLocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliveryLocation
-        fields = ("id", "offer", "incoterm", "country", "city", "port")
+        fields = ("id", "offer", "incoterm", "country", "province", "city", "port", "address")
         read_only_fields = ("offer",)
 
 
@@ -188,6 +377,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     documents = ProductDocumentSerializer(many=True, read_only=True)
     offers = OfferReadSerializer(many=True, read_only=True)
+    min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = Product
@@ -199,12 +389,14 @@ class ProductListSerializer(serializers.ModelSerializer):
             "description",
             "category",
             "is_active",
+            "availability_status",
             "created_at",
             "updated_at",
             "specification",
             "images",
             "documents",
             "offers",
+            "min_price",
         )
 
 
@@ -221,9 +413,25 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ("id", "name", "slug", "short_description", "description", "category", "is_active", "created_at", "updated_at")
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "short_description",
+            "description",
+            "category",
+            "is_active",
+            "availability_status",
+            "created_at",
+            "updated_at",
+        )
         read_only_fields = ("created_at", "updated_at")
         extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
+
+    def validate_category(self, value):
+        if value is not None and not value.is_active:
+            raise serializers.ValidationError("این دسته‌بندی غیرفعال است.")
+        return value
 
 class ProductSummarySerializer(serializers.ModelSerializer):
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)

@@ -14,6 +14,7 @@ from accounts.models import KYCRequest, KYCStatus, KYCDocument, RoleCode
 from accounts.permissions import IsAdminOrActiveAdminRole
 from accounts.serializers import KYCRequestSerializer
 from accounts.services import user_has_role
+from products.models import Product, ProductAuditLog
 from .models import (
     OfferStatus,
     Order,
@@ -351,6 +352,25 @@ def _normalize_limit(raw_limit, default=50, max_limit=200):
 def _collect_admin_activity_events(limit=50):
     events = []
 
+    product_logs = ProductAuditLog.objects.select_related("actor_user").order_by("-created_at")[:limit]
+    for log in product_logs:
+        events.append(
+            {
+                "id": f"product-audit-{log.id}",
+                "kind": "PRODUCT_AUDIT",
+                "timestamp": log.created_at,
+                "title": f"Product audit: {log.action}",
+                "description": f"{log.action} on product '{log.product_name}'",
+                "actor": _serialize_user_summary(log.actor_user),
+                "subject": {
+                    "type": "product",
+                    "id": str(log.product_id) if log.product_id else None,
+                    "name": log.product_name,
+                },
+                "meta": log.payload or {},
+            }
+        )
+
     audit_logs = OrderRequestAuditLog.objects.select_related(
         "actor_user", "order_request", "order_request__owner"
     ).order_by("-created_at")[:limit]
@@ -480,6 +500,9 @@ class AdminDashboardSummaryAPIView(APIView):
         stats = {
             "users_total": User.objects.count(),
             "users_active": User.objects.filter(is_active=True).count(),
+            "products_total": Product.objects.count(),
+            "products_active": Product.objects.filter(is_active=True).count(),
+            "products_inactive": Product.objects.filter(is_active=False).count(),
             "kyc_pending": pending_kyc,
             "kyc_approved": KYCRequest.objects.filter(status=KYCStatus.APPROVED).count(),
             "order_requests_total": all_requests.count(),

@@ -4,7 +4,7 @@ from django.urls import path, include
 from .views import (
     ProductViewSet, ProductCategoryViewSet, ProductImageViewSet,
     ProductSpecificationViewSet, ProductStandardViewSet,
-    SpecificationAttributeViewSet, SpecificationValueViewSet,
+    SpecificationAttributeViewSet, ProductAttributeOptionViewSet, SpecificationValueViewSet,
     OfferViewSet, PricingTierViewSet, DeliveryLocationViewSet,
     ProductDocumentViewSet, SellerViewSet
 )
@@ -19,6 +19,7 @@ router.register(r'product-documents', ProductDocumentViewSet, basename='productd
 router.register(r'specifications', ProductSpecificationViewSet, basename='specification')
 router.register(r'standards', ProductStandardViewSet, basename='standard')
 router.register(r'spec-attributes', SpecificationAttributeViewSet, basename='specattribute')
+router.register(r'attribute-options', ProductAttributeOptionViewSet, basename='attributeoption')
 router.register(r'spec-values', SpecificationValueViewSet, basename='specvalue')
 router.register(r'offers', OfferViewSet, basename='offer')
 router.register(r'pricing-tiers', PricingTierViewSet, basename='pricingtier')
