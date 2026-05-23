@@ -30,6 +30,7 @@ urlpatterns += [
     path("api/", include("accounts.urls")),
     path("api/v1/", include("accounts.urls_v1")),
     path("api/v1/", include("orders.urls_v1")),
+    path("api/v1/", include("sales.urls_v1")),
     path("api/token/", ActiveUserTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("ckeditor5/", include("django_ckeditor_5.urls")),
