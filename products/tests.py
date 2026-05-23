@@ -503,6 +503,53 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
         self.assertEqual(offer.delivery_options.get().city, "مبارکه")
 
+    def test_admin_can_update_origin_without_price_change(self):
+        category = ProductCategory.objects.get(code="sheet-acid-washed")
+        product = Product.objects.create(
+            category=category,
+            name="ورق اسید مبارکه",
+            short_description="ورق اسید مبارکه",
+            description="ورق اسید مبارکه",
+            is_active=True,
+        )
+        offer = Offer.objects.create(product=product, seller=self.seller, is_active=True)
+        PricingTier.objects.create(
+            offer=offer,
+            tier_name="قیمت روز",
+            unit_price="45000",
+            minimum_quantity=1,
+        )
+        DeliveryLocation.objects.create(
+            offer=offer,
+            province="اصفهان",
+            city="مبارکه",
+            address="کارخانه",
+        )
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "product_id": product.id,
+                "name": product.name,
+                "seller_id": self.seller.id,
+                "price": "",
+                "province": "تهران",
+                "city": "تهران",
+                "address": "انبار",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertFalse(res.data["updated_price"])
+        offer.refresh_from_db()
+        delivery = offer.delivery_options.get()
+        self.assertEqual(delivery.province, "تهران")
+        self.assertEqual(delivery.city, "تهران")
+        self.assertEqual(delivery.address, "انبار")
+        self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
+
     def test_admin_can_create_coil_without_length_or_price(self):
         self.client.force_authenticate(self.admin)
 
@@ -749,6 +796,128 @@ class AdminProductImportTests(APITestCase):
                 product_name="گرید تست لاگ",
             ).exists()
         )
+
+    def test_admin_can_deactivate_reactivate_category_and_public_list_hides_it(self):
+        category = ProductCategory.objects.get(code="sheet-black")
+        Product.objects.create(
+            category=category,
+            name="ورق دسته غیرفعال",
+            short_description="ورق دسته غیرفعال",
+            description="ورق دسته غیرفعال",
+            is_active=True,
+        )
+        before = self.client.get("/api/categories/active-with-products/")
+        self.assertIn(category.id, {item["id"] for item in before.data["results"]})
+        self.client.force_authenticate(self.admin)
+
+        deactivated = self.client.post(f"/api/categories/{category.id}/deactivate/")
+        public_after = self.client.get("/api/categories/active-with-products/")
+        inactive_admin = self.client.get("/api/categories/", {"is_active": "false"})
+        activated = self.client.post(f"/api/categories/{category.id}/activate/")
+
+        self.assertEqual(deactivated.status_code, status.HTTP_200_OK, deactivated.data)
+        self.assertFalse(deactivated.data["is_active"])
+        self.assertNotIn(category.id, {item["id"] for item in public_after.data["results"]})
+        self.assertIn(category.id, {item["id"] for item in inactive_admin.data["results"]})
+        self.assertEqual(activated.status_code, status.HTTP_200_OK, activated.data)
+        self.assertTrue(activated.data["is_active"])
+        self.assertTrue(
+            ProductAuditLog.objects.filter(
+                action="PRODUCT_CATEGORY_DEACTIVATED",
+                product_name=category.name,
+            ).exists()
+        )
+        self.assertTrue(
+            ProductAuditLog.objects.filter(
+                action="PRODUCT_CATEGORY_ACTIVATED",
+                product_name=category.name,
+            ).exists()
+        )
+
+    def test_admin_can_deactivate_option_and_public_lists_hide_it(self):
+        option = ProductAttributeOption.objects.get(group="surface_finish", value="black")
+        self.client.force_authenticate(self.admin)
+
+        deactivated = self.client.post(f"/api/attribute-options/{option.id}/deactivate/")
+        inactive_admin = self.client.get(
+            "/api/attribute-options/",
+            {"group": "surface_finish", "is_active": "false"},
+        )
+        self.client.force_authenticate(None)
+        inactive_public = self.client.get(
+            "/api/attribute-options/",
+            {"group": "surface_finish", "is_active": "false"},
+        )
+
+        self.assertEqual(deactivated.status_code, status.HTTP_200_OK, deactivated.data)
+        self.assertFalse(deactivated.data["is_active"])
+        self.assertIn(option.id, {item["id"] for item in inactive_admin.data["results"]})
+        self.assertNotIn(option.id, {item["id"] for item in inactive_public.data["results"]})
+        self.assertTrue(
+            ProductAuditLog.objects.filter(
+                action="TAXONOMY_OPTION_DEACTIVATED",
+                product_name=option.label,
+            ).exists()
+        )
+
+    def test_inactive_option_is_rejected_for_new_product_writes(self):
+        ProductAttributeOption.objects.filter(group="surface_finish", value="black").update(is_active=False)
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "ورق با گزینه غیرفعال",
+                "category_code": "sheet",
+                "seller_id": self.seller.id,
+                "price": "45000",
+                "steel_grade": "ST37",
+                "manufacturing_process": "sheet",
+                "surface_finish": "black",
+                "factory": "mobarakeh",
+                "cut_type": "cut",
+                "thickness_mm": "2",
+                "width_mm": "1000",
+                "length_mm": "6000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("surface_finish", str(res.data))
+
+    def test_taxonomy_usage_counts_are_returned(self):
+        category = ProductCategory.objects.get(code="sheet-black")
+        option = ProductAttributeOption.objects.get(group="surface_finish", value="black")
+        product = Product.objects.create(
+            category=category,
+            name="ورق شمارش",
+            short_description="ورق شمارش",
+            description="ورق شمارش",
+            is_active=True,
+        )
+        ProductSpecification.objects.create(
+            product=product,
+            manufacturing_process="sheet",
+            surface_finish="black",
+            steel_grade="ST37",
+            factory="mobarakeh",
+            cut_type="cut",
+            thickness_mm=2,
+            width_mm=1000,
+            length_mm=6000,
+        )
+        self.client.force_authenticate(self.admin)
+
+        category_res = self.client.get(f"/api/categories/{category.id}/")
+        option_res = self.client.get(f"/api/attribute-options/{option.id}/")
+
+        self.assertEqual(category_res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(category_res.data["product_count"], 1)
+        self.assertGreaterEqual(category_res.data["active_product_count"], 1)
+        self.assertEqual(option_res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(option_res.data["product_count"], 1)
+        self.assertGreaterEqual(option_res.data["active_product_count"], 1)
 
     def test_non_admin_cannot_use_admin_product_import(self):
         user = User.objects.create_user(username="regular_user", password="pass1234")

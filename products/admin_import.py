@@ -363,11 +363,15 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
 
     price = row.get("price")
     updated_price = False
-    if price not in (None, ""):
+    has_price = price not in (None, "")
+    has_delivery = any(row.get(field) not in ("", None) for field in ("province", "city", "address", "country", "incoterm"))
+    offer = None
+    if has_price or has_delivery:
         seller = resolve_seller(row, default_seller_id=default_seller_id)
         if seller is None:
-            raise ValueError("برای ثبت قیمت، فروشنده لازم است.")
+            raise ValueError("برای ثبت قیمت یا مبدا بار، فروشنده لازم است.")
         offer, _ = Offer.objects.get_or_create(product=product, seller=seller, defaults={"is_active": True})
+    if has_price:
         tier_name = row.get("tier_name") or "قیمت روز"
         tier = PricingTier.objects.filter(offer=offer, tier_name=tier_name).first()
         if tier is None:
@@ -385,21 +389,21 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
             tier.save(update_fields=["unit_price", "minimum_quantity"])
         updated_price = True
 
-        if any(row.get(field) for field in ("province", "city", "address", "country", "incoterm")):
-            delivery = offer.delivery_options.first()
-            delivery_data = {
-                "incoterm": row.get("incoterm") or "EXW",
-                "country": row.get("country") or "ایران",
-                "province": row.get("province") or "",
-                "city": row.get("city") or "",
-                "address": row.get("address") or "",
-            }
-            if delivery is None:
-                DeliveryLocation.objects.create(offer=offer, **delivery_data)
-            else:
-                for field, value in delivery_data.items():
-                    setattr(delivery, field, value)
-                delivery.save(update_fields=list(delivery_data.keys()))
+    if has_delivery and offer is not None:
+        delivery = offer.delivery_options.first()
+        delivery_data = {
+            "incoterm": row.get("incoterm") or "EXW",
+            "country": row.get("country") or "ایران",
+            "province": row.get("province") or "",
+            "city": row.get("city") or "",
+            "address": row.get("address") or "",
+        }
+        if delivery is None:
+            DeliveryLocation.objects.create(offer=offer, **delivery_data)
+        else:
+            for field, value in delivery_data.items():
+                setattr(delivery, field, value)
+            delivery.save(update_fields=list(delivery_data.keys()))
 
     return {
         "product_id": product.id,

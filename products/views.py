@@ -67,6 +67,17 @@ def log_catalog_activity(name, action, actor, payload=None):
     )
 
 
+def request_has_admin_access(request, view=None):
+    return IsAdminOrActiveAdminRole().has_permission(request, view)
+
+
+class IsAdminRoleOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request_has_admin_access(request, view)
+
+
 # ---------------- ProductCategoryViewSet ----------------
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     """
@@ -76,12 +87,18 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     """
     queryset = ProductCategory.objects.all()
     serializer_class = ProductCategorySerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsAdminRoleOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["parent", "hscode", "code", "product_kind", "is_active"]
     search_fields = ["name", "hscode", "code"]
     ordering_fields = ["sort_order", "name"]
     ordering = ["tree_id", "lft"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if request_has_admin_access(self.request, self):
+            return queryset
+        return queryset.filter(is_active=True)
 
     def perform_create(self, serializer):
         category = serializer.save()
@@ -93,14 +110,57 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
+        old_is_active = serializer.instance.is_active
         fields = list(serializer.validated_data.keys())
         category = serializer.save()
+        action = "PRODUCT_CATEGORY_UPDATED"
+        if "is_active" in fields and old_is_active != category.is_active:
+            action = "PRODUCT_CATEGORY_ACTIVATED" if category.is_active else "PRODUCT_CATEGORY_DEACTIVATED"
         log_catalog_activity(
             category.name,
-            "PRODUCT_CATEGORY_UPDATED",
+            action,
             self.request.user,
             {"category_id": category.id, "code": category.code, "fields": fields},
         )
+
+    def _set_active_state(self, request, pk, is_active):
+        category = self.get_object()
+        previous = category.is_active
+        if previous != is_active:
+            category.is_active = is_active
+            category.save(update_fields=["is_active"])
+        action = "PRODUCT_CATEGORY_ACTIVATED" if is_active else "PRODUCT_CATEGORY_DEACTIVATED"
+        log_catalog_activity(
+            category.name,
+            action,
+            request.user,
+            {
+                "category_id": category.id,
+                "code": category.code,
+                "previous_is_active": previous,
+                "is_active": category.is_active,
+            },
+        )
+        serializer = self.get_serializer(category)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="deactivate",
+        permission_classes=[IsAdminOrActiveAdminRole],
+    )
+    def deactivate(self, request, pk=None):
+        return self._set_active_state(request, pk, False)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="activate",
+        permission_classes=[IsAdminOrActiveAdminRole],
+    )
+    def activate(self, request, pk=None):
+        return self._set_active_state(request, pk, True)
 
     @action(detail=False, methods=["get"], url_path="active-with-products")
     def active_with_products(self, request):
@@ -540,14 +600,20 @@ class ProductAttributeOptionViewSet(viewsets.ModelViewSet):
     گزینه‌های کنترل‌شده برای فرم ثبت محصول:
     مثل گرید فولاد، نوع سطح، فرایند تولید، استان و شهر.
     """
-    queryset = ProductAttributeOption.objects.select_related("category", "parent").filter(is_active=True)
+    queryset = ProductAttributeOption.objects.select_related("category", "parent")
     serializer_class = ProductAttributeOptionSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsAdminRoleOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ProductAttributeOptionFilter
     search_fields = ["label", "value", "group"]
     ordering_fields = ["group", "sort_order", "label"]
     ordering = ["group", "sort_order", "label"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if request_has_admin_access(self.request, self):
+            return queryset
+        return queryset.filter(is_active=True)
 
     def perform_create(self, serializer):
         option = serializer.save()
@@ -565,11 +631,15 @@ class ProductAttributeOptionViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
+        old_is_active = serializer.instance.is_active
         fields = list(serializer.validated_data.keys())
         option = serializer.save()
+        action = "TAXONOMY_OPTION_UPDATED"
+        if "is_active" in fields and old_is_active != option.is_active:
+            action = "TAXONOMY_OPTION_ACTIVATED" if option.is_active else "TAXONOMY_OPTION_DEACTIVATED"
         log_catalog_activity(
             option.label,
-            "TAXONOMY_OPTION_UPDATED",
+            action,
             self.request.user,
             {
                 "option_id": option.id,
@@ -578,6 +648,46 @@ class ProductAttributeOptionViewSet(viewsets.ModelViewSet):
                 "fields": fields,
             },
         )
+
+    def _set_active_state(self, request, pk, is_active):
+        option = self.get_object()
+        previous = option.is_active
+        if previous != is_active:
+            option.is_active = is_active
+            option.save(update_fields=["is_active"])
+        action = "TAXONOMY_OPTION_ACTIVATED" if is_active else "TAXONOMY_OPTION_DEACTIVATED"
+        log_catalog_activity(
+            option.label,
+            action,
+            request.user,
+            {
+                "option_id": option.id,
+                "group": option.group,
+                "value": option.value,
+                "previous_is_active": previous,
+                "is_active": option.is_active,
+            },
+        )
+        serializer = self.get_serializer(option)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="deactivate",
+        permission_classes=[IsAdminOrActiveAdminRole],
+    )
+    def deactivate(self, request, pk=None):
+        return self._set_active_state(request, pk, False)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="activate",
+        permission_classes=[IsAdminOrActiveAdminRole],
+    )
+    def activate(self, request, pk=None):
+        return self._set_active_state(request, pk, True)
 
 
 class SpecificationValueViewSet(viewsets.ModelViewSet):
