@@ -498,13 +498,23 @@ class ProductViewSet(viewsets.ModelViewSet):
             "شهر",
             "آدرس",
         ]
+        headers[5:5] = [
+            "price_basis",
+            "condition_label",
+            "dimension_width_mm",
+            "dimension_length_mm",
+        ]
         sheet.append(headers)
         sheet.append([
             "",
             "ورق سیاه ۳ میل مبارکه",
             "sheet-black-mobarakeh",
             seller.id if seller else "",
-            1310000,
+            140000,
+            "kg",
+            "1500x6000",
+            1500,
+            6000,
             "ST37",
             "sheet",
             "black",
@@ -525,7 +535,12 @@ class ProductViewSet(viewsets.ModelViewSet):
             "rebar-ribbed",
             seller.id if seller else "",
             28500,
+            "kg",
+            "",
+            "",
+            "",
             "A3",
+            "",
             "",
             "",
             "",

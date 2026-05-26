@@ -7,14 +7,16 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from products.models import DeliveryLocation, Offer, PricingTier, Product
+from products.models import DeliveryLocation, Offer, PricingBasis, PricingTier, Product
 
 from .models import (
     StoreOrder,
     StoreOrderItem,
     StoreOrderNotification,
+    StoreQuoteConfirmationStatus,
     StoreOrderStatus,
     StoreOrderStatusHistory,
+    StoreRiskStatus,
     StoreNotificationChannel,
     StoreNotificationStatus,
     StorePaymentStatus,
@@ -34,6 +36,14 @@ PAYMENT_ACTIONABLE_STATUSES = {
     StoreOrderStatus.PAYMENT_PENDING,
 }
 
+LOADING_STATUSES = {
+    StoreOrderStatus.FULFILLMENT_PENDING,
+    StoreOrderStatus.READY_FOR_PICKUP,
+    StoreOrderStatus.SHIPPED,
+    StoreOrderStatus.DELIVERED,
+    StoreOrderStatus.COMPLETED,
+}
+
 SETTLEMENT_TERM_FEE_BPS = {
     1: 0,
     2: 50,
@@ -41,7 +51,7 @@ SETTLEMENT_TERM_FEE_BPS = {
     4: 150,
 }
 
-STEEL_WEIGHT_FACTOR = Decimal("7.85") / Decimal("1000000")
+STEEL_SHEET_WEIGHT_FACTOR = Decimal("8") / Decimal("1000000")
 
 
 def _clean_decimal(value):
@@ -102,7 +112,39 @@ def delivery_snapshot(delivery):
     }
 
 
-def get_available_tier(product, quantity, offer_id=None, pricing_tier_id=None):
+def normalize_price_basis(value):
+    value = (value or PricingBasis.KG).strip().lower()
+    allowed = {PricingBasis.TON, PricingBasis.KG, PricingBasis.SHEET}
+    return value if value in allowed else PricingBasis.KG
+
+
+def pricing_condition_label(tier):
+    if not tier:
+        return ""
+    if tier.condition_label:
+        return tier.condition_label
+    width = getattr(tier, "dimension_width_mm", None)
+    length = getattr(tier, "dimension_length_mm", None)
+    if width and length:
+        return f"{width.normalize():f}x{length.normalize():f} mm"
+    if width:
+        return f"width {width.normalize():f} mm"
+    return tier.tier_name or ""
+
+
+def tier_quantity_for_comparison(product, tier, quantity, quantity_unit):
+    basis = normalize_price_basis(getattr(tier, "price_basis", PricingBasis.TON))
+    quantity = Decimal(str(quantity or 1))
+    quantity_unit = normalize_quantity_unit(quantity_unit)
+    if basis == PricingBasis.SHEET:
+        return quantity if quantity_unit == StoreQuantityUnit.SHEET else None
+    weight_kg = pricing_weight_kg_for_item(product, quantity, quantity_unit, tier=tier)
+    if basis == PricingBasis.KG:
+        return weight_kg
+    return weight_kg_to_ton(weight_kg)
+
+
+def get_available_tier(product, quantity, quantity_unit=StoreQuantityUnit.TON, offer_id=None, pricing_tier_id=None):
     offers = Offer.objects.filter(product=product, is_active=True).select_related("seller")
     if offer_id:
         offers = offers.filter(id=offer_id)
@@ -112,16 +154,25 @@ def get_available_tier(product, quantity, offer_id=None, pricing_tier_id=None):
     quantity = Decimal(str(quantity or 1))
     eligible = []
     for tier in tiers:
+        try:
+            comparison_quantity = tier_quantity_for_comparison(product, tier, quantity, quantity_unit)
+        except ValueError:
+            continue
+        if comparison_quantity is None:
+            continue
         minimum = Decimal(str(tier.minimum_quantity or 0))
         maximum = Decimal(str(tier.maximum_quantity)) if tier.maximum_quantity is not None else None
-        if quantity < minimum:
+        if comparison_quantity < minimum:
             continue
-        if maximum is not None and quantity > maximum:
+        if maximum is not None and comparison_quantity > maximum:
             continue
         eligible.append(tier)
     if not eligible:
         return None
-    return sorted(eligible, key=lambda item: item.unit_price)[0]
+    return sorted(
+        eligible,
+        key=lambda item: money_for_tier(item, product, quantity, quantity_unit) or int(item.unit_price),
+    )[0]
 
 
 def normalize_quantity_unit(value):
@@ -154,10 +205,118 @@ def product_is_sheet(product):
         return False
 
 
-def estimate_sheet_unit_weight_kg(product):
+def product_is_coil(product):
+    spec = getattr(product, "specifications", None)
+    process = (getattr(spec, "manufacturing_process", "") or "").strip().lower()
+    return process in {"coil", "roll"}
+
+
+def default_coil_weight_ton(product):
+    spec = getattr(product, "specifications", None)
+    thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
+    if thickness >= Decimal("3"):
+        return Decimal("22.5")
+    return Decimal("20")
+
+
+def _decimal_from_selection(value, field_name):
+    try:
+        number = Decimal(str(value))
+    except Exception as exc:
+        raise ValueError(f"invalid_{field_name}") from exc
+    if number <= 0:
+        raise ValueError(f"invalid_{field_name}")
+    return number
+
+
+def normalize_cut_lines_selection(product, selection_details):
+    cut_lines = selection_details.get("cut_lines") if isinstance(selection_details, dict) else None
+    if not cut_lines:
+        return selection_details, None, None
+    if not isinstance(cut_lines, list):
+        raise ValueError("cut_lines_must_be_list")
+    if not product_is_sheet(product) or product_is_coil(product):
+        raise ValueError("cut_lines_require_sheet_product")
+    spec = getattr(product, "specifications", None)
+    thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
+    if thickness <= 0:
+        raise ValueError("sheet_thickness_required_for_cut_lines")
+
+    normalized_lines = []
+    total_weight_kg = Decimal("0")
+    total_count = Decimal("0")
+    for index, line in enumerate(cut_lines, start=1):
+        if not isinstance(line, dict):
+            raise ValueError("invalid_cut_line")
+        count = _decimal_from_selection(line.get("count") or line.get("quantity"), "cut_line_count")
+        if count != count.to_integral_value():
+            raise ValueError("cut_line_count_must_be_integer")
+        width_m = _decimal_from_selection(line.get("width_m") or line.get("width"), "cut_line_width_m")
+        length_m = _decimal_from_selection(line.get("length_m") or line.get("length"), "cut_line_length_m")
+        estimated_weight_kg = (thickness * width_m * length_m * Decimal("8") * count).quantize(
+            Decimal("0.001"),
+            rounding=ROUND_HALF_UP,
+        )
+        total_weight_kg += estimated_weight_kg
+        total_count += count
+        normalized_lines.append(
+            {
+                "index": index,
+                "count": int(count),
+                "width_m": str(width_m.normalize()),
+                "length_m": str(length_m.normalize()),
+                "estimated_weight_kg": str(estimated_weight_kg),
+            }
+        )
+
+    normalized = dict(selection_details or {})
+    normalized["cut_lines"] = normalized_lines
+    normalized["estimated_weight_kg"] = str(total_weight_kg.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+    normalized["total_sheet_count"] = int(total_count)
+    normalized["selection_mode"] = "cut_lines"
+    return normalized, total_count, total_weight_kg.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
+def normalize_order_item_selection(product, quantity, quantity_unit, selection_details=None):
+    quantity = Decimal(str(quantity or 1))
+    quantity_unit = normalize_quantity_unit(quantity_unit)
+    selection_details = dict(selection_details or {})
+
+    if product_is_coil(product):
+        coil_weight_ton = default_coil_weight_ton(product)
+        coil_weight_kg = (coil_weight_ton * Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+        selection_details.update(
+            {
+                "selection_mode": "standard_coil",
+                "roll_weight_ton": str(coil_weight_ton),
+                "roll_weight_kg": str(coil_weight_kg),
+                "roll_weight_rule": "gte_3mm" if coil_weight_ton > Decimal("20") else "2mm_standard",
+                "client_quantity_ignored": str(quantity),
+                "client_quantity_unit_ignored": str(quantity_unit),
+            }
+        )
+        return coil_weight_ton, StoreQuantityUnit.TON, selection_details, coil_weight_kg
+
+    selection_details, sheet_count, cut_weight_kg = normalize_cut_lines_selection(product, selection_details)
+    if cut_weight_kg is not None:
+        return sheet_count, StoreQuantityUnit.SHEET, selection_details, cut_weight_kg
+
+    return quantity, quantity_unit, selection_details, None
+
+
+def estimate_sheet_unit_weight_kg(product, tier=None):
     spec = getattr(product, "specifications", None)
     if not spec:
         return None
+    tier_width = getattr(tier, "dimension_width_mm", None) if tier else None
+    tier_length = getattr(tier, "dimension_length_mm", None) if tier else None
+    if tier_width and tier_length and spec.thickness_mm:
+        return (
+            Decimal(str(spec.thickness_mm))
+            * Decimal(str(tier_width))
+            * Decimal(str(tier_length))
+            * STEEL_SHEET_WEIGHT_FACTOR
+        ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     if spec.weight_kg_per_unit:
         return Decimal(str(spec.weight_kg_per_unit))
     required = (spec.thickness_mm, spec.width_mm, spec.length_mm)
@@ -167,20 +326,22 @@ def estimate_sheet_unit_weight_kg(product):
         Decimal(str(spec.thickness_mm))
         * Decimal(str(spec.width_mm))
         * Decimal(str(spec.length_mm))
-        * STEEL_WEIGHT_FACTOR
+        * STEEL_SHEET_WEIGHT_FACTOR
     ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
 
 
-def pricing_weight_kg_for_item(product, quantity, quantity_unit):
+def pricing_weight_kg_for_item(product, quantity, quantity_unit, tier=None):
     quantity = Decimal(str(quantity or 1))
     quantity_unit = normalize_quantity_unit(quantity_unit)
     if quantity_unit == StoreQuantityUnit.TON:
         return (quantity * Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     if quantity_unit == StoreQuantityUnit.KG:
         return quantity.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    if quantity != quantity.to_integral_value() or quantity < Decimal("1"):
+        raise ValueError("sheet_quantity_must_be_integer")
     if not product_is_sheet(product):
         raise ValueError("sheet_unit_requires_sheet_product")
-    unit_weight = estimate_sheet_unit_weight_kg(product)
+    unit_weight = estimate_sheet_unit_weight_kg(product, tier=tier)
     if unit_weight is None:
         raise ValueError("sheet_weight_unavailable")
     return (quantity * unit_weight).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
@@ -190,17 +351,71 @@ def weight_kg_to_ton(weight_kg):
     return (Decimal(str(weight_kg or 0)) / Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
 
 
-def money_for_weight(unit_price, weight_kg):
-    if unit_price is None or weight_kg is None:
+def money_for_basis(unit_price, price_basis, weight_kg=None, quantity=None, quantity_unit=None):
+    basis = normalize_price_basis(price_basis)
+    if unit_price is None:
         return None
-    amount = Decimal(str(unit_price)) * (Decimal(str(weight_kg)) / Decimal("1000"))
+    if basis != PricingBasis.SHEET and weight_kg is None:
+        return None
+    if basis == PricingBasis.KG:
+        amount = Decimal(str(unit_price)) * Decimal(str(weight_kg or 0))
+    elif basis == PricingBasis.SHEET:
+        if normalize_quantity_unit(quantity_unit) != StoreQuantityUnit.SHEET or quantity is None:
+            return None
+        amount = Decimal(str(unit_price)) * Decimal(str(quantity))
+    else:
+        amount = Decimal(str(unit_price)) * (Decimal(str(weight_kg or 0)) / Decimal("1000"))
     return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def money_for_weight(unit_price, weight_kg):
+    return money_for_basis(unit_price, PricingBasis.TON, weight_kg=weight_kg)
+
+
+def money_for_tier(tier, product, quantity, quantity_unit):
+    if tier is None:
+        return None
+    try:
+        weight_kg = pricing_weight_kg_for_item(product, quantity, quantity_unit, tier=tier)
+    except ValueError:
+        weight_kg = None
+    return money_for_basis(
+        tier.unit_price,
+        tier.price_basis,
+        weight_kg=weight_kg,
+        quantity=quantity,
+        quantity_unit=quantity_unit,
+    )
 
 
 def settlement_fee_for(subtotal_amount, settlement_term_days):
     days = int(settlement_term_days or 1)
     bps = SETTLEMENT_TERM_FEE_BPS.get(days, SETTLEMENT_TERM_FEE_BPS[max(SETTLEMENT_TERM_FEE_BPS)])
     return int((Decimal(str(subtotal_amount or 0)) * Decimal(str(bps)) / Decimal("10000")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _money_int(value):
+    if value in ("", None):
+        return 0
+    return max(int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)), 0)
+
+
+def _clean_text(value):
+    return str(value or "").strip()
+
+
+def order_freight_amount(order):
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    quote = metadata.get("quote") if isinstance(metadata.get("quote"), dict) else {}
+    return _money_int(quote.get("freight_amount"))
+
+
+def recalculated_order_amounts(order):
+    subtotal = sum(int(item.total_price_amount or 0) for item in order.items.all())
+    unpriced = any(item.total_price_amount is None for item in order.items.all())
+    fee = 0 if unpriced else settlement_fee_for(subtotal, order.settlement_term_days)
+    total = subtotal + fee + order_freight_amount(order) + int(order.weight_adjustment_amount or 0)
+    return subtotal, fee, total, unpriced
 
 
 def paid_amount_for_order(order):
@@ -212,6 +427,49 @@ def paid_amount_for_order(order):
 
 def remaining_amount_for_order(order):
     return max(int(order.total_amount or 0) - int(paid_amount_for_order(order) or 0), 0)
+
+
+def default_price_valid_until(now=None):
+    now = now or timezone.now()
+    minutes = int(getattr(settings, "STORE_ORDER_PRICE_VALIDITY_MINUTES", 120) or 120)
+    return now + timedelta(minutes=minutes)
+
+
+def is_order_price_expired(order, now=None):
+    if not order.price_valid_until or order.payment_status == StorePaymentStatus.PAID:
+        return False
+    if paid_amount_for_order(order) > 0:
+        return False
+    now = now or timezone.now()
+    return order.price_valid_until < now
+
+
+def risk_blockers_for_order(order, target_status=None, now=None):
+    blockers = []
+    target_status = target_status or order.status
+    if order.risk_status == StoreRiskStatus.BLOCKED:
+        blockers.append("risk_blocked")
+    if is_order_price_expired(order, now=now):
+        blockers.append("price_expired")
+    if target_status in LOADING_STATUSES:
+        if order.payment_status != StorePaymentStatus.PAID:
+            blockers.append("payment_not_confirmed")
+        if not order.stock_verified_at:
+            blockers.append("stock_not_verified")
+        if not order.proforma_confirmed_at:
+            blockers.append("proforma_not_confirmed")
+        if not order.loading_permission_at:
+            blockers.append("loading_permission_not_recorded")
+    return blockers
+
+
+def validate_order_transition(order, target_status):
+    if target_status in {StoreOrderStatus.CANCELLED, StoreOrderStatus.EXPIRED}:
+        return []
+    blockers = risk_blockers_for_order(order, target_status=target_status)
+    if blockers:
+        raise ValueError(",".join(blockers))
+    return blockers
 
 
 def get_first_delivery(offer):
@@ -237,6 +495,7 @@ def set_order_status(order, to_status, event, actor, meta=None):
         return order
     if from_status in TERMINAL_STATUSES:
         raise ValueError("terminal_order_status")
+    validate_order_transition(order, to_status)
     order.status = to_status
     if to_status == StoreOrderStatus.PAID:
         order.payment_status = StorePaymentStatus.PAID
@@ -262,6 +521,12 @@ def build_payment_link(order, token=None):
 def generate_payment_link(order, actor=None, due_at=None):
     if order.payment_status == StorePaymentStatus.PAID or order.status not in PAYMENT_ACTIONABLE_STATUSES:
         raise ValueError("order_is_not_payment_actionable")
+    if order.quote_confirmation_status == StoreQuoteConfirmationStatus.AWAITING_BUYER:
+        raise ValueError("quote_requires_buyer_confirmation")
+    if order.quote_confirmation_status == StoreQuoteConfirmationStatus.REJECTED:
+        raise ValueError("quote_rejected_by_buyer")
+    if is_order_price_expired(order):
+        raise ValueError("price_validity_expired")
     token = order.payment_link_token or token_urlsafe(32)
     order.payment_link_token = token
     order.payment_link_url = build_payment_link(order, token)
@@ -341,7 +606,13 @@ def record_final_weights(order, items_data, actor=None):
             raise ValueError("order_item_not_found")
         item = items_by_id[item_id]
         final_weight = Decimal(str(item_data["final_weight_kg"]))
-        final_price = money_for_weight(item.unit_price_amount, final_weight)
+        final_price = money_for_basis(
+            item.unit_price_amount,
+            item.price_basis or PricingBasis.TON,
+            weight_kg=final_weight,
+            quantity=item.quantity,
+            quantity_unit=item.quantity_unit,
+        )
         if final_price is None:
             final_price = item.total_price_amount
         base_price = int(item.total_price_amount or 0)
@@ -370,7 +641,12 @@ def record_final_weights(order, items_data, actor=None):
 
     previous_status = order.status
     order.weight_adjustment_amount = final_subtotal - initial_subtotal
-    order.total_amount = int(order.subtotal_amount or 0) + int(order.settlement_term_fee_amount or 0) + order.weight_adjustment_amount
+    order.total_amount = (
+        int(order.subtotal_amount or 0)
+        + int(order.settlement_term_fee_amount or 0)
+        + order_freight_amount(order)
+        + order.weight_adjustment_amount
+    )
     paid_amount = paid_amount_for_order(order)
     if order.total_amount > paid_amount:
         order.payment_status = StorePaymentStatus.PENDING
@@ -407,6 +683,275 @@ def record_final_weights(order, items_data, actor=None):
     return order
 
 
+def normalize_quote_loading_points(loading_points):
+    if not loading_points:
+        return []
+    if not isinstance(loading_points, list):
+        raise ValueError("quote_loading_points_must_be_list")
+    normalized = []
+    for raw in loading_points:
+        if not isinstance(raw, dict):
+            raise ValueError("invalid_quote_loading_point")
+        item_id = raw.get("item_id")
+        if not item_id:
+            continue
+        point = {
+            "item_id": int(item_id),
+            "province": _clean_text(raw.get("province") or raw.get("loading_province")),
+            "city": _clean_text(raw.get("city") or raw.get("loading_city")),
+            "place_type": _clean_text(raw.get("place_type") or raw.get("loading_place_type")),
+            "address": _clean_text(raw.get("address") or raw.get("loading_address")),
+            "freight_amount": _money_int(raw.get("freight_amount")),
+            "note": _clean_text(raw.get("note") or raw.get("loading_note")),
+        }
+        normalized.append(point)
+    return normalized
+
+
+@transaction.atomic
+def submit_admin_quote(
+    order,
+    items_data,
+    actor=None,
+    price_valid_until=None,
+    payment_due_at=None,
+    loading_points=None,
+    multi_loading=False,
+    freight_amount=None,
+    freight_note="",
+):
+    items_by_id = {item.id: item for item in order.items.all()}
+    if not items_data:
+        raise ValueError("quote_items_required")
+    now = timezone.now()
+    normalized_loading_points = normalize_quote_loading_points(loading_points)
+    loading_points_by_item_id = {point["item_id"]: point for point in normalized_loading_points}
+    changed = []
+    for item_data in items_data:
+        item_id = int(item_data["item_id"])
+        if item_id not in items_by_id:
+            raise ValueError("order_item_not_found")
+        item = items_by_id[item_id]
+        unit_price = int(item_data["unit_price_amount"])
+        price_basis = normalize_price_basis(item_data.get("price_basis") or item.price_basis or PricingBasis.KG)
+        if item_data.get("estimated_weight_kg") is not None:
+            item.price_weight_kg = Decimal(str(item_data["estimated_weight_kg"])).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+            item.estimated_weight_kg = item.price_weight_kg
+        total_price = item_data.get("total_price_amount")
+        if total_price in ("", None):
+            total_price = money_for_basis(
+                unit_price,
+                price_basis,
+                weight_kg=item.price_weight_kg,
+                quantity=item.quantity,
+                quantity_unit=item.quantity_unit,
+            )
+        if total_price is None:
+            raise ValueError("quote_item_total_unavailable")
+        item.unit_price_amount = unit_price
+        item.price_basis = price_basis
+        item.total_price_amount = int(total_price)
+        details = dict(item.selection_details or {})
+        details["quote_unit_price_amount"] = unit_price
+        details["quote_price_basis"] = price_basis
+        item.selection_details = details
+        loading_point = loading_points_by_item_id.get(item.id)
+        if loading_point:
+            delivery = dict(item.delivery_snapshot or {})
+            delivery.update(
+                {
+                    "province": loading_point["province"],
+                    "city": loading_point["city"],
+                    "address": loading_point["address"],
+                    "place_type": loading_point["place_type"],
+                    "freight_amount": loading_point["freight_amount"],
+                    "note": loading_point["note"],
+                }
+            )
+            item.delivery_snapshot = delivery
+            details["quote_loading_point"] = loading_point
+            item.selection_details = details
+        item.save(
+            update_fields=[
+                "unit_price_amount",
+                "price_basis",
+                "estimated_weight_kg",
+                "price_weight_kg",
+                "total_price_amount",
+                "delivery_snapshot",
+                "selection_details",
+            ]
+        )
+        changed.append(
+            {
+                "item_id": item.id,
+                "unit_price_amount": unit_price,
+                "price_basis": price_basis,
+                "total_price_amount": int(total_price),
+                "loading_point": loading_point or {},
+            }
+        )
+
+    order.refresh_from_db()
+    if hasattr(order, "_prefetched_objects_cache"):
+        order._prefetched_objects_cache = {}
+    metadata = dict(order.metadata or {})
+    quote_metadata = dict(metadata.get("quote") or {})
+    freight_total = _money_int(freight_amount)
+    if not freight_total and normalized_loading_points:
+        freight_total = sum(_money_int(point.get("freight_amount")) for point in normalized_loading_points)
+    quote_metadata.update(
+        {
+            "sent_at": now.isoformat(),
+            "multi_loading": bool(multi_loading or len(normalized_loading_points) > 1),
+            "freight_amount": freight_total,
+            "freight_note": (freight_note or "").strip(),
+            "loading_points": normalized_loading_points,
+        }
+    )
+    metadata["quote"] = quote_metadata
+    order.metadata = metadata
+    subtotal, fee, total, unpriced = recalculated_order_amounts(order)
+    if unpriced:
+        raise ValueError("quote_items_still_unpriced")
+    previous_status = order.status
+    order.subtotal_amount = subtotal
+    order.settlement_term_fee_amount = fee
+    order.total_amount = total
+    order.status = StoreOrderStatus.PRICE_CONFIRMED
+    order.payment_status = StorePaymentStatus.UNPAID
+    order.quote_confirmation_status = StoreQuoteConfirmationStatus.AWAITING_BUYER
+    order.quote_rejection_reason = ""
+    order.quote_rejection_note = ""
+    order.quote_confirmed_at = None
+    order.quote_rejected_at = None
+    order.price_valid_until = price_valid_until or default_price_valid_until(now)
+    order.payment_due_at = payment_due_at or now + timedelta(days=order.settlement_term_days)
+    order.payment_link_token = ""
+    order.payment_link_url = ""
+    order.payment_link_created_at = None
+    order.save(
+        update_fields=[
+            "subtotal_amount",
+            "settlement_term_fee_amount",
+            "total_amount",
+            "status",
+            "payment_status",
+            "quote_confirmation_status",
+            "quote_rejection_reason",
+            "quote_rejection_note",
+            "quote_confirmed_at",
+            "quote_rejected_at",
+            "price_valid_until",
+            "payment_due_at",
+            "payment_link_token",
+            "payment_link_url",
+            "payment_link_created_at",
+            "metadata",
+            "updated_at",
+        ]
+    )
+    write_status_history(
+        order,
+        previous_status,
+        order.status,
+        "STORE_ORDER_QUOTE_SENT",
+        actor,
+        meta={
+            "items": changed,
+            "subtotal_amount": subtotal,
+            "settlement_term_fee_amount": fee,
+            "freight_amount": freight_total,
+            "total_amount": total,
+            "price_valid_until": order.price_valid_until.isoformat() if order.price_valid_until else None,
+            "payment_due_at": order.payment_due_at.isoformat() if order.payment_due_at else None,
+        },
+    )
+    return order
+
+
+@transaction.atomic
+def confirm_store_order_quote(order, actor=None):
+    if order.quote_confirmation_status != StoreQuoteConfirmationStatus.AWAITING_BUYER:
+        raise ValueError("quote_is_not_waiting_for_buyer")
+    _subtotal, _fee, _total, unpriced = recalculated_order_amounts(order)
+    if unpriced:
+        raise ValueError("quote_items_still_unpriced")
+    now = timezone.now()
+    previous_status = order.status
+    order.quote_confirmation_status = StoreQuoteConfirmationStatus.CONFIRMED
+    order.quote_confirmed_at = now
+    order.status = StoreOrderStatus.PAYMENT_PENDING
+    order.payment_status = StorePaymentStatus.PENDING
+    if not order.price_valid_until or order.price_valid_until < now:
+        order.price_valid_until = default_price_valid_until(now)
+    if not order.payment_due_at or order.payment_due_at < now:
+        order.payment_due_at = now + timedelta(days=order.settlement_term_days)
+    order.save(
+        update_fields=[
+            "quote_confirmation_status",
+            "quote_confirmed_at",
+            "status",
+            "payment_status",
+            "price_valid_until",
+            "payment_due_at",
+            "updated_at",
+        ]
+    )
+    write_status_history(
+        order,
+        previous_status,
+        order.status,
+        "STORE_ORDER_QUOTE_CONFIRMED_BY_BUYER",
+        actor,
+        meta={"total_amount": order.total_amount},
+    )
+    return generate_payment_link(order, actor=actor)
+
+
+@transaction.atomic
+def reject_store_order_quote(order, reason, actor=None, note=""):
+    if order.quote_confirmation_status != StoreQuoteConfirmationStatus.AWAITING_BUYER:
+        raise ValueError("quote_is_not_waiting_for_buyer")
+    reason = (reason or "").strip()
+    note = (note or "").strip()
+    if not reason and not note:
+        raise ValueError("quote_rejection_reason_required")
+    previous_status = order.status
+    order.quote_confirmation_status = StoreQuoteConfirmationStatus.REJECTED
+    order.quote_rejection_reason = reason
+    order.quote_rejection_note = note
+    order.quote_rejected_at = timezone.now()
+    order.status = StoreOrderStatus.QUOTE_REQUESTED
+    order.payment_status = StorePaymentStatus.UNPAID
+    order.payment_link_token = ""
+    order.payment_link_url = ""
+    order.payment_link_created_at = None
+    order.save(
+        update_fields=[
+            "quote_confirmation_status",
+            "quote_rejection_reason",
+            "quote_rejection_note",
+            "quote_rejected_at",
+            "status",
+            "payment_status",
+            "payment_link_token",
+            "payment_link_url",
+            "payment_link_created_at",
+            "updated_at",
+        ]
+    )
+    write_status_history(
+        order,
+        previous_status,
+        order.status,
+        "STORE_ORDER_QUOTE_REJECTED_BY_BUYER",
+        actor,
+        meta={"reason": reason, "note": note},
+    )
+    return order
+
+
 @transaction.atomic
 def create_store_order(user, validated_data):
     items_data = validated_data.pop("items")
@@ -429,23 +974,43 @@ def create_store_order(user, validated_data):
         )
         quantity = item_data.get("quantity") or Decimal("1")
         quantity_unit = normalize_quantity_unit(item_data.get("quantity_unit"))
-        try:
-            price_weight_kg = pricing_weight_kg_for_item(product, quantity, quantity_unit)
-        except ValueError:
-            price_weight_kg = None
+        quantity, quantity_unit, selection_details, forced_weight_kg = normalize_order_item_selection(
+            product,
+            quantity,
+            quantity_unit,
+            item_data.get("selection_details") or {},
+        )
         tier = None
-        pricing_quantity_ton = weight_kg_to_ton(price_weight_kg) if price_weight_kg is not None else quantity
-        if product.availability_status != Product.AVAILABILITY_OUT_OF_STOCK and price_weight_kg is not None:
+        if product.availability_status != Product.AVAILABILITY_OUT_OF_STOCK:
             tier = get_available_tier(
                 product,
-                pricing_quantity_ton,
+                quantity,
+                quantity_unit=quantity_unit,
                 offer_id=item_data.get("offer_id"),
                 pricing_tier_id=item_data.get("pricing_tier_id"),
             )
+        try:
+            price_weight_kg = forced_weight_kg or pricing_weight_kg_for_item(product, quantity, quantity_unit, tier=tier)
+        except ValueError:
+            if quantity_unit == StoreQuantityUnit.SHEET:
+                raise
+            price_weight_kg = None
         offer = tier.offer if tier else None
         delivery = get_first_delivery(offer)
         unit_price = int(tier.unit_price) if tier else None
-        total_price = money_for_weight(unit_price, price_weight_kg) if unit_price is not None else None
+        price_basis = normalize_price_basis(tier.price_basis) if tier else ""
+        selected_condition_label = pricing_condition_label(tier)
+        total_price = (
+            money_for_basis(
+                unit_price,
+                price_basis,
+                weight_kg=price_weight_kg,
+                quantity=quantity,
+                quantity_unit=quantity_unit,
+            )
+            if unit_price is not None
+            else None
+        )
         if total_price is None:
             needs_quote = True
         else:
@@ -464,21 +1029,29 @@ def create_store_order(user, validated_data):
                 estimated_weight_kg=price_weight_kg,
                 price_weight_kg=price_weight_kg,
                 unit_price_amount=unit_price,
+                price_basis=price_basis,
+                selected_condition_label=selected_condition_label,
                 total_price_amount=total_price,
                 product_snapshot=product_snapshot(product),
                 specification_snapshot=specification_snapshot(product),
                 delivery_snapshot=delivery_snapshot(delivery),
+                selection_details=selection_details,
             )
         )
 
     final_status = StoreOrderStatus.QUOTE_REQUESTED if needs_quote else StoreOrderStatus.PAYMENT_PENDING
     final_payment_status = StorePaymentStatus.UNPAID if needs_quote else StorePaymentStatus.PENDING
+    quote_confirmation_status = (
+        StoreQuoteConfirmationStatus.AWAITING_ADMIN_QUOTE if needs_quote else StoreQuoteConfirmationStatus.NOT_REQUIRED
+    )
     order.status = final_status
     order.payment_status = final_payment_status
+    order.quote_confirmation_status = quote_confirmation_status
     order.subtotal_amount = subtotal
     order.settlement_term_fee_amount = 0 if needs_quote else settlement_fee_for(subtotal, settlement_term_days)
     order.total_amount = subtotal + order.settlement_term_fee_amount
     if not needs_quote:
+        order.price_valid_until = default_price_valid_until()
         order.payment_due_at = timezone.now() + timedelta(
             days=settlement_term_days
         )
@@ -486,10 +1059,12 @@ def create_store_order(user, validated_data):
         update_fields=[
             "status",
             "payment_status",
+            "quote_confirmation_status",
             "subtotal_amount",
             "settlement_term_days",
             "settlement_term_fee_amount",
             "total_amount",
+            "price_valid_until",
             "payment_due_at",
             "updated_at",
         ]

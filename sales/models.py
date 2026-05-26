@@ -28,6 +28,20 @@ class StorePaymentStatus(models.TextChoices):
     REFUNDED = "REFUNDED", "Refunded"
 
 
+class StoreRiskStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending review"
+    APPROVED = "APPROVED", "Approved"
+    BLOCKED = "BLOCKED", "Blocked"
+
+
+class StoreQuoteConfirmationStatus(models.TextChoices):
+    NOT_REQUIRED = "NOT_REQUIRED", "Not required"
+    AWAITING_ADMIN_QUOTE = "AWAITING_ADMIN_QUOTE", "Awaiting admin quote"
+    AWAITING_BUYER = "AWAITING_BUYER", "Awaiting buyer confirmation"
+    CONFIRMED = "CONFIRMED", "Confirmed"
+    REJECTED = "REJECTED", "Rejected"
+
+
 class StoreNotificationChannel(models.TextChoices):
     SMS = "SMS", "SMS"
     MANUAL = "MANUAL", "Manual"
@@ -65,6 +79,12 @@ class StoreOrder(models.Model):
         default=StorePaymentStatus.UNPAID,
         db_index=True,
     )
+    risk_status = models.CharField(
+        max_length=20,
+        choices=StoreRiskStatus.choices,
+        default=StoreRiskStatus.PENDING,
+        db_index=True,
+    )
     contact_name = models.CharField(max_length=160, blank=True)
     contact_phone = models.CharField(max_length=40, blank=True)
     destination_province = models.CharField(max_length=100, blank=True)
@@ -77,12 +97,28 @@ class StoreOrder(models.Model):
     settlement_term_fee_amount = models.BigIntegerField(default=0)
     weight_adjustment_amount = models.BigIntegerField(default=0)
     currency = models.CharField(max_length=10, default="IRR")
+    price_valid_until = models.DateTimeField(null=True, blank=True, db_index=True)
+    source_price_checked_at = models.DateTimeField(null=True, blank=True)
+    market_price_checked_at = models.DateTimeField(null=True, blank=True)
+    stock_verified_at = models.DateTimeField(null=True, blank=True)
+    proforma_confirmed_at = models.DateTimeField(null=True, blank=True)
+    loading_permission_at = models.DateTimeField(null=True, blank=True)
     payment_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
     payment_link_token = models.CharField(max_length=96, blank=True, db_index=True)
     payment_link_url = models.URLField(max_length=500, blank=True)
     payment_link_created_at = models.DateTimeField(null=True, blank=True)
     payment_link_sent_at = models.DateTimeField(null=True, blank=True)
     payment_link_sent_to = models.CharField(max_length=80, blank=True)
+    quote_confirmation_status = models.CharField(
+        max_length=32,
+        choices=StoreQuoteConfirmationStatus.choices,
+        default=StoreQuoteConfirmationStatus.NOT_REQUIRED,
+        db_index=True,
+    )
+    quote_rejection_reason = models.CharField(max_length=120, blank=True)
+    quote_rejection_note = models.TextField(blank=True)
+    quote_confirmed_at = models.DateTimeField(null=True, blank=True)
+    quote_rejected_at = models.DateTimeField(null=True, blank=True)
     admin_notes = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
@@ -131,6 +167,8 @@ class StoreOrderItem(models.Model):
     price_weight_kg = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
     final_weight_kg = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
     unit_price_amount = models.BigIntegerField(null=True, blank=True)
+    price_basis = models.CharField(max_length=20, blank=True, default="ton")
+    selected_condition_label = models.CharField(max_length=160, blank=True, default="")
     total_price_amount = models.BigIntegerField(null=True, blank=True)
     final_price_amount = models.BigIntegerField(null=True, blank=True)
     weight_adjustment_amount = models.BigIntegerField(default=0)
@@ -138,6 +176,7 @@ class StoreOrderItem(models.Model):
     product_snapshot = models.JSONField(default=dict, blank=True)
     specification_snapshot = models.JSONField(default=dict, blank=True)
     delivery_snapshot = models.JSONField(default=dict, blank=True)
+    selection_details = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -479,6 +479,10 @@ class AdminProductImportTests(APITestCase):
                 "category_code": "sheet",
                 "seller_id": self.seller.id,
                 "price": "45000",
+                "price_basis": "kg",
+                "condition_label": "عرض 1000 طول 6000",
+                "dimension_width_mm": "1000",
+                "dimension_length_mm": "6000",
                 "steel_grade": "ST37",
                 "manufacturing_process": "sheet",
                 "surface_finish": "black",
@@ -500,8 +504,40 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(product.specifications.steel_grade, "ST37")
         self.assertEqual(product.specifications.factory, "mobarakeh")
         offer = product.offers.get(seller=self.seller)
+        tier = offer.pricing_tiers.get()
+        self.assertEqual(tier.price_basis, "kg")
+        self.assertEqual(tier.condition_label, "عرض 1000 طول 6000")
+        self.assertEqual(str(tier.dimension_width_mm), "1000.00")
+        self.assertEqual(str(tier.dimension_length_mm), "6000.00")
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
         self.assertEqual(offer.delivery_options.get().city, "مبارکه")
+
+    def test_admin_product_price_defaults_to_kilogram_when_basis_is_omitted(self):
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "ورق سیاه بدون مبنای قیمت",
+                "category_code": "sheet",
+                "seller_id": self.seller.id,
+                "price": "140000",
+                "steel_grade": "ST37",
+                "manufacturing_process": "coil",
+                "surface_finish": "black",
+                "factory": "mobarakeh",
+                "thickness_mm": "2",
+                "width_mm": "1250",
+                "province": "اصفهان",
+                "city": "اصفهان",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        tier = Product.objects.get(id=res.data["product_id"]).offers.get(seller=self.seller).pricing_tiers.get()
+        self.assertEqual(tier.price_basis, "kg")
+        self.assertEqual(str(tier.unit_price), "140000.00")
 
     def test_admin_can_update_origin_without_price_change(self):
         category = ProductCategory.objects.get(code="sheet-acid-washed")

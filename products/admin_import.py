@@ -7,6 +7,7 @@ from django.db import transaction
 from .models import (
     DeliveryLocation,
     Offer,
+    PricingBasis,
     PricingTier,
     Product,
     ProductAttributeOption,
@@ -58,6 +59,25 @@ HEADER_ALIASES = {
     "نام فروشنده": "seller_name",
     "price": "price",
     "unit_price": "price",
+    "price_basis": "price_basis",
+    "pricing_basis": "price_basis",
+    "unit": "price_basis",
+    "basis": "price_basis",
+    "مبنای قیمت": "price_basis",
+    "واحد قیمت": "price_basis",
+    "condition_label": "condition_label",
+    "pricing_condition": "condition_label",
+    "dimension_label": "condition_label",
+    "شرط قیمت": "condition_label",
+    "عنوان ابعاد": "condition_label",
+    "dimension_width": "dimension_width_mm",
+    "dimension_width_mm": "dimension_width_mm",
+    "pricing_width": "dimension_width_mm",
+    "عرض قیمت": "dimension_width_mm",
+    "dimension_length": "dimension_length_mm",
+    "dimension_length_mm": "dimension_length_mm",
+    "pricing_length": "dimension_length_mm",
+    "طول قیمت": "dimension_length_mm",
     "قیمت": "price",
     "قیمت روز": "price",
     "قیمت جدید": "price",
@@ -135,6 +155,8 @@ SPEC_FIELDS = {
     "height_mm",
     "diameter_mm",
     "weight_kg_per_unit",
+    "dimension_width_mm",
+    "dimension_length_mm",
 }
 
 NUMERIC_FIELDS = {
@@ -226,6 +248,33 @@ def parse_decimal(value, field):
         return Decimal(text)
     except InvalidOperation as exc:
         raise ValueError(f"{field} عدد معتبر نیست.") from exc
+
+
+def normalize_price_basis(value):
+    value = str(value or PricingBasis.KG).strip().lower()
+    aliases = {
+        "t": PricingBasis.TON,
+        "ton": PricingBasis.TON,
+        "tons": PricingBasis.TON,
+        "tonne": PricingBasis.TON,
+        "تن": PricingBasis.TON,
+        "هر تن": PricingBasis.TON,
+        "kg": PricingBasis.KG,
+        "kilo": PricingBasis.KG,
+        "kilogram": PricingBasis.KG,
+        "کیلو": PricingBasis.KG,
+        "کیلوگرم": PricingBasis.KG,
+        "هر کیلو": PricingBasis.KG,
+        "sheet": PricingBasis.SHEET,
+        "sheets": PricingBasis.SHEET,
+        "sheet_count": PricingBasis.SHEET,
+        "ورق": PricingBasis.SHEET,
+        "هر ورق": PricingBasis.SHEET,
+        "تعداد ورق": PricingBasis.SHEET,
+    }
+    allowed = {PricingBasis.TON, PricingBasis.KG, PricingBasis.SHEET}
+    result = aliases.get(value, value)
+    return result if result in allowed else PricingBasis.KG
 
 
 def read_price_file(uploaded_file):
@@ -373,20 +422,41 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
         offer, _ = Offer.objects.get_or_create(product=product, seller=seller, defaults={"is_active": True})
     if has_price:
         tier_name = row.get("tier_name") or "قیمت روز"
+        price_basis = normalize_price_basis(row.get("price_basis"))
+        condition_label = row.get("condition_label") or ""
+        dimension_width = row.get("dimension_width_mm")
+        dimension_length = row.get("dimension_length_mm")
         tier = PricingTier.objects.filter(offer=offer, tier_name=tier_name).first()
         if tier is None:
             PricingTier.objects.create(
                 offer=offer,
                 tier_name=tier_name,
                 unit_price=price,
+                price_basis=price_basis,
                 minimum_quantity=1,
                 maximum_quantity=None,
+                condition_label=condition_label,
+                dimension_width_mm=dimension_width,
+                dimension_length_mm=dimension_length,
                 is_negotiable=False,
             )
         else:
             tier.unit_price = price
+            tier.price_basis = price_basis
             tier.minimum_quantity = tier.minimum_quantity or 1
-            tier.save(update_fields=["unit_price", "minimum_quantity"])
+            tier.condition_label = condition_label
+            tier.dimension_width_mm = dimension_width
+            tier.dimension_length_mm = dimension_length
+            tier.save(
+                update_fields=[
+                    "unit_price",
+                    "price_basis",
+                    "minimum_quantity",
+                    "condition_label",
+                    "dimension_width_mm",
+                    "dimension_length_mm",
+                ]
+            )
         updated_price = True
 
     if has_delivery and offer is not None:

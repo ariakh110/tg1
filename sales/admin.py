@@ -29,14 +29,16 @@ class StoreOrderAdmin(admin.ModelAdmin):
         "buyer",
         "status",
         "payment_status",
+        "risk_status",
         "subtotal_amount",
         "settlement_term_fee_amount",
         "weight_adjustment_amount",
         "total_amount",
+        "price_valid_until",
         "payment_due_at",
         "created_at",
     )
-    list_filter = ("status", "payment_status", "payment_due_at", "created_at")
+    list_filter = ("status", "payment_status", "risk_status", "price_valid_until", "payment_due_at", "created_at")
     search_fields = ("id", "buyer__username", "contact_name", "contact_phone")
     inlines = [StoreOrderItemInline]
 

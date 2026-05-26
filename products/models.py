@@ -266,12 +266,27 @@ class Offer(models.Model):
 
 
 # ----------- قیمت‌گذاری حجمی و توافقی -----------
+class PricingBasis(models.TextChoices):
+    TON = "ton", "Price per ton"
+    KG = "kg", "Price per kilogram"
+    SHEET = "sheet", "Price per sheet"
+
+
 class PricingTier(models.Model):
     offer = models.ForeignKey(Offer, on_delete=models.CASCADE, related_name='pricing_tiers')
     tier_name = models.CharField(max_length=100)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    price_basis = models.CharField(
+        max_length=20,
+        choices=PricingBasis.choices,
+        default=PricingBasis.KG,
+        db_index=True,
+    )
     minimum_quantity = models.IntegerField()
     maximum_quantity = models.IntegerField(null=True, blank=True)
+    condition_label = models.CharField(max_length=160, blank=True, default="")
+    dimension_width_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    dimension_length_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     is_negotiable = models.BooleanField(default=False)
 
     def __str__(self):

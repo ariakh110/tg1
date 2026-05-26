@@ -403,7 +403,19 @@ class ProductDocumentSerializer(serializers.ModelSerializer):
 class PricingTierSerializer(serializers.ModelSerializer):
     class Meta:
         model = PricingTier
-        fields = ("id", "offer", "tier_name", "unit_price", "minimum_quantity", "maximum_quantity", "is_negotiable")
+        fields = (
+            "id",
+            "offer",
+            "tier_name",
+            "unit_price",
+            "price_basis",
+            "minimum_quantity",
+            "maximum_quantity",
+            "condition_label",
+            "dimension_width_mm",
+            "dimension_length_mm",
+            "is_negotiable",
+        )
         read_only_fields = ("offer",)  # اگر بخوای API جدا برای PricingTier بذاریم، offer لازم است؛ در Offer nested creation انجام نمی‌شود فعلاً.
 
 

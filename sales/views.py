@@ -7,12 +7,15 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .models import StoreOrder, StoreOrderStatus, StorePayment, StorePaymentStatus
+from .models import StoreOrder, StoreOrderNotification, StoreOrderStatus, StorePayment, StorePaymentStatus
 from .serializers import (
     StoreFinalWeightSerializer,
+    StoreAdminQuoteSerializer,
     StoreOrderAdminUpdateSerializer,
     StoreOrderCreateSerializer,
     StoreOrderNotificationSerializer,
+    StoreQuoteConfirmSerializer,
+    StoreQuoteRejectSerializer,
     StorePaymentLinkSendSerializer,
     StorePaymentLinkSerializer,
     StoreOrderReadSerializer,
@@ -20,7 +23,24 @@ from .serializers import (
     StorePaymentConfirmSerializer,
     StorePaymentSerializer,
 )
-from .services import set_order_status
+from .services import remaining_amount_for_order, set_order_status
+
+
+def _store_order_title(order):
+    item = next(iter(order.items.all()), None)
+    return item.product_name if item else str(order.id)
+
+
+def _dashboard_notification(kind, severity, title, order, body, at=None, href="/account/payments"):
+    return {
+        "type": kind,
+        "severity": severity,
+        "title": title,
+        "body": body,
+        "order_id": str(order.id),
+        "href": href,
+        "created_at": at.isoformat() if at else None,
+    }
 
 
 class StoreOrderViewSet(viewsets.ModelViewSet):
@@ -53,18 +73,103 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         output = StoreOrderReadSerializer(order, context={"request": request})
         return Response(output.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="confirm-quote")
+    def confirm_quote(self, request, pk=None):
+        order = self.get_object()
+        serializer = StoreQuoteConfirmSerializer(data=request.data, context={"request": request, "order": order})
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = serializer.save()
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        output = StoreOrderReadSerializer(updated, context={"request": request})
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="reject-quote")
+    def reject_quote(self, request, pk=None):
+        order = self.get_object()
+        serializer = StoreQuoteRejectSerializer(data=request.data, context={"request": request, "order": order})
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = serializer.save()
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        output = StoreOrderReadSerializer(updated, context={"request": request})
+        return Response(output.data, status=status.HTTP_200_OK)
+
 
 class StoreDashboardSummaryAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        orders = StoreOrder.objects.filter(buyer=request.user)
+        now = timezone.now()
+        orders = StoreOrder.objects.filter(buyer=request.user).prefetch_related("items")
         pending_payment = orders.filter(payment_status__in=[StorePaymentStatus.UNPAID, StorePaymentStatus.PENDING])
-        overdue = pending_payment.filter(payment_due_at__lt=timezone.now())
+        active_pending_payment = pending_payment.exclude(
+            status__in=[StoreOrderStatus.CANCELLED, StoreOrderStatus.EXPIRED, StoreOrderStatus.COMPLETED]
+        )
+        overdue = active_pending_payment.filter(payment_due_at__lt=now)
+        price_expired = active_pending_payment.filter(price_valid_until__lt=now).exclude(price_valid_until__isnull=True)
+        notifications = []
+        for order in overdue.order_by("payment_due_at", "-created_at")[:5]:
+            notifications.append(
+                _dashboard_notification(
+                    "payment_overdue",
+                    "danger",
+                    "مهلت تسویه گذشته است",
+                    order,
+                    f"{_store_order_title(order)} | مانده {remaining_amount_for_order(order):,} تومان",
+                    at=order.payment_due_at,
+                )
+            )
+        for order in price_expired.order_by("price_valid_until", "-created_at")[: max(0, 5 - len(notifications))]:
+            notifications.append(
+                _dashboard_notification(
+                    "price_expired",
+                    "danger",
+                    "اعتبار قیمت تمام شده است",
+                    order,
+                    _store_order_title(order),
+                    at=order.price_valid_until,
+                    href=f"/account/orders/{order.id}",
+                )
+            )
+        for order in active_pending_payment.filter(payment_due_at__gte=now).order_by("payment_due_at", "-created_at")[: max(0, 5 - len(notifications))]:
+            notifications.append(
+                _dashboard_notification(
+                    "payment_pending",
+                    "warning",
+                    "تسویه در انتظار پرداخت است",
+                    order,
+                    f"{_store_order_title(order)} | مانده {remaining_amount_for_order(order):,} تومان",
+                    at=order.payment_due_at,
+                )
+            )
+        recent_system_notifications = (
+            StoreOrderNotification.objects.filter(order__buyer=request.user)
+            .select_related("order")
+            .prefetch_related("order__items")
+            .order_by("-created_at")[: max(0, 5 - len(notifications))]
+        )
+        for row in recent_system_notifications:
+            notifications.append(
+                _dashboard_notification(
+                    "order_notification",
+                    "info",
+                    "پیام سفارش ثبت شد",
+                    row.order,
+                    _store_order_title(row.order),
+                    at=row.created_at,
+                    href=f"/account/orders/{row.order_id}",
+                )
+            )
         data = {
             "total_orders": orders.count(),
             "pending_payment_orders": pending_payment.count(),
             "overdue_payment_orders": overdue.count(),
+            "expired_price_orders": price_expired.count(),
+            "notification_count": len(notifications),
+            "notifications": notifications,
             "completed_orders": orders.filter(status__in=[StoreOrderStatus.DELIVERED, StoreOrderStatus.COMPLETED]).count(),
             "active_orders": orders.exclude(
                 status__in=[StoreOrderStatus.CANCELLED, StoreOrderStatus.EXPIRED, StoreOrderStatus.COMPLETED]
@@ -211,6 +316,18 @@ class AdminStoreOrderViewSet(viewsets.ModelViewSet):
     def final_weight(self, request, pk=None):
         order = self.get_object()
         serializer = StoreFinalWeightSerializer(data=request.data, context={"request": request, "order": order})
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = serializer.save()
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        output = StoreOrderReadSerializer(updated, context={"request": request})
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="quote")
+    def quote(self, request, pk=None):
+        order = self.get_object()
+        serializer = StoreAdminQuoteSerializer(data=request.data, context={"request": request, "order": order})
         serializer.is_valid(raise_exception=True)
         try:
             updated = serializer.save()
