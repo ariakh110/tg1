@@ -44,6 +44,13 @@ LOADING_STATUSES = {
     StoreOrderStatus.COMPLETED,
 }
 
+FINAL_WEIGHT_REQUIRED_STATUSES = {
+    StoreOrderStatus.READY_FOR_PICKUP,
+    StoreOrderStatus.SHIPPED,
+    StoreOrderStatus.DELIVERED,
+    StoreOrderStatus.COMPLETED,
+}
+
 SETTLEMENT_TERM_FEE_BPS = {
     1: 0,
     2: 50,
@@ -76,6 +83,7 @@ def product_snapshot(product):
             "code": category.code if category else "",
         },
         "availability_status": product.availability_status,
+        "purchase_terms": product.purchase_terms if isinstance(product.purchase_terms, list) else [],
     }
 
 
@@ -96,6 +104,8 @@ def specification_snapshot(product):
         "height_mm": _clean_decimal(spec.height_mm),
         "diameter_mm": _clean_decimal(spec.diameter_mm),
         "weight_kg_per_unit": _clean_decimal(spec.weight_kg_per_unit),
+        "sales_mode": spec.sales_mode,
+        "head_tail_policy": spec.head_tail_policy,
     }
 
 
@@ -211,6 +221,18 @@ def product_is_coil(product):
     return process in {"coil", "roll"}
 
 
+def product_sales_mode(product):
+    spec = getattr(product, "specifications", None)
+    sales_mode = (getattr(spec, "sales_mode", "") or "").strip()
+    if sales_mode:
+        return sales_mode
+    if product_is_coil(product):
+        return "coil_full"
+    if product_is_sheet(product):
+        return "sheet"
+    return ""
+
+
 def default_coil_weight_ton(product):
     spec = getattr(product, "specifications", None)
     thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
@@ -229,13 +251,15 @@ def _decimal_from_selection(value, field_name):
     return number
 
 
-def normalize_cut_lines_selection(product, selection_details):
+def normalize_cut_lines_selection(product, selection_details, *, allow_coil=False):
     cut_lines = selection_details.get("cut_lines") if isinstance(selection_details, dict) else None
     if not cut_lines:
         return selection_details, None, None
     if not isinstance(cut_lines, list):
         raise ValueError("cut_lines_must_be_list")
-    if not product_is_sheet(product) or product_is_coil(product):
+    if not product_is_sheet(product):
+        raise ValueError("cut_lines_require_sheet_product")
+    if product_is_coil(product) and not allow_coil:
         raise ValueError("cut_lines_require_sheet_product")
     spec = getattr(product, "specifications", None)
     thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
@@ -281,21 +305,52 @@ def normalize_order_item_selection(product, quantity, quantity_unit, selection_d
     quantity = Decimal(str(quantity or 1))
     quantity_unit = normalize_quantity_unit(quantity_unit)
     selection_details = dict(selection_details or {})
+    sales_mode = product_sales_mode(product)
+    selection_mode = (selection_details.get("selection_mode") or "").strip()
 
     if product_is_coil(product):
+        wants_cut = selection_mode == "cut_lines" or bool(selection_details.get("cut_lines"))
+        if sales_mode == "coil_full" and wants_cut:
+            raise ValueError("coil_cut_is_not_allowed_for_this_product")
+        if sales_mode == "coil_must_cut" and not wants_cut:
+            raise ValueError("coil_requires_cut_lines")
+        if sales_mode in {"coil_cuttable", "coil_must_cut"} and wants_cut:
+            selection_details, sheet_count, cut_weight_kg = normalize_cut_lines_selection(
+                product,
+                selection_details,
+                allow_coil=True,
+            )
+            selection_details["sales_mode"] = sales_mode
+            selection_details["head_tail_policy"] = getattr(
+                getattr(product, "specifications", None),
+                "head_tail_policy",
+                "optional",
+            )
+            selection_details["head_tail_taken"] = bool(selection_details.get("head_tail_taken", True))
+            return sheet_count, StoreQuantityUnit.SHEET, selection_details, cut_weight_kg
+
         coil_weight_ton = default_coil_weight_ton(product)
+        roll_count = _decimal_from_selection(selection_details.get("roll_count") or quantity or 1, "roll_count")
+        if roll_count != roll_count.to_integral_value():
+            raise ValueError("roll_count_must_be_integer")
+        total_weight_ton = (coil_weight_ton * roll_count).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
         coil_weight_kg = (coil_weight_ton * Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+        total_weight_kg = (total_weight_ton * Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
         selection_details.update(
             {
-                "selection_mode": "standard_coil",
+                "selection_mode": "coil_full_roll",
+                "sales_mode": sales_mode,
+                "roll_count": int(roll_count),
                 "roll_weight_ton": str(coil_weight_ton),
                 "roll_weight_kg": str(coil_weight_kg),
+                "total_roll_weight_ton": str(total_weight_ton),
+                "total_roll_weight_kg": str(total_weight_kg),
                 "roll_weight_rule": "gte_3mm" if coil_weight_ton > Decimal("20") else "2mm_standard",
                 "client_quantity_ignored": str(quantity),
                 "client_quantity_unit_ignored": str(quantity_unit),
             }
         )
-        return coil_weight_ton, StoreQuantityUnit.TON, selection_details, coil_weight_kg
+        return total_weight_ton, StoreQuantityUnit.TON, selection_details, total_weight_kg
 
     selection_details, sheet_count, cut_weight_kg = normalize_cut_lines_selection(product, selection_details)
     if cut_weight_kg is not None:
@@ -454,6 +509,15 @@ def risk_blockers_for_order(order, target_status=None, now=None):
     if target_status in LOADING_STATUSES:
         if order.payment_status != StorePaymentStatus.PAID:
             blockers.append("payment_not_confirmed")
+        if remaining_amount_for_order(order) > 0:
+            blockers.append("remaining_payment_required")
+        if target_status in FINAL_WEIGHT_REQUIRED_STATUSES:
+            final_weight_missing = order.items.filter(
+                estimated_weight_kg__isnull=False,
+                final_weight_kg__isnull=True,
+            ).exists()
+            if final_weight_missing:
+                blockers.append("final_weight_not_recorded")
         if not order.stock_verified_at:
             blockers.append("stock_not_verified")
         if not order.proforma_confirmed_at:
@@ -738,7 +802,8 @@ def submit_admin_quote(
             item.price_weight_kg = Decimal(str(item_data["estimated_weight_kg"])).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
             item.estimated_weight_kg = item.price_weight_kg
         total_price = item_data.get("total_price_amount")
-        if total_price in ("", None):
+        force_total_price = bool(item_data.get("force_total_price"))
+        if not force_total_price or total_price in ("", None):
             total_price = money_for_basis(
                 unit_price,
                 price_basis,

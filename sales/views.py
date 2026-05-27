@@ -7,8 +7,18 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .models import StoreOrder, StoreOrderNotification, StoreOrderStatus, StorePayment, StorePaymentStatus
+from .models import (
+    StoreBuyerAddress,
+    StoreBuyerInvoiceProfile,
+    StoreOrder,
+    StoreOrderNotification,
+    StoreOrderStatus,
+    StorePayment,
+    StorePaymentStatus,
+)
 from .serializers import (
+    StoreBuyerAddressSerializer,
+    StoreBuyerInvoiceProfileSerializer,
     StoreFinalWeightSerializer,
     StoreAdminQuoteSerializer,
     StoreOrderAdminUpdateSerializer,
@@ -41,6 +51,34 @@ def _dashboard_notification(kind, severity, title, order, body, at=None, href="/
         "href": href,
         "created_at": at.isoformat() if at else None,
     }
+
+
+class StoreBuyerAddressViewSet(viewsets.ModelViewSet):
+    serializer_class = StoreBuyerAddressSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return StoreBuyerAddress.objects.filter(buyer=self.request.user).order_by("-is_default", "-updated_at")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+
+class StoreBuyerInvoiceProfileViewSet(viewsets.ModelViewSet):
+    serializer_class = StoreBuyerInvoiceProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return StoreBuyerInvoiceProfile.objects.filter(buyer=self.request.user).order_by("-is_default", "-updated_at")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
 
 
 class StoreOrderViewSet(viewsets.ModelViewSet):

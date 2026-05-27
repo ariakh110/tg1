@@ -8,6 +8,8 @@ from accounts.services import user_has_role
 from products.models import Product
 
 from .models import (
+    StoreBuyerAddress,
+    StoreBuyerInvoiceProfile,
     StoreOrder,
     StoreOrderItem,
     StoreOrderNotification,
@@ -40,6 +42,91 @@ from .services import (
 def request_user_is_admin(request):
     user = getattr(request, "user", None)
     return user_has_role(user, RoleCode.ADMIN, require_active=True)
+
+
+class StoreBuyerAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreBuyerAddress
+        fields = (
+            "id",
+            "title",
+            "province",
+            "city",
+            "address",
+            "phone",
+            "is_default",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        required = ("province", "city", "address")
+        for field in required:
+            value = attrs.get(field, getattr(self.instance, field, ""))
+            if not str(value or "").strip():
+                raise serializers.ValidationError({field: "این فیلد الزامی است."})
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        if validated_data.get("is_default"):
+            StoreBuyerAddress.objects.filter(buyer=user, is_default=True).update(is_default=False)
+        return StoreBuyerAddress.objects.create(buyer=user, **validated_data)
+
+    def update(self, instance, validated_data):
+        if validated_data.get("is_default"):
+            StoreBuyerAddress.objects.filter(buyer=instance.buyer, is_default=True).exclude(pk=instance.pk).update(is_default=False)
+        return super().update(instance, validated_data)
+
+
+class StoreBuyerInvoiceProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreBuyerInvoiceProfile
+        fields = (
+            "id",
+            "title",
+            "buyer_type",
+            "full_name",
+            "national_id",
+            "company_name",
+            "economic_code",
+            "registration_id",
+            "phone",
+            "postal_code",
+            "address",
+            "is_default",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        buyer_type = attrs.get("buyer_type", getattr(self.instance, "buyer_type", StoreBuyerInvoiceProfile.BUYER_TYPE_INDIVIDUAL))
+        if buyer_type == StoreBuyerInvoiceProfile.BUYER_TYPE_COMPANY:
+            for field in ("company_name", "economic_code"):
+                value = attrs.get(field, getattr(self.instance, field, ""))
+                if not str(value or "").strip():
+                    raise serializers.ValidationError({field: "این فیلد برای فاکتور حقوقی الزامی است."})
+        else:
+            for field in ("full_name", "national_id"):
+                value = attrs.get(field, getattr(self.instance, field, ""))
+                if not str(value or "").strip():
+                    raise serializers.ValidationError({field: "این فیلد برای فاکتور حقیقی الزامی است."})
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        if validated_data.get("is_default"):
+            StoreBuyerInvoiceProfile.objects.filter(buyer=user, is_default=True).update(is_default=False)
+        return StoreBuyerInvoiceProfile.objects.create(buyer=user, **validated_data)
+
+    def update(self, instance, validated_data):
+        if validated_data.get("is_default"):
+            StoreBuyerInvoiceProfile.objects.filter(buyer=instance.buyer, is_default=True).exclude(pk=instance.pk).update(is_default=False)
+        return super().update(instance, validated_data)
 
 
 class StoreOrderItemReadSerializer(serializers.ModelSerializer):
@@ -177,6 +264,11 @@ class StoreOrderReadSerializer(serializers.ModelSerializer):
             "destination_city",
             "destination_address",
             "delivery_notes",
+            "driver_name",
+            "driver_phone",
+            "vehicle_type",
+            "vehicle_plate",
+            "logistics_note",
             "subtotal_amount",
             "total_amount",
             "settlement_term_days",
@@ -216,6 +308,49 @@ class StoreOrderReadSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request_user_is_admin(request):
+            return data
+        if instance.quote_confirmation_status != StoreQuoteConfirmationStatus.AWAITING_BUYER:
+            return data
+
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        quote = metadata.get("quote") if isinstance(metadata.get("quote"), dict) else {}
+        loading_points = quote.get("loading_points") if isinstance(quote.get("loading_points"), list) else []
+        masked_points = []
+        for point in loading_points:
+            masked_points.append(
+                {
+                    "item_id": point.get("item_id"),
+                    "freight_amount": point.get("freight_amount", 0),
+                    "source_hidden": True,
+                    "label": "مبدا بار پس از تایید فاکتور اعلام می‌شود.",
+                }
+            )
+        if quote:
+            quote["source_hidden"] = True
+            quote["loading_points"] = masked_points
+            metadata["quote"] = quote
+            data["metadata"] = metadata
+
+        for item in data.get("items") or []:
+            delivery = item.get("delivery_snapshot")
+            if isinstance(delivery, dict):
+                item["delivery_snapshot"] = {
+                    "source_hidden": True,
+                    "label": "مبدا بار پس از تایید فاکتور اعلام می‌شود.",
+                }
+            details = item.get("selection_details")
+            if isinstance(details, dict) and isinstance(details.get("quote_loading_point"), dict):
+                details["quote_loading_point"] = {
+                    "item_id": details["quote_loading_point"].get("item_id"),
+                    "source_hidden": True,
+                    "label": "مبدا بار پس از تایید فاکتور اعلام می‌شود.",
+                }
+        return data
+
 
 class StoreOrderCreateItemSerializer(serializers.Serializer):
     product_id = serializers.IntegerField()
@@ -248,6 +383,12 @@ class StoreOrderCreateItemSerializer(serializers.Serializer):
 class StoreOrderCreateSerializer(serializers.ModelSerializer):
     items = StoreOrderCreateItemSerializer(many=True)
     settlement_term_days = serializers.IntegerField(required=False, min_value=1, max_value=7, default=1)
+    destination_profile_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    invoice_profile_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    destination_profile = serializers.JSONField(required=False, write_only=True)
+    invoice_profile = serializers.JSONField(required=False, write_only=True)
+    save_destination_profile = serializers.BooleanField(required=False, default=False, write_only=True)
+    save_invoice_profile = serializers.BooleanField(required=False, default=False, write_only=True)
 
     class Meta:
         model = StoreOrder
@@ -261,6 +402,12 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
             "delivery_notes",
             "settlement_term_days",
             "metadata",
+            "destination_profile_id",
+            "invoice_profile_id",
+            "destination_profile",
+            "invoice_profile",
+            "save_destination_profile",
+            "save_invoice_profile",
             "items",
         )
         read_only_fields = ("id",)
@@ -272,6 +419,89 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context["request"].user
+        destination_profile_id = validated_data.pop("destination_profile_id", None)
+        invoice_profile_id = validated_data.pop("invoice_profile_id", None)
+        destination_payload = validated_data.pop("destination_profile", None) or {}
+        invoice_payload = validated_data.pop("invoice_profile", None) or {}
+        save_destination = validated_data.pop("save_destination_profile", False)
+        save_invoice = validated_data.pop("save_invoice_profile", False)
+
+        metadata = dict(validated_data.get("metadata") or {})
+
+        if destination_profile_id:
+            try:
+                address = StoreBuyerAddress.objects.get(pk=destination_profile_id, buyer=user)
+            except StoreBuyerAddress.DoesNotExist as exc:
+                raise serializers.ValidationError({"destination_profile_id": "مقصد انتخاب‌شده پیدا نشد."}) from exc
+            destination_payload = {
+                "id": address.id,
+                "title": address.title,
+                "province": address.province,
+                "city": address.city,
+                "address": address.address,
+                "phone": address.phone,
+            }
+        elif destination_payload:
+            destination_serializer = StoreBuyerAddressSerializer(
+                data={
+                    "title": destination_payload.get("title", ""),
+                    "province": destination_payload.get("province", ""),
+                    "city": destination_payload.get("city", ""),
+                    "address": destination_payload.get("address", ""),
+                    "phone": destination_payload.get("phone", ""),
+                    "is_default": bool(destination_payload.get("is_default", False)),
+                },
+                context=self.context,
+            )
+            destination_serializer.is_valid(raise_exception=True)
+            if save_destination:
+                address = destination_serializer.save()
+                destination_payload["id"] = address.id
+            else:
+                destination_payload = destination_serializer.validated_data
+
+        if invoice_profile_id:
+            try:
+                profile = StoreBuyerInvoiceProfile.objects.get(pk=invoice_profile_id, buyer=user)
+            except StoreBuyerInvoiceProfile.DoesNotExist as exc:
+                raise serializers.ValidationError({"invoice_profile_id": "پروفایل فاکتور انتخاب‌شده پیدا نشد."}) from exc
+            invoice_payload = StoreBuyerInvoiceProfileSerializer(profile).data
+        elif invoice_payload:
+            invoice_serializer = StoreBuyerInvoiceProfileSerializer(
+                data={
+                    "title": invoice_payload.get("title", ""),
+                    "buyer_type": invoice_payload.get("buyer_type", StoreBuyerInvoiceProfile.BUYER_TYPE_INDIVIDUAL),
+                    "full_name": invoice_payload.get("full_name", ""),
+                    "national_id": invoice_payload.get("national_id", ""),
+                    "company_name": invoice_payload.get("company_name", ""),
+                    "economic_code": invoice_payload.get("economic_code", ""),
+                    "registration_id": invoice_payload.get("registration_id", ""),
+                    "phone": invoice_payload.get("phone", ""),
+                    "postal_code": invoice_payload.get("postal_code", ""),
+                    "address": invoice_payload.get("address", ""),
+                    "is_default": bool(invoice_payload.get("is_default", False)),
+                },
+                context=self.context,
+            )
+            invoice_serializer.is_valid(raise_exception=True)
+            if save_invoice:
+                profile = invoice_serializer.save()
+                invoice_payload = StoreBuyerInvoiceProfileSerializer(profile).data
+            else:
+                invoice_payload = invoice_serializer.validated_data
+
+        if destination_payload:
+            validated_data["destination_province"] = destination_payload.get("province", "")
+            validated_data["destination_city"] = destination_payload.get("city", "")
+            validated_data["destination_address"] = destination_payload.get("address", "")
+            if destination_payload.get("phone") and not validated_data.get("contact_phone"):
+                validated_data["contact_phone"] = destination_payload.get("phone", "")
+            metadata["destination_profile"] = dict(destination_payload)
+
+        if invoice_payload:
+            metadata["invoice_profile"] = dict(invoice_payload)
+
+        validated_data["metadata"] = metadata
         try:
             return create_store_order(user, validated_data)
         except ValueError as exc:
@@ -306,6 +536,7 @@ class StoreAdminQuoteItemSerializer(serializers.Serializer):
     price_basis = serializers.ChoiceField(choices=("kg", "ton", "sheet"), required=False, default="kg")
     estimated_weight_kg = serializers.DecimalField(max_digits=12, decimal_places=3, min_value=Decimal("0.001"), required=False)
     total_price_amount = serializers.IntegerField(min_value=0, required=False, allow_null=True)
+    force_total_price = serializers.BooleanField(required=False, default=False)
 
 
 class StoreAdminQuoteSerializer(serializers.Serializer):
@@ -381,6 +612,11 @@ class StoreOrderAdminUpdateSerializer(serializers.ModelSerializer):
             "destination_city",
             "destination_address",
             "delivery_notes",
+            "driver_name",
+            "driver_phone",
+            "vehicle_type",
+            "vehicle_plate",
+            "logistics_note",
             "risk_status",
             "subtotal_amount",
             "total_amount",

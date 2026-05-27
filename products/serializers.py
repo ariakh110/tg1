@@ -218,6 +218,8 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
             "manufacturing_process",
             "factory",
             "cut_type",
+            "sales_mode",
+            "head_tail_policy",
             "steel_grade_label",
             "surface_finish_label",
             "manufacturing_process_label",
@@ -331,8 +333,16 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
         )
 
         if product_kind == "sheet":
+            process = (current_value("manufacturing_process") or "").strip().lower()
+            sales_mode = (current_value("sales_mode") or "").strip()
+            if not sales_mode:
+                attrs["sales_mode"] = "coil_full" if process == "coil" else "sheet"
+            elif process == "coil" and sales_mode == "sheet":
+                raise serializers.ValidationError({"sales_mode": "برای رول باید یکی از حالت‌های فروش رول انتخاب شود."})
+            elif process != "coil" and sales_mode in {"coil_full", "coil_cuttable", "coil_must_cut"}:
+                raise serializers.ValidationError({"sales_mode": "حالت فروش رول فقط برای فرایند رول مجاز است."})
             sheet_required = ["manufacturing_process", "surface_finish", "factory", "thickness_mm", "width_mm"]
-            if current_value("manufacturing_process") == "sheet":
+            if process == "sheet":
                 sheet_required.extend(["length_mm", "cut_type"])
             missing_sheet = [
                 field
@@ -343,7 +353,7 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {field: "این مشخصه برای ورق/رول الزامی است." for field in missing_sheet}
                 )
-            if current_value("manufacturing_process") == "coil":
+            if process == "coil":
                 attrs["length_mm"] = None
         return attrs
 
@@ -476,6 +486,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "category",
             "is_active",
             "availability_status",
+            "purchase_terms",
             "created_at",
             "updated_at",
             "specification",
@@ -508,6 +519,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "category",
             "is_active",
             "availability_status",
+            "purchase_terms",
             "created_at",
             "updated_at",
         )
@@ -518,6 +530,18 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         if value is not None and not value.is_active:
             raise serializers.ValidationError("این دسته‌بندی غیرفعال است.")
         return value
+
+    def validate_purchase_terms(self, value):
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("شروط محصول باید به صورت لیست ارسال شود.")
+        normalized = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text[:500])
+        return normalized
 
 class ProductSummarySerializer(serializers.ModelSerializer):
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)

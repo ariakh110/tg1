@@ -127,6 +127,10 @@ HEADER_ALIASES = {
     "نوع برش": "cut_type",
     "فابریک یا برش خورده": "cut_type",
     "availability_status": "availability_status",
+    "purchase_terms": "purchase_terms",
+    "terms": "purchase_terms",
+    "sales_mode": "sales_mode",
+    "head_tail_policy": "head_tail_policy",
     "وضعیت موجودی": "availability_status",
     "موجودی": "availability_status",
     "country": "country",
@@ -157,6 +161,8 @@ SPEC_FIELDS = {
     "weight_kg_per_unit",
     "dimension_width_mm",
     "dimension_length_mm",
+    "sales_mode",
+    "head_tail_policy",
 }
 
 NUMERIC_FIELDS = {
@@ -228,6 +234,19 @@ def clean_value(value):
     if isinstance(value, str):
         return value.strip()
     return str(value).strip()
+
+
+def parse_terms(value):
+    if value in ("", None):
+        return []
+    text = str(value).replace("\r", "\n")
+    parts = []
+    for chunk in text.replace("؛", "|").replace(";", "|").split("|"):
+        for line in chunk.split("\n"):
+            item = line.strip()
+            if item:
+                parts.append(item[:500])
+    return parts
 
 
 def normalize_row(row):
@@ -371,6 +390,7 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
             short_description=row.get("short_description") or generated_name,
             description=row.get("description") or row.get("short_description") or generated_name,
             availability_status=row.get("availability_status") or Product.AVAILABILITY_IN_STOCK,
+            purchase_terms=parse_terms(row.get("purchase_terms")),
             is_active=True,
         )
         created_product = True
@@ -391,6 +411,9 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
         if row.get("availability_status") and product.availability_status != row["availability_status"]:
             product.availability_status = row["availability_status"]
             changed_fields.append("availability_status")
+        if row.get("purchase_terms") not in ("", None):
+            product.purchase_terms = parse_terms(row.get("purchase_terms"))
+            changed_fields.append("purchase_terms")
         if changed_fields:
             product.save(update_fields=changed_fields)
 

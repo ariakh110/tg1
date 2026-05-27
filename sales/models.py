@@ -60,6 +60,66 @@ class StoreQuantityUnit(models.TextChoices):
     SHEET = "sheet", "Sheet count"
 
 
+class StoreBuyerAddress(models.Model):
+    buyer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="store_addresses",
+    )
+    title = models.CharField(max_length=120, blank=True)
+    province = models.CharField(max_length=100)
+    city = models.CharField(max_length=100)
+    address = models.TextField()
+    phone = models.CharField(max_length=40, blank=True)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-is_default", "-updated_at")
+        indexes = [models.Index(fields=["buyer", "is_default"])]
+
+    def __str__(self):
+        return self.title or f"{self.province} - {self.city}"
+
+
+class StoreBuyerInvoiceProfile(models.Model):
+    BUYER_TYPE_INDIVIDUAL = "individual"
+    BUYER_TYPE_COMPANY = "company"
+    BUYER_TYPE_CHOICES = [
+        (BUYER_TYPE_INDIVIDUAL, "Individual"),
+        (BUYER_TYPE_COMPANY, "Company"),
+    ]
+
+    buyer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="store_invoice_profiles",
+    )
+    title = models.CharField(max_length=120, blank=True)
+    buyer_type = models.CharField(max_length=20, choices=BUYER_TYPE_CHOICES, default=BUYER_TYPE_INDIVIDUAL)
+    full_name = models.CharField(max_length=160, blank=True)
+    national_id = models.CharField(max_length=20, blank=True)
+    company_name = models.CharField(max_length=200, blank=True)
+    economic_code = models.CharField(max_length=40, blank=True)
+    registration_id = models.CharField(max_length=40, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    postal_code = models.CharField(max_length=20, blank=True)
+    address = models.TextField(blank=True)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-is_default", "-updated_at")
+        indexes = [models.Index(fields=["buyer", "buyer_type", "is_default"])]
+
+    def __str__(self):
+        if self.buyer_type == self.BUYER_TYPE_COMPANY:
+            return self.company_name or self.title or "Company invoice profile"
+        return self.full_name or self.title or "Individual invoice profile"
+
+
 class StoreOrder(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     buyer = models.ForeignKey(
@@ -91,6 +151,11 @@ class StoreOrder(models.Model):
     destination_city = models.CharField(max_length=100, blank=True)
     destination_address = models.TextField(blank=True)
     delivery_notes = models.TextField(blank=True)
+    driver_name = models.CharField(max_length=160, blank=True)
+    driver_phone = models.CharField(max_length=40, blank=True)
+    vehicle_type = models.CharField(max_length=100, blank=True)
+    vehicle_plate = models.CharField(max_length=80, blank=True)
+    logistics_note = models.TextField(blank=True)
     subtotal_amount = models.BigIntegerField(default=0)
     total_amount = models.BigIntegerField(default=0)
     settlement_term_days = models.PositiveSmallIntegerField(default=1)

@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import StoreOrder, StoreOrderItem, StoreOrderNotification, StoreOrderStatusHistory, StorePayment
+from .models import (
+    StoreBuyerAddress,
+    StoreBuyerInvoiceProfile,
+    StoreOrder,
+    StoreOrderItem,
+    StoreOrderNotification,
+    StoreOrderStatusHistory,
+    StorePayment,
+)
 
 
 class StoreOrderItemInline(admin.TabularInline):
@@ -62,3 +70,17 @@ class StoreOrderNotificationAdmin(admin.ModelAdmin):
     list_display = ("order", "channel", "recipient", "event", "status", "created_at")
     list_filter = ("channel", "status", "event")
     search_fields = ("order__id", "recipient", "event")
+
+
+@admin.register(StoreBuyerAddress)
+class StoreBuyerAddressAdmin(admin.ModelAdmin):
+    list_display = ("buyer", "title", "province", "city", "phone", "is_default", "updated_at")
+    list_filter = ("province", "city", "is_default")
+    search_fields = ("buyer__username", "title", "province", "city", "phone")
+
+
+@admin.register(StoreBuyerInvoiceProfile)
+class StoreBuyerInvoiceProfileAdmin(admin.ModelAdmin):
+    list_display = ("buyer", "buyer_type", "title", "full_name", "company_name", "phone", "is_default", "updated_at")
+    list_filter = ("buyer_type", "is_default")
+    search_fields = ("buyer__username", "full_name", "national_id", "company_name", "economic_code", "phone")

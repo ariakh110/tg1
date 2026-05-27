@@ -139,6 +139,7 @@ class Product(models.Model):
         choices=AVAILABILITY_CHOICES,
         default=AVAILABILITY_IN_STOCK,
     )
+    purchase_terms = models.JSONField(default=list, blank=True)
     created_at = JalaliDateTimeField(auto_now_add=True)
     updated_at = JalaliDateTimeField(auto_now=True)
 
@@ -217,6 +218,26 @@ class ProductAttributeOption(models.Model):
 
 # ----------- مشخصات فنی پایه (برای فولاد) -----------
 class ProductSpecification(models.Model):
+    SALES_MODE_SHEET = "sheet"
+    SALES_MODE_COIL_FULL = "coil_full"
+    SALES_MODE_COIL_CUTTABLE = "coil_cuttable"
+    SALES_MODE_COIL_MUST_CUT = "coil_must_cut"
+    SALES_MODE_CHOICES = [
+        (SALES_MODE_SHEET, "Sheet"),
+        (SALES_MODE_COIL_FULL, "Full coil"),
+        (SALES_MODE_COIL_CUTTABLE, "Cuttable coil"),
+        (SALES_MODE_COIL_MUST_CUT, "Must-cut coil"),
+    ]
+
+    HEAD_TAIL_OPTIONAL = "optional"
+    HEAD_TAIL_INCLUDED = "included"
+    HEAD_TAIL_SURCHARGE_IF_EXCLUDED = "surcharge_if_excluded"
+    HEAD_TAIL_POLICY_CHOICES = [
+        (HEAD_TAIL_OPTIONAL, "Optional"),
+        (HEAD_TAIL_INCLUDED, "Included"),
+        (HEAD_TAIL_SURCHARGE_IF_EXCLUDED, "Surcharge if excluded"),
+    ]
+
     product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name='specifications')
     material_type = models.CharField(max_length=100, blank=True, default="")   # ورق، میلگرد، لوله
     steel_grade = models.CharField(max_length=50, blank=True, default="")      # St37, A36
@@ -231,6 +252,13 @@ class ProductSpecification(models.Model):
     weight_kg_per_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     surface_finish = models.CharField(max_length=100, null=True, blank=True)
     manufacturing_process = models.CharField(max_length=100, null=True, blank=True)
+    sales_mode = models.CharField(max_length=32, choices=SALES_MODE_CHOICES, blank=True, default="")
+    head_tail_policy = models.CharField(
+        max_length=32,
+        choices=HEAD_TAIL_POLICY_CHOICES,
+        blank=True,
+        default=HEAD_TAIL_OPTIONAL,
+    )
 
     def __str__(self):
         return f"Specs for {self.product.name}"

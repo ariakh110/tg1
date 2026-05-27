@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AdminStoreOrderViewSet,
+    StoreBuyerAddressViewSet,
+    StoreBuyerInvoiceProfileViewSet,
     StoreDashboardSummaryAPIView,
     StoreOrderViewSet,
     StorePaymentListAPIView,
@@ -11,6 +13,8 @@ from .views import (
 
 
 router = DefaultRouter()
+router.register(r"store/addresses", StoreBuyerAddressViewSet, basename="store-addresses")
+router.register(r"store/invoice-profiles", StoreBuyerInvoiceProfileViewSet, basename="store-invoice-profiles")
 router.register(r"store/orders", StoreOrderViewSet, basename="store-orders")
 router.register(
     r"admin/dashboard/store-orders",
