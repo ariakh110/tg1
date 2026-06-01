@@ -28,6 +28,11 @@ class StorePaymentStatus(models.TextChoices):
     REFUNDED = "REFUNDED", "Refunded"
 
 
+class StorePaymentMethod(models.TextChoices):
+    PAYMENT_LINK = "payment_link", "Payment link"
+    SATNA_OFFLINE = "satna_offline", "Offline Satna"
+
+
 class StoreRiskStatus(models.TextChoices):
     PENDING = "PENDING", "Pending review"
     APPROVED = "APPROVED", "Approved"
@@ -137,6 +142,12 @@ class StoreOrder(models.Model):
         max_length=20,
         choices=StorePaymentStatus.choices,
         default=StorePaymentStatus.UNPAID,
+        db_index=True,
+    )
+    payment_method = models.CharField(
+        max_length=24,
+        choices=StorePaymentMethod.choices,
+        default=StorePaymentMethod.PAYMENT_LINK,
         db_index=True,
     )
     risk_status = models.CharField(

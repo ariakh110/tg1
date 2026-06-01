@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from datetime import timedelta
+import json
 
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -104,7 +106,7 @@ class StoreOrderCheckoutTests(APITestCase):
         )
         return product, offer, tier
 
-    def create_order(self, product, quantity="2", buyer=None, quantity_unit="ton", settlement_term_days=None, selection_details=None, items=None):
+    def create_order(self, product, quantity="2", buyer=None, quantity_unit="ton", settlement_term_days=None, selection_details=None, items=None, payment_method=None):
         self.client.force_authenticate(buyer or self.buyer)
         payload = {
             "contact_name": "Buyer Co",
@@ -124,6 +126,8 @@ class StoreOrderCheckoutTests(APITestCase):
         }
         if settlement_term_days is not None:
             payload["settlement_term_days"] = settlement_term_days
+        if payment_method is not None:
+            payload["payment_method"] = payment_method
         return self.client.post("/api/v1/store/orders/", payload, format="json")
 
     def test_priced_product_creates_direct_store_order_not_marketplace_request(self):
@@ -147,6 +151,24 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(res.data["items"][0]["unit_price_amount"], 43000)
         self.assertEqual(res.data["items"][0]["estimated_weight_kg"], "2000.000")
         self.assertEqual(OrderRequest.all_objects.count(), 0)
+
+    @override_settings(
+        OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON=json.dumps(
+            [{"id": "IBAN_01", "bank_name": "Test Bank", "iban": "IR000000000000000000000000", "account_holder": "Test"}]
+        )
+    )
+    def test_satna_checkout_creates_offline_payment_without_payment_link(self):
+        from offline_payments.models import OfflinePayment
+
+        product, _offer, _tier = self.make_product(price=43000)
+
+        res = self.create_order(product, quantity="3", payment_method="satna_offline")
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertEqual(res.data["payment_method"], "satna_offline")
+        self.assertEqual(res.data["payment_link_url"], "")
+        payment = OfflinePayment.objects.get(store_order_id=res.data["id"])
+        self.assertEqual(payment.amount, 129000)
 
     def test_kilogram_quantity_converts_to_ton_pricing(self):
         product, _offer, _tier = self.make_product(price=43000)

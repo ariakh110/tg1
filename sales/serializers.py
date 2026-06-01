@@ -18,6 +18,7 @@ from .models import (
     StoreOrderStatusHistory,
     StoreRiskStatus,
     StorePayment,
+    StorePaymentMethod,
     StorePaymentStatus,
     StoreQuantityUnit,
 )
@@ -257,6 +258,7 @@ class StoreOrderReadSerializer(serializers.ModelSerializer):
             "buyer_username",
             "status",
             "payment_status",
+            "payment_method",
             "risk_status",
             "contact_name",
             "contact_phone",
@@ -401,6 +403,7 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
             "destination_address",
             "delivery_notes",
             "settlement_term_days",
+            "payment_method",
             "metadata",
             "destination_profile_id",
             "invoice_profile_id",

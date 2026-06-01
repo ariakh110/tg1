@@ -20,6 +20,7 @@ from .models import (
     StoreNotificationChannel,
     StoreNotificationStatus,
     StorePaymentStatus,
+    StorePaymentMethod,
     StorePayment,
     StoreQuantityUnit,
 )
@@ -743,7 +744,12 @@ def record_final_weights(order, items_data, actor=None):
         },
     )
     if remaining_amount_for_order(order) > 0 and order.status in PAYMENT_ACTIONABLE_STATUSES:
-        generate_payment_link(order, actor=actor)
+        if order.payment_method == StorePaymentMethod.SATNA_OFFLINE:
+            from offline_payments.services import initiate_store_order_payment
+
+            initiate_store_order_payment(order, order.buyer)
+        else:
+            generate_payment_link(order, actor=actor)
     return order
 
 
@@ -971,6 +977,11 @@ def confirm_store_order_quote(order, actor=None):
         actor,
         meta={"total_amount": order.total_amount},
     )
+    if order.payment_method == StorePaymentMethod.SATNA_OFFLINE:
+        from offline_payments.services import initiate_store_order_payment
+
+        initiate_store_order_payment(order, order.buyer)
+        return order
     return generate_payment_link(order, actor=actor)
 
 
@@ -1135,7 +1146,12 @@ def create_store_order(user, validated_data):
         ]
     )
     if not needs_quote:
-        generate_payment_link(order, actor=user)
+        if order.payment_method == StorePaymentMethod.SATNA_OFFLINE:
+            from offline_payments.services import initiate_store_order_payment
+
+            initiate_store_order_payment(order, user)
+        else:
+            generate_payment_link(order, actor=user)
     write_status_history(
         order,
         None,

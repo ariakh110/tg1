@@ -159,8 +159,6 @@ SPEC_FIELDS = {
     "height_mm",
     "diameter_mm",
     "weight_kg_per_unit",
-    "dimension_width_mm",
-    "dimension_length_mm",
     "sales_mode",
     "head_tail_policy",
 }
@@ -173,6 +171,20 @@ NUMERIC_FIELDS = {
     "height_mm",
     "diameter_mm",
     "weight_kg_per_unit",
+    "dimension_width_mm",
+    "dimension_length_mm",
+}
+
+NUMERIC_FIELD_LABELS = {
+    "price": "قیمت واحد روز",
+    "thickness_mm": "ضخامت",
+    "width_mm": "عرض",
+    "length_mm": "طول",
+    "height_mm": "ارتفاع",
+    "diameter_mm": "قطر",
+    "weight_kg_per_unit": "وزن هر واحد",
+    "dimension_width_mm": "عرض شرط قیمت",
+    "dimension_length_mm": "طول شرط قیمت",
 }
 
 PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
@@ -262,11 +274,27 @@ def parse_decimal(value, field):
     if value in ("", None):
         return None
     text = str(value).strip().translate(PERSIAN_DIGITS)
-    text = text.replace(",", "").replace("٬", "").replace("،", "").replace("تومان", "")
+    if text.lower() == "mm" or "خالی" in text:
+        return None
+    text = (
+        text.replace(",", "")
+        .replace("٬", "")
+        .replace("،", "")
+        .replace("تومان", "")
+        .replace("ریال", "")
+        .replace("mm", "")
+        .replace("MM", "")
+        .replace("میلی‌متر", "")
+        .replace("میلیمتر", "")
+        .strip()
+    )
+    if text == "":
+        return None
     try:
         return Decimal(text)
     except InvalidOperation as exc:
-        raise ValueError(f"{field} عدد معتبر نیست.") from exc
+        label = NUMERIC_FIELD_LABELS.get(field, field)
+        raise ValueError(f"{label} باید عدد باشد.") from exc
 
 
 def normalize_price_basis(value):
@@ -371,7 +399,7 @@ def find_product(row, category):
 def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
     row = normalize_row(row)
     for field in NUMERIC_FIELDS:
-        if field in row and row[field] != "":
+        if field in row:
             row[field] = parse_decimal(row[field], field)
 
     category = resolve_category(row)

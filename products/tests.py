@@ -539,6 +539,102 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(tier.price_basis, "kg")
         self.assertEqual(str(tier.unit_price), "140000.00")
 
+    def test_admin_product_ignores_unit_only_pricing_dimensions(self):
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "رول سیاه ساده بدون شرط ابعاد",
+                "category_code": "sheet",
+                "seller_id": self.seller.id,
+                "price": "98000",
+                "price_basis": "kg",
+                "dimension_width_mm": "mm",
+                "dimension_length_mm": "برای رول خالی بماند",
+                "steel_grade": "ST37",
+                "manufacturing_process": "coil",
+                "surface_finish": "black",
+                "factory": "mobarakeh",
+                "sales_mode": "coil_full",
+                "thickness_mm": "15",
+                "width_mm": "1500",
+                "province": "اصفهان",
+                "city": "اصفهان",
+                "address": "انبار",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        tier = Product.objects.get(id=res.data["product_id"]).offers.get(seller=self.seller).pricing_tiers.get()
+        self.assertIsNone(tier.dimension_width_mm)
+        self.assertIsNone(tier.dimension_length_mm)
+
+    def test_admin_product_accepts_blank_pricing_dimensions(self):
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "رول سیاه بدون ابعاد شرط قیمت",
+                "category_code": "sheet",
+                "seller_id": self.seller.id,
+                "price": "98000",
+                "price_basis": "kg",
+                "dimension_width_mm": "",
+                "dimension_length_mm": "",
+                "steel_grade": "ST37",
+                "manufacturing_process": "coil",
+                "surface_finish": "black",
+                "factory": "mobarakeh",
+                "sales_mode": "coil_full",
+                "thickness_mm": "15",
+                "width_mm": "1500",
+                "length_mm": "",
+                "diameter_mm": "",
+                "province": "اصفهان",
+                "city": "اصفهان",
+                "address": "انبار",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product = Product.objects.get(id=res.data["product_id"])
+        self.assertIsNone(product.specifications.length_mm)
+        self.assertIsNone(product.specifications.diameter_mm)
+        tier = product.offers.get(seller=self.seller).pricing_tiers.get()
+        self.assertIsNone(tier.dimension_width_mm)
+        self.assertIsNone(tier.dimension_length_mm)
+
+    def test_admin_product_returns_persian_error_for_invalid_numeric_value(self):
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "رول سیاه با شرط عددی نامعتبر",
+                "category_code": "sheet",
+                "seller_id": self.seller.id,
+                "price": "98000",
+                "price_basis": "kg",
+                "dimension_width_mm": "#4",
+                "dimension_length_mm": "",
+                "steel_grade": "ST37",
+                "manufacturing_process": "coil",
+                "surface_finish": "black",
+                "factory": "mobarakeh",
+                "sales_mode": "coil_full",
+                "thickness_mm": "15",
+                "width_mm": "1500",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("عرض شرط قیمت باید عدد باشد", str(res.data["detail"]))
+
     def test_admin_can_update_origin_without_price_change(self):
         category = ProductCategory.objects.get(code="sheet-acid-washed")
         product = Product.objects.create(

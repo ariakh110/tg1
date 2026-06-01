@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'tags',
     'orders',
     'sales',
+    'offline_payments',
     'blog',
     
 ]
@@ -217,8 +218,14 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# development email backend: print emails to console
-if DEBUG:
+# Transactional email settings. Development prints messages unless explicitly overridden.
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "0") == "1"
+if DEBUG and "EMAIL_BACKEND" not in os.environ:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # used by registration to build verification link
@@ -230,6 +237,13 @@ VERIFICATION_RESEND_WINDOW_HOURS = 24
 VERIFICATION_RESEND_MAX = 5
 
 CKEDITOR_5_FILE_STORAGE = "tg1.storage_backends.CKEditor5Storage"
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_CONTENT_MODEL = os.environ.get("OPENAI_CONTENT_MODEL", "gpt-5-mini")
+OPENAI_API_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_API_TIMEOUT_SECONDS", "30"))
+OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON = os.environ.get("OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON", "[]")
+OFFLINE_PAYMENT_PRIMARY_IBAN_ID = os.environ.get("OFFLINE_PAYMENT_PRIMARY_IBAN_ID", "IBAN_01")
+OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB = int(os.environ.get("OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB", "5"))
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"
 CKEDITOR_5_MAX_FILE_SIZE = int(os.environ.get("CKEDITOR_5_MAX_FILE_SIZE_MB", 5))
 CKEDITOR_5_UPLOAD_FILE_TYPES = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"]

@@ -88,11 +88,22 @@ def accept_offer(offer: OrderOffer, actor):
         offer.save(update_fields=["status", "updated_at"])
 
         order.selected_offer = offer
+        order.price_agreed_amount = offer.price_total_amount
+        order.price_agreed_currency = offer.price_total_currency
         if order.type == OrderType.BUY:
             order.assigned_provider = offer.offered_by
         elif order.type == OrderType.SELL:
             order.buyer = offer.offered_by
-        order.save(update_fields=["selected_offer", "assigned_provider", "buyer", "updated_at"])
+        order.save(
+            update_fields=[
+                "selected_offer",
+                "assigned_provider",
+                "buyer",
+                "price_agreed_amount",
+                "price_agreed_currency",
+                "updated_at",
+            ]
+        )
 
         OrderStateService.transition(order, "accept_offer", actor)
 

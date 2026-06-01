@@ -2,6 +2,7 @@ import math
 import shutil
 import tempfile
 from urllib.parse import quote
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -9,7 +10,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import Category, Post
+from .models import Category, Post, SiteSEOSettings
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp()
 
@@ -24,6 +25,7 @@ class BlogAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.author = User.objects.create_user(username="editor", password="pass")
+        self.admin = User.objects.create_user(username="content_admin", password="pass", is_staff=True)
         self.market = Category.objects.create(title="بازار فولاد", slug="steel-market")
         self.company = Category.objects.create(title="اخبار شرکت", slug="company-news")
 
@@ -143,3 +145,169 @@ class BlogAPITests(TestCase):
         self.assertNotIn("<script", content)
         self.assertNotIn("javascript:", content)
         self.assertIn("<strong>تاکید</strong>", content)
+
+    def test_scheduled_post_becomes_public_after_effective_time(self):
+        visible = self.make_post(
+            slug="scheduled-visible",
+            status="scheduled",
+            scheduled_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        self.make_post(
+            slug="scheduled-future",
+            status="scheduled",
+            scheduled_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.get("/api/blog/posts/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["slug"] for item in response.data["results"]], [visible.slug])
+
+    def test_admin_can_create_draft_with_sanitized_html_and_seo_score(self):
+        self.client.force_authenticate(self.admin)
+        content = (
+            "<h1>بازار فولاد امروز</h1>"
+            "<p>بازار فولاد امروز برای خریداران اهمیت دارد.</p>"
+            '<script>alert("x")</script>'
+        )
+
+        response = self.client.post(
+            "/api/blog/admin/posts/",
+            {
+                "title": "بازار فولاد امروز",
+                "slug": "بازار-فولاد-امروز",
+                "content": content,
+                "excerpt": "تحلیل بازار فولاد امروز",
+                "categories": [self.market.id],
+                "focus_keyword": "بازار فولاد",
+                "meta_title": "بازار فولاد امروز",
+                "meta_description": "تحلیل بازار فولاد امروز برای فعالان بازار",
+                "thumbnail_alt": "بازار فولاد امروز",
+                "status": "draft",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        post = Post.objects.get(pk=response.data["id"])
+        self.assertNotIn("<script", post.content)
+        self.assertGreater(post.seo_score, 0)
+        self.assertEqual(self.client.get("/api/blog/posts/").data["count"], 0)
+
+    def test_admin_can_create_category_with_generated_slug(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/categories/",
+            {"title": "گزارش ویژه"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["slug"], "گزارش-ویژه")
+        self.assertTrue(Category.objects.filter(pk=response.data["id"]).exists())
+
+    def test_admin_editor_blocks_are_rendered_to_sanitized_html(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/posts/",
+            {
+                "title": "خبر بلوکی",
+                "categories": [self.market.id],
+                "content_blocks": {
+                    "blocks": [
+                        {"type": "header", "data": {"level": 1, "text": "عنوان خبر"}},
+                        {"type": "paragraph", "data": {"text": 'متن امن<script>alert("x")</script>'}},
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        post = Post.objects.get(pk=response.data["id"])
+        self.assertIn("<h1>عنوان خبر</h1>", post.content)
+        self.assertNotIn("<script", post.content)
+        self.assertEqual(post.content_blocks["blocks"][0]["type"], "header")
+
+    @override_settings(OPENAI_API_KEY="")
+    def test_ai_suggestions_endpoint_reports_missing_api_key_in_persian(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/posts/ai-suggestions/",
+            {"title": "خبر بازار", "content": "<p>متن خبر بازار فولاد</p>"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("OPENAI_API_KEY", response.data["detail"])
+
+    @patch("blog.views.generate_content_suggestions")
+    def test_ai_suggestions_endpoint_returns_reviewable_metadata(self, suggest):
+        suggest.return_value = {
+            "excerpt": "خلاصه پیشنهادی",
+            "focus_keyword": "بازار فولاد",
+            "secondary_keywords": ["قیمت آهن", "خرید فولاد"],
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/posts/ai-suggestions/",
+            {
+                "title": "خبر بازار",
+                "content_blocks": {
+                    "blocks": [{"type": "paragraph", "data": {"text": "متن خبر بازار فولاد"}}]
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["focus_keyword"], "بازار فولاد")
+        suggest.assert_called_once()
+
+    def test_admin_update_creates_revision_and_revision_can_be_restored(self):
+        post = self.make_post(slug="revision-source", title="نسخه اول")
+        self.client.force_authenticate(self.admin)
+
+        update = self.client.patch(
+            f"/api/blog/admin/posts/{post.id}/",
+            {"title": "نسخه دوم"},
+            format="json",
+        )
+
+        self.assertEqual(update.status_code, 200, update.data)
+        revision = post.revisions.get()
+        self.assertEqual(revision.snapshot["title"], "نسخه اول")
+
+        restore = self.client.post(
+            f"/api/blog/admin/posts/{post.id}/revisions/{revision.id}/restore/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(restore.status_code, 200, restore.data)
+        post.refresh_from_db()
+        self.assertEqual(post.title, "نسخه اول")
+
+    def test_schema_sitemap_and_robots_endpoints_expose_crawl_metadata(self):
+        post = self.make_post(slug="seo-public", title="تحلیل فولاد")
+        hidden = self.make_post(slug="seo-noindex", title="مقاله خصوصی")
+        hidden.robots_index = False
+        hidden.save(update_fields=["robots_index"])
+        SiteSEOSettings.load()
+
+        schema = self.client.get(f"/api/blog/schema/{post.slug}/")
+        sitemap = self.client.get("/api/blog/sitemap/")
+        robots = self.client.get("/api/blog/robots.txt")
+
+        self.assertEqual(schema.status_code, 200)
+        self.assertEqual(schema.data["@type"], "Article")
+        self.assertEqual(sitemap.status_code, 200)
+        urls = [item["url"] for item in sitemap.data["results"]]
+        self.assertTrue(any(post.slug in url for url in urls))
+        self.assertFalse(any(hidden.slug in url for url in urls))
+        self.assertEqual(robots.status_code, 200)
+        self.assertIn("Disallow: /admin/", robots.content.decode("utf-8"))
