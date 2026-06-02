@@ -7,8 +7,9 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .models import OfflinePayment
+from .models import OfflinePayment, SatnaBankAccount
 from .serializers import (
+    AdminSatnaBankAccountSerializer,
     BankAccountSerializer,
     OfflinePaymentInitiateSerializer,
     OfflinePaymentSerializer,
@@ -108,6 +109,36 @@ class AdminOfflinePaymentListAPIView(APIView):
         for payment in payments:
             expire_if_due(payment)
         return Response(OfflinePaymentSerializer(payments, many=True, context={"request": request}).data)
+
+
+class AdminSatnaBankAccountListCreateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def get(self, request):
+        accounts = SatnaBankAccount.objects.all()
+        return Response(AdminSatnaBankAccountSerializer(accounts, many=True, context={"request": request}).data)
+
+    def post(self, request):
+        serializer = AdminSatnaBankAccountSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class AdminSatnaBankAccountDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def patch(self, request, code):
+        account = get_object_or_404(SatnaBankAccount, code=code)
+        serializer = AdminSatnaBankAccountSerializer(
+            account,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class AdminOfflinePaymentReviewAPIView(APIView):

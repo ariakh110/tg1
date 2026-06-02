@@ -244,6 +244,20 @@ OPENAI_API_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_API_TIMEOUT_SECONDS", "3
 OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON = os.environ.get("OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON", "[]")
 OFFLINE_PAYMENT_PRIMARY_IBAN_ID = os.environ.get("OFFLINE_PAYMENT_PRIMARY_IBAN_ID", "IBAN_01")
 OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB = int(os.environ.get("OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB", "5"))
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_TIMEZONE = "Asia/Tehran"
+CELERY_BEAT_SCHEDULE = {
+    "offline-payments-check-deadlines": {
+        "task": "offline_payments.tasks.check_payment_deadlines",
+        "schedule": 60.0,
+    },
+    "offline-payments-send-deadline-reminders": {
+        "task": "offline_payments.tasks.send_payment_deadline_reminders",
+        "schedule": 60.0,
+    },
+}
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"
 CKEDITOR_5_MAX_FILE_SIZE = int(os.environ.get("CKEDITOR_5_MAX_FILE_SIZE_MB", 5))
 CKEDITOR_5_UPLOAD_FILE_TYPES = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"]

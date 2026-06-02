@@ -13,3 +13,4 @@ Pillow
 bleach
 openpyxl
 tinycss2
+celery[redis]>=5.5,<6

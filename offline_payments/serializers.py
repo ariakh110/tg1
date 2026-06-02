@@ -1,11 +1,16 @@
+import re
+
+from django.db import transaction
 from django.urls import reverse
 from rest_framework import serializers
 
 from orders.models import Order
 from sales.models import StoreOrder
 
-from .models import OfflinePayment, OfflinePaymentAuditLog, OfflinePaymentReceipt
+from .models import OfflinePayment, OfflinePaymentAuditLog, OfflinePaymentReceipt, SatnaBankAccount
 from .services import (
+    audit_bank_account,
+    bank_account_by_id,
     bank_accounts,
     expire_if_due,
     initiate_marketplace_order_payment,
@@ -22,7 +27,97 @@ class BankAccountSerializer(serializers.Serializer):
     bank_name = serializers.CharField()
     iban = serializers.CharField()
     account_holder = serializers.CharField()
+    account_number = serializers.CharField(required=False, allow_blank=True, default="")
     is_primary = serializers.BooleanField()
+
+
+class AdminSatnaBankAccountSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(source="code", read_only=True)
+
+    class Meta:
+        model = SatnaBankAccount
+        fields = (
+            "id",
+            "bank_name",
+            "account_holder",
+            "account_number",
+            "iban",
+            "is_primary",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+        extra_kwargs = {"is_primary": {"validators": []}}
+
+    def validate_bank_name(self, value):
+        return value.strip()
+
+    def validate_account_holder(self, value):
+        return value.strip()
+
+    def validate_account_number(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("شماره حساب الزامی است.")
+        return value
+
+    def validate_iban(self, value):
+        value = re.sub(r"\s+", "", value).upper()
+        if not re.fullmatch(r"IR\d{24}", value):
+            raise serializers.ValidationError("شماره شبا باید با IR شروع شود و پس از آن ۲۴ رقم داشته باشد.")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        is_active = attrs.get("is_active", getattr(self.instance, "is_active", True))
+        is_primary = attrs.get("is_primary", getattr(self.instance, "is_primary", False))
+        if is_primary and not is_active:
+            raise serializers.ValidationError({"is_active": "حساب اصلی باید فعال باشد."})
+        if self.instance and self.instance.is_primary:
+            if attrs.get("is_active") is False:
+                raise serializers.ValidationError({"is_active": "ابتدا یک حساب فعال دیگر را به عنوان حساب اصلی انتخاب کنید."})
+            if attrs.get("is_primary") is False:
+                raise serializers.ValidationError({"is_primary": "برای تغییر حساب اصلی، حساب فعال دیگری را اصلی کنید."})
+        return attrs
+
+    def _audit_payload(self, account):
+        return {
+            "bank_name": account.bank_name,
+            "account_holder": account.account_holder,
+            "account_number": account.account_number,
+            "iban": account.iban,
+            "is_primary": account.is_primary,
+            "is_active": account.is_active,
+        }
+
+    @transaction.atomic
+    def create(self, validated_data):
+        is_first_active = not SatnaBankAccount.objects.filter(is_active=True).exists()
+        if is_first_active:
+            validated_data.update(is_active=True, is_primary=True)
+        elif validated_data.get("is_primary"):
+            SatnaBankAccount.objects.filter(is_primary=True).update(is_primary=False)
+        account = super().create(validated_data)
+        request = self.context.get("request")
+        audit_bank_account(account, "ACCOUNT_CREATED", getattr(request, "user", None), request, self._audit_payload(account))
+        return account
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        before = self._audit_payload(instance)
+        if validated_data.get("is_primary"):
+            SatnaBankAccount.objects.filter(is_primary=True).exclude(pk=instance.pk).update(is_primary=False)
+        account = super().update(instance, validated_data)
+        request = self.context.get("request")
+        audit_bank_account(
+            account,
+            "ACCOUNT_UPDATED",
+            getattr(request, "user", None),
+            request,
+            {"before": before, "after": self._audit_payload(account)},
+        )
+        return account
 
 
 class OfflinePaymentReceiptSerializer(serializers.ModelSerializer):
@@ -65,6 +160,7 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
     receipts = OfflinePaymentReceiptSerializer(many=True, read_only=True)
     audit_logs = OfflinePaymentAuditLogSerializer(many=True, read_only=True)
     can_upload = serializers.SerializerMethodField()
+    notification_failure_count = serializers.SerializerMethodField()
 
     class Meta:
         model = OfflinePayment
@@ -86,6 +182,7 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
             "receipts",
             "audit_logs",
             "can_upload",
+            "notification_failure_count",
             "reviewed_at",
             "created_at",
             "updated_at",
@@ -98,8 +195,14 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
         return obj.marketplace_order.title
 
     def get_bank_account(self, obj):
-        account = next((row for row in bank_accounts() if row["id"] == obj.target_iban_id), None)
-        return account or {"id": obj.target_iban_id, "bank_name": "", "iban": "", "account_holder": ""}
+        account = obj.target_bank_account_snapshot or bank_account_by_id(obj.target_iban_id)
+        return account or {
+            "id": obj.target_iban_id,
+            "bank_name": "",
+            "iban": "",
+            "account_holder": "",
+            "account_number": "",
+        }
 
     def get_latest_receipt(self, obj):
         receipt = obj.receipts.first()
@@ -108,6 +211,9 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
     def get_can_upload(self, obj):
         expire_if_due(obj)
         return obj.status in {"pending_receipt", "rejected"}
+
+    def get_notification_failure_count(self, obj):
+        return obj.notifications.filter(status="failed").count()
 
 
 class OfflinePaymentInitiateSerializer(serializers.Serializer):

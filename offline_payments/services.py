@@ -31,6 +31,8 @@ from .models import (
     OfflinePaymentReceipt,
     OfflinePaymentStatus,
     ReceiptAttemptStatus,
+    SatnaBankAccount,
+    SatnaBankAccountAuditLog,
 )
 
 
@@ -44,12 +46,11 @@ UPLOADABLE_STATUSES = {
     OfflinePaymentStatus.PENDING_RECEIPT,
     OfflinePaymentStatus.REJECTED,
 }
-MIN_AMOUNT = 100_000
-MAX_AMOUNT = 2_000_000_000
+MIN_AMOUNT = 1_000_000_000
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 
-def bank_accounts():
+def _configured_bank_accounts():
     raw = getattr(settings, "OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON", "[]")
     try:
         rows = json.loads(raw) if isinstance(raw, str) else raw
@@ -61,17 +62,47 @@ def bank_accounts():
             "bank_name": str(row.get("bank_name", "")).strip(),
             "iban": str(row.get("iban", "")).strip(),
             "account_holder": str(row.get("account_holder", "")).strip(),
+            "account_number": str(row.get("account_number", "")).strip(),
         }
         for row in rows
         if isinstance(row, dict) and str(row.get("id", "")).strip()
     ]
 
 
+def _bank_account_payload(account):
+    return {
+        "id": account.code,
+        "bank_name": account.bank_name,
+        "iban": account.iban,
+        "account_holder": account.account_holder,
+        "account_number": account.account_number,
+    }
+
+
+def bank_accounts():
+    database_accounts = SatnaBankAccount.objects.filter(is_active=True)
+    if database_accounts.exists():
+        return [_bank_account_payload(account) for account in database_accounts]
+    return _configured_bank_accounts()
+
+
+def bank_account_by_id(account_id):
+    account = SatnaBankAccount.objects.filter(code=account_id).first()
+    if account:
+        return _bank_account_payload(account)
+    return next((row for row in _configured_bank_accounts() if row["id"] == account_id), None)
+
+
 def primary_bank_account():
+    database_account = SatnaBankAccount.objects.filter(is_active=True).order_by("-is_primary", "created_at").first()
+    if database_account:
+        return _bank_account_payload(database_account)
     primary_id = getattr(settings, "OFFLINE_PAYMENT_PRIMARY_IBAN_ID", "IBAN_01")
-    account = next((row for row in bank_accounts() if row["id"] == primary_id), None)
+    account = next((row for row in _configured_bank_accounts() if row["id"] == primary_id), None)
     if not account or not account["iban"] or not account["bank_name"] or not account["account_holder"]:
-        raise serializers.ValidationError({"detail": "offline_payment_bank_account_not_configured"})
+        raise serializers.ValidationError(
+            {"detail": "اطلاعات حساب مقصد ساتنا تنظیم نشده است. با پشتیبانی تماس بگیرید."}
+        )
     return account
 
 
@@ -86,6 +117,16 @@ def client_ip(request):
     return (forwarded.split(",", 1)[0] if forwarded else request.META.get("REMOTE_ADDR")) or None
 
 
+def audit_bank_account(account, action, actor=None, request=None, payload=None):
+    return SatnaBankAccountAuditLog.objects.create(
+        account=account,
+        action=action,
+        actor_user=actor if getattr(actor, "is_authenticated", False) else None,
+        ip_address=client_ip(request) if request else None,
+        payload=payload or {},
+    )
+
+
 def audit(payment, action, actor=None, request=None, payload=None):
     return OfflinePaymentAuditLog.objects.create(
         payment=payment,
@@ -96,22 +137,40 @@ def audit(payment, action, actor=None, request=None, payload=None):
     )
 
 
-def notify(payment, event):
+def notify(payment, event, dedupe_key="", return_created=False):
     recipient = (payment.user.email or "").strip()
-    if not recipient:
-        return OfflinePaymentNotification.objects.create(
+    notification_defaults = {
+        "event": event,
+        "recipient": recipient,
+        "status": NotificationStatus.PENDING,
+    }
+    if dedupe_key:
+        notification, created = OfflinePaymentNotification.objects.get_or_create(
             payment=payment,
-            event=event,
-            recipient="",
-            status=NotificationStatus.SKIPPED,
-            error_message="user_email_is_empty",
+            dedupe_key=dedupe_key,
+            defaults=notification_defaults,
         )
+        if not created:
+            return (notification, False) if return_created else notification
+    else:
+        notification = OfflinePaymentNotification.objects.create(
+            payment=payment,
+            dedupe_key="",
+            **notification_defaults,
+        )
+    if not recipient:
+        notification.status = NotificationStatus.SKIPPED
+        notification.error_message = "user_email_is_empty"
+        notification.save(update_fields=["status", "error_message"])
+        return (notification, True) if return_created else notification
     subject = {
         "receipt_uploaded": "فیش ساتنا دریافت شد",
         "receipt_approved": "پرداخت ساتنا تایید شد",
         "receipt_rejected": "فیش ساتنا رد شد",
         "payment_locked": "بارگذاری فیش ساتنا قفل شد",
         "payment_unlocked": "بارگذاری فیش ساتنا فعال شد",
+        "payment_reminder": "یادآوری مهلت پرداخت ساتنا",
+        "payment_expired": "مهلت پرداخت ساتنا منقضی شد",
     }.get(event, "بروزرسانی پرداخت ساتنا")
     try:
         send_mail(
@@ -122,36 +181,44 @@ def notify(payment, event):
             fail_silently=False,
         )
     except Exception as exc:  # SMTP failure must not roll back financial actions.
-        return OfflinePaymentNotification.objects.create(
-            payment=payment,
-            event=event,
-            recipient=recipient,
-            status=NotificationStatus.FAILED,
-            error_message=str(exc)[:1000],
-        )
-    return OfflinePaymentNotification.objects.create(
-        payment=payment,
-        event=event,
-        recipient=recipient,
-        status=NotificationStatus.SENT,
-    )
+        notification.status = NotificationStatus.FAILED
+        notification.error_message = str(exc)[:1000]
+        notification.save(update_fields=["status", "error_message"])
+        return (notification, True) if return_created else notification
+    notification.status = NotificationStatus.SENT
+    notification.save(update_fields=["status"])
+    return (notification, True) if return_created else notification
 
 
 def expire_if_due(payment, now=None):
     if payment.status not in ACTIVE_STATUSES or payment.status == OfflinePaymentStatus.LOCKED:
         return payment
-    if payment.payment_deadline >= (now or timezone.now()):
+    current_time = now or timezone.now()
+    if payment.payment_deadline >= current_time:
+        return payment
+    updated = (
+        OfflinePayment.objects.filter(
+            pk=payment.pk,
+            status__in=ACTIVE_STATUSES,
+            payment_deadline__lt=current_time,
+        )
+        .exclude(status=OfflinePaymentStatus.LOCKED)
+        .update(status=OfflinePaymentStatus.EXPIRED, updated_at=current_time)
+    )
+    if not updated:
+        payment.refresh_from_db(fields=["status", "updated_at"])
         return payment
     payment.status = OfflinePaymentStatus.EXPIRED
-    payment.save(update_fields=["status", "updated_at"])
+    payment.updated_at = current_time
     audit(payment, "PAYMENT_EXPIRED", payload={"deadline": payment.payment_deadline.isoformat()})
+    notify(payment, "payment_expired", dedupe_key=f"payment_expired:{payment.id}")
     return payment
 
 
 def _validate_amount(amount):
-    if amount < MIN_AMOUNT or amount > MAX_AMOUNT:
+    if amount < MIN_AMOUNT:
         raise serializers.ValidationError(
-            {"detail": f"مبلغ پرداخت ساتنا باید بین {MIN_AMOUNT:,} و {MAX_AMOUNT:,} تومان باشد."}
+            {"detail": f"مبلغ پرداخت ساتنا باید حداقل {MIN_AMOUNT:,} تومان باشد."}
         )
 
 
@@ -186,6 +253,7 @@ def initiate_store_order_payment(order, actor, request=None):
         currency=order.currency,
         payment_deadline=deadline,
         target_iban_id=account["id"],
+        target_bank_account_snapshot=account,
     )
     order.payment_due_at = deadline
     order.save(update_fields=["payment_due_at", "updated_at"])
@@ -212,6 +280,7 @@ def initiate_marketplace_order_payment(order, actor, request=None):
         currency=order.price_agreed_currency,
         payment_deadline=payment_deadline(1),
         target_iban_id=account["id"],
+        target_bank_account_snapshot=account,
     )
     audit(payment, "PAYMENT_INITIATED", actor, request, {"source_type": "marketplace_order"})
     return payment

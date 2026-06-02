@@ -160,7 +160,7 @@ class StoreOrderCheckoutTests(APITestCase):
     def test_satna_checkout_creates_offline_payment_without_payment_link(self):
         from offline_payments.models import OfflinePayment
 
-        product, _offer, _tier = self.make_product(price=43000)
+        product, _offer, _tier = self.make_product(price=500_000_000)
 
         res = self.create_order(product, quantity="3", payment_method="satna_offline")
 
@@ -168,7 +168,7 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(res.data["payment_method"], "satna_offline")
         self.assertEqual(res.data["payment_link_url"], "")
         payment = OfflinePayment.objects.get(store_order_id=res.data["id"])
-        self.assertEqual(payment.amount, 129000)
+        self.assertEqual(payment.amount, 1_500_000_000)
 
     def test_kilogram_quantity_converts_to_ton_pricing(self):
         product, _offer, _tier = self.make_product(price=43000)

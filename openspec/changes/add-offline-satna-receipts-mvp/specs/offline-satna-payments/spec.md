@@ -3,6 +3,14 @@
 ### Requirement: Satna Payment Sources
 The system SHALL allow authenticated buyers to initiate Satna receipt payments for payable direct store orders and accepted marketplace trades.
 
+#### Scenario: Satna amount is eligible
+- **WHEN** a buyer initiates Satna payment for an amount of at least 1,000,000,000 toman
+- **THEN** the system SHALL allow Satna initiation without applying a software upper limit.
+
+#### Scenario: Satna amount is below the minimum
+- **WHEN** a buyer initiates Satna payment for an amount below 1,000,000,000 toman
+- **THEN** the system SHALL reject the request with a Persian minimum-amount message.
+
 #### Scenario: Direct buyer selects Satna
 - **WHEN** a buyer submits a payable direct checkout with Satna selected
 - **THEN** the system SHALL create an active offline payment for the direct order remaining amount.
@@ -17,6 +25,14 @@ The system SHALL allow authenticated buyers to initiate Satna receipt payments f
 
 ### Requirement: Satna Deadline And Bank Details
 The system SHALL assign the configured primary bank account and calculate Satna deadlines at 10:00 Asia/Tehran.
+
+#### Scenario: Admin adds destination accounts
+- **WHEN** an admin adds one or more valid Satna destination accounts
+- **THEN** the system SHALL persist the account number, IBAN, bank name, and account holder and SHALL make the first active account primary automatically.
+
+#### Scenario: Admin changes the primary account
+- **WHEN** an admin selects another active destination account as primary
+- **THEN** new Satna payments SHALL use that account while existing payments retain their snapshotted destination details.
 
 #### Scenario: Direct deadline
 - **WHEN** a direct Satna payment is created
@@ -54,6 +70,14 @@ The system SHALL let admins approve, reject, and unlock Satna payments with an a
 
 ### Requirement: Protected Receipts And Email Logs
 The system SHALL protect receipt-file access and log transactional email delivery.
+
+#### Scenario: Deadline reminder
+- **WHEN** an active Satna payment reaches the two-hour reminder window
+- **THEN** the periodic worker SHALL send and log one reminder email.
+
+#### Scenario: Deadline expires
+- **WHEN** an active unlocked Satna payment passes its deadline
+- **THEN** the periodic worker SHALL mark it expired and SHALL send and log one expiration email.
 
 #### Scenario: Receipt file access
 - **WHEN** a receipt owner or admin requests the current receipt file

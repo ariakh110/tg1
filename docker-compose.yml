@@ -1,4 +1,3 @@
-version: "4.42.1"
 services:
   db:
     image: postgres:16 # می توانید از نسخه های جدیدتر (مانند 14, 15, 16) استفاده کنید
@@ -11,10 +10,22 @@ services:
     ports:
       - "5432:5432" # پورت دیتابیس را به هاست مپ می کند (اختیاری است اگر فقط Django از آن استفاده کند)
     healthcheck: # بررسی سلامت دیتابیس
-      test: ["CMD-SHELL", "pg_isready -U alibaba_user -d alibaba_db"]
+      test: ["CMD-SHELL", "pg_isready -U ariakh -d alibackend_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
   pgdata:
+  redisdata:

@@ -12,7 +12,15 @@ from rest_framework.test import APITestCase
 from orders.models import Order, OrderOffer, OrderStatus, OrderType, OfferStatus
 from sales.models import StoreOrder, StoreOrderStatus, StorePayment, StorePaymentStatus
 
-from .models import OfflinePayment, OfflinePaymentStatus
+from .models import (
+    NotificationStatus,
+    OfflinePayment,
+    OfflinePaymentNotification,
+    OfflinePaymentStatus,
+    SatnaBankAccount,
+    SatnaBankAccountAuditLog,
+)
+from .tasks import check_payment_deadlines, send_payment_deadline_reminders
 
 
 User = get_user_model()
@@ -49,7 +57,7 @@ class OfflinePaymentAPITests(APITestCase):
             buyer=self.buyer,
             status=StoreOrderStatus.PAYMENT_PENDING,
             payment_status=StorePaymentStatus.PENDING,
-            total_amount=500_000,
+            total_amount=1_500_000_000,
             settlement_term_days=1,
             price_valid_until=timezone.now() + timezone.timedelta(hours=1),
         )
@@ -83,6 +91,17 @@ class OfflinePaymentAPITests(APITestCase):
             format="json",
         )
 
+    def create_bank_account(self, iban="IR111111111111111111111111", **overrides):
+        self.client.force_authenticate(self.admin)
+        payload = {
+            "bank_name": "بانک ملت",
+            "account_holder": "شرکت تست",
+            "account_number": "123456789",
+            "iban": iban,
+            **overrides,
+        }
+        return self.client.post("/api/v1/admin/offline-payments/bank-accounts/", payload, format="json")
+
     def test_buyer_can_initiate_upload_and_read_protected_receipt(self):
         response = self.initiate()
         payment_id = response.data["id"]
@@ -99,6 +118,82 @@ class OfflinePaymentAPITests(APITestCase):
         self.client.force_authenticate(self.other)
         forbidden = self.client.get(f"/api/v1/offline-payments/{payment_id}/receipt/")
         self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+    @override_settings(OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON="[]")
+    def test_bank_accounts_endpoint_reports_missing_configuration_in_persian(self):
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.get("/api/v1/offline-payments/bank-accounts/")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["detail"], "اطلاعات حساب مقصد ساتنا تنظیم نشده است. با پشتیبانی تماس بگیرید.")
+
+    @override_settings(OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON="[]")
+    def test_admin_can_create_multiple_accounts_and_change_primary_account(self):
+        first = self.create_bank_account()
+        second = self.create_bank_account(
+            iban="IR222222222222222222222222",
+            bank_name="بانک تجارت",
+            account_number="987654321",
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.data)
+        self.assertTrue(first.data["is_primary"])
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.data)
+        self.assertFalse(second.data["is_primary"])
+
+        promoted = self.client.patch(
+            f"/api/v1/admin/offline-payments/bank-accounts/{second.data['id']}/",
+            {"is_primary": True},
+            format="json",
+        )
+
+        self.assertEqual(promoted.status_code, status.HTTP_200_OK, promoted.data)
+        self.assertTrue(promoted.data["is_primary"])
+        self.assertFalse(SatnaBankAccount.objects.get(code=first.data["id"]).is_primary)
+        self.assertEqual(SatnaBankAccountAuditLog.objects.count(), 3)
+
+        self.client.force_authenticate(self.buyer)
+        public_accounts = self.client.get("/api/v1/offline-payments/bank-accounts/")
+        self.assertEqual(public_accounts.status_code, status.HTTP_200_OK, public_accounts.data)
+        self.assertEqual(len(public_accounts.data), 2)
+        self.assertEqual(next(row for row in public_accounts.data if row["is_primary"])["id"], second.data["id"])
+
+    def test_regular_user_cannot_manage_bank_accounts(self):
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.post(
+            "/api/v1/admin/offline-payments/bank-accounts/",
+            {
+                "bank_name": "بانک ملت",
+                "account_holder": "شرکت تست",
+                "account_number": "123456789",
+                "iban": "IR111111111111111111111111",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @override_settings(OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON="[]")
+    def test_payment_keeps_bank_account_snapshot_after_admin_edit(self):
+        account = self.create_bank_account()
+        payment_id = self.initiate().data["id"]
+
+        self.client.force_authenticate(self.admin)
+        updated = self.client.patch(
+            f"/api/v1/admin/offline-payments/bank-accounts/{account.data['id']}/",
+            {"bank_name": "بانک ویرایش شده", "iban": "IR333333333333333333333333"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+
+        self.client.force_authenticate(self.buyer)
+        payment = self.client.get(f"/api/v1/offline-payments/{payment_id}/status/")
+
+        self.assertEqual(payment.status_code, status.HTTP_200_OK, payment.data)
+        self.assertEqual(payment.data["bank_account"]["bank_name"], "بانک ملت")
+        self.assertEqual(payment.data["bank_account"]["iban"], "IR111111111111111111111111")
 
     def test_upload_rejects_invalid_reference_and_extension(self):
         payment_id = self.initiate().data["id"]
@@ -144,6 +239,79 @@ class OfflinePaymentAPITests(APITestCase):
         self.assertEqual(self.order.status, StoreOrderStatus.PAID)
         self.assertEqual(StorePayment.objects.filter(provider_reference=f"satna:{payment_id}").count(), 1)
 
+    def test_satna_rejects_amount_below_one_billion_toman(self):
+        self.order.total_amount = 999_999_999
+        self.order.save(update_fields=["total_amount"])
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.post(
+            "/api/v1/offline-payments/",
+            {"source_type": "store_order", "source_id": str(self.order.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["detail"], "مبلغ پرداخت ساتنا باید حداقل 1,000,000,000 تومان باشد.")
+
+    def test_satna_allows_amount_above_previous_upper_limit(self):
+        self.order.total_amount = 3_333_505_000
+        self.order.save(update_fields=["total_amount"])
+
+        response = self.initiate()
+
+        self.assertEqual(response.data["amount"], 3_333_505_000)
+
+    def test_deadline_task_expires_payment_and_notifies_only_once(self):
+        payment_id = self.initiate().data["id"]
+        payment = OfflinePayment.objects.get(pk=payment_id)
+        payment.payment_deadline = timezone.now() - timezone.timedelta(minutes=1)
+        payment.save(update_fields=["payment_deadline"])
+
+        first = check_payment_deadlines()
+        second = check_payment_deadlines()
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, OfflinePaymentStatus.EXPIRED)
+        self.assertEqual(first, {"expired": 1})
+        self.assertEqual(second, {"expired": 0})
+        self.assertEqual(
+            OfflinePaymentNotification.objects.filter(
+                payment=payment,
+                event="payment_expired",
+                status=NotificationStatus.SENT,
+            ).count(),
+            1,
+        )
+
+    def test_reminder_task_notifies_only_once_within_two_hour_window(self):
+        payment_id = self.initiate().data["id"]
+        payment = OfflinePayment.objects.get(pk=payment_id)
+        payment.payment_deadline = timezone.now() + timezone.timedelta(minutes=90)
+        payment.save(update_fields=["payment_deadline"])
+
+        first = send_payment_deadline_reminders()
+        second = send_payment_deadline_reminders()
+
+        self.assertEqual(first, {"reminded": 1})
+        self.assertEqual(second, {"reminded": 0})
+        self.assertEqual(
+            OfflinePaymentNotification.objects.filter(
+                payment=payment,
+                event="payment_reminder",
+                status=NotificationStatus.SENT,
+            ).count(),
+            1,
+        )
+        self.assertTrue(payment.audit_logs.filter(action="PAYMENT_REMINDER_SENT").exists())
+
+    def test_celery_beat_schedule_registers_satna_periodic_tasks(self):
+        from django.conf import settings
+
+        tasks = {row["task"] for row in settings.CELERY_BEAT_SCHEDULE.values()}
+
+        self.assertIn("offline_payments.tasks.check_payment_deadlines", tasks)
+        self.assertIn("offline_payments.tasks.send_payment_deadline_reminders", tasks)
+
     def test_marketplace_buyer_can_initiate_after_offer_selection(self):
         seller = User.objects.create_user(username="satna-seller", password="pass")
         market_order = Order.objects.create(
@@ -152,12 +320,12 @@ class OfflinePaymentAPITests(APITestCase):
             buyer=self.buyer,
             assigned_provider=seller,
             title="خرید ورق",
-            price_agreed_amount=700_000,
+            price_agreed_amount=1_200_000_000,
         )
         offer = OrderOffer.objects.create(
             order=market_order,
             offered_by=seller,
-            price_total_amount=700_000,
+            price_total_amount=1_200_000_000,
             status=OfferStatus.ACCEPTED,
         )
         market_order.selected_offer = offer

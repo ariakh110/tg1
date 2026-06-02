@@ -4,6 +4,8 @@ from .views import (
     AdminOfflinePaymentListAPIView,
     AdminOfflinePaymentReviewAPIView,
     AdminOfflinePaymentUnlockAPIView,
+    AdminSatnaBankAccountDetailAPIView,
+    AdminSatnaBankAccountListCreateAPIView,
     BankAccountListAPIView,
     OfflinePaymentListCreateAPIView,
     OfflinePaymentStatusAPIView,
@@ -19,6 +21,8 @@ urlpatterns = [
     path("offline-payments/<uuid:pk>/upload-receipt/", ReceiptUploadAPIView.as_view(), name="offline-payment-upload"),
     path("offline-payments/<uuid:pk>/receipt/", ReceiptFileAPIView.as_view(), name="offline-payment-receipt-file"),
     path("admin/offline-payments/", AdminOfflinePaymentListAPIView.as_view(), name="admin-offline-payment-list"),
+    path("admin/offline-payments/bank-accounts/", AdminSatnaBankAccountListCreateAPIView.as_view(), name="admin-offline-payment-bank-account-list"),
+    path("admin/offline-payments/bank-accounts/<str:code>/", AdminSatnaBankAccountDetailAPIView.as_view(), name="admin-offline-payment-bank-account-detail"),
     path("admin/offline-payments/<uuid:pk>/review/", AdminOfflinePaymentReviewAPIView.as_view(), name="admin-offline-payment-review"),
     path("admin/offline-payments/<uuid:pk>/unlock/", AdminOfflinePaymentUnlockAPIView.as_view(), name="admin-offline-payment-unlock"),
 ]
