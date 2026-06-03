@@ -16,6 +16,8 @@ from .services import (
     initiate_marketplace_order_payment,
     initiate_store_order_payment,
     primary_bank_account,
+    receipt_amounts,
+    reverse_receipt_approval,
     review_payment,
     unlock_payment,
     upload_receipt,
@@ -127,6 +129,7 @@ class OfflinePaymentReceiptSerializer(serializers.ModelSerializer):
         model = OfflinePaymentReceipt
         fields = (
             "id",
+            "amount",
             "reference_number",
             "note",
             "status",
@@ -138,7 +141,7 @@ class OfflinePaymentReceiptSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         request = self.context.get("request")
-        url = reverse("offline-payment-receipt-file", kwargs={"pk": obj.payment_id})
+        url = reverse("offline-payment-receipt-file", kwargs={"pk": obj.payment_id, "receipt_id": obj.id})
         return request.build_absolute_uri(url) if request else url
 
 
@@ -161,6 +164,10 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
     audit_logs = OfflinePaymentAuditLogSerializer(many=True, read_only=True)
     can_upload = serializers.SerializerMethodField()
     notification_failure_count = serializers.SerializerMethodField()
+    approved_amount = serializers.SerializerMethodField()
+    pending_amount = serializers.SerializerMethodField()
+    remaining_amount = serializers.SerializerMethodField()
+    available_to_upload_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = OfflinePayment
@@ -171,6 +178,10 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
             "source_title",
             "user_username",
             "amount",
+            "approved_amount",
+            "pending_amount",
+            "remaining_amount",
+            "available_to_upload_amount",
             "currency",
             "status",
             "rejection_count",
@@ -210,7 +221,26 @@ class OfflinePaymentSerializer(serializers.ModelSerializer):
 
     def get_can_upload(self, obj):
         expire_if_due(obj)
-        return obj.status in {"pending_receipt", "rejected"}
+        return obj.status in {"pending_receipt", "pending_review", "rejected"} and self._amounts(obj)["available_to_upload"] > 0
+
+    def _amounts(self, obj):
+        cache = getattr(self, "_receipt_amount_cache", {})
+        if obj.pk not in cache:
+            cache[obj.pk] = receipt_amounts(obj)
+            self._receipt_amount_cache = cache
+        return cache[obj.pk]
+
+    def get_approved_amount(self, obj):
+        return self._amounts(obj)["approved"]
+
+    def get_pending_amount(self, obj):
+        return self._amounts(obj)["pending"]
+
+    def get_remaining_amount(self, obj):
+        return self._amounts(obj)["remaining"]
+
+    def get_available_to_upload_amount(self, obj):
+        return self._amounts(obj)["available_to_upload"]
 
     def get_notification_failure_count(self, obj):
         return obj.notifications.filter(status="failed").count()
@@ -237,6 +267,7 @@ class OfflinePaymentInitiateSerializer(serializers.Serializer):
 
 class ReceiptUploadSerializer(serializers.Serializer):
     receipt_file = serializers.FileField()
+    amount = serializers.IntegerField(min_value=1)
     reference_number = serializers.CharField(max_length=30)
     note = serializers.CharField(required=False, allow_blank=True)
 
@@ -245,6 +276,7 @@ class ReceiptUploadSerializer(serializers.Serializer):
             self.context["payment"],
             self.context["request"].user,
             validated_data["receipt_file"],
+            validated_data["amount"],
             validated_data["reference_number"],
             validated_data.get("note", ""),
             self.context["request"],
@@ -254,6 +286,7 @@ class ReceiptUploadSerializer(serializers.Serializer):
 class ReviewSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["approve", "reject"])
     admin_note = serializers.CharField(required=False, allow_blank=True)
+    receipt_id = serializers.IntegerField(required=False)
 
     def create(self, validated_data):
         return review_payment(
@@ -261,6 +294,20 @@ class ReviewSerializer(serializers.Serializer):
             self.context["request"].user,
             validated_data["decision"],
             validated_data.get("admin_note", ""),
+            validated_data.get("receipt_id"),
+            self.context["request"],
+        )
+
+
+class ReceiptApprovalReversalSerializer(serializers.Serializer):
+    admin_note = serializers.CharField(required=True, allow_blank=False)
+
+    def create(self, validated_data):
+        return reverse_receipt_approval(
+            self.context["payment"],
+            self.context["request"].user,
+            self.context["receipt_id"],
+            validated_data["admin_note"],
             self.context["request"],
         )
 

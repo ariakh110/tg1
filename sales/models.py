@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 from django.conf import settings
 from django.db import models
@@ -63,6 +64,50 @@ class StoreQuantityUnit(models.TextChoices):
     TON = "ton", "Ton"
     KG = "kg", "Kilogram"
     SHEET = "sheet", "Sheet count"
+
+
+class StoreDeliveryRequestStatus(models.TextChoices):
+    PUBLISHED = "PUBLISHED", "Published"
+    ASSIGNED = "ASSIGNED", "Assigned"
+    IN_PROGRESS = "IN_PROGRESS", "In progress"
+    COMPLETED = "COMPLETED", "Completed"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class StoreDeliveryOfferStatus(models.TextChoices):
+    OFFERED = "OFFERED", "Offered"
+    ACCEPTED = "ACCEPTED", "Accepted"
+    DECLINED = "DECLINED", "Declined"
+    CANCELLED = "CANCELLED", "Cancelled"
+    EXPIRED = "EXPIRED", "Expired"
+
+
+class StoreDeliveryAssignmentStatus(models.TextChoices):
+    ACCEPTED = "ACCEPTED", "Accepted"
+    ARRIVED_FOR_LOADING = "ARRIVED_FOR_LOADING", "Arrived for loading"
+    LOADED = "LOADED", "Loaded"
+    IN_TRANSIT = "IN_TRANSIT", "In transit"
+    DELIVERED = "DELIVERED", "Delivered"
+    PROOF_SUBMITTED = "PROOF_SUBMITTED", "Proof submitted"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class StoreDeliveryDocumentType(models.TextChoices):
+    BILL_OF_LADING = "bill_of_lading", "Bill of lading"
+    WEIGHBRIDGE = "weighbridge", "Weighbridge receipt"
+    DELIVERY_RECEIPT = "delivery_receipt", "Delivery receipt"
+    LOAD_PHOTO = "load_photo", "Load photo"
+    OTHER = "other", "Other"
+
+
+def weighbridge_slip_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"weighbridge_slips/{instance.order.created_at:%Y/%m}/{uuid.uuid4().hex}{extension}"
+
+
+def delivery_document_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"delivery_docs/{instance.assignment_id}/{uuid.uuid4().hex}{extension}"
 
 
 class StoreBuyerAddress(models.Model):
@@ -212,6 +257,69 @@ class StoreOrder(models.Model):
         return f"StoreOrder({self.id}) {self.status}"
 
 
+class StoreOrderLoadingVehicle(models.Model):
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="loading_vehicles")
+    sequence = models.PositiveSmallIntegerField(default=1)
+    driver_name = models.CharField(max_length=160)
+    driver_phone = models.CharField(max_length=40, blank=True)
+    vehicle_type = models.CharField(max_length=100, blank=True)
+    vehicle_plate = models.CharField(max_length=80)
+    planned_weight_kg = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    loaded_weight_kg = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    note = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_store_loading_vehicles",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("sequence", "id")
+        indexes = [
+            models.Index(fields=["order", "is_active", "sequence"]),
+        ]
+
+    def __str__(self):
+        return f"{self.order_id} vehicle {self.sequence} - {self.driver_name}"
+
+
+class StoreOrderWeighbridgeSlip(models.Model):
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="weighbridge_slips")
+    loading_vehicle = models.ForeignKey(
+        StoreOrderLoadingVehicle,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="weighbridge_slips",
+    )
+    file = models.FileField(upload_to=weighbridge_slip_upload_path)
+    slip_number = models.CharField(max_length=80, blank=True)
+    weight_kg = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    note = models.TextField(blank=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_store_weighbridge_slips",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=["order", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.order_id} weighbridge slip {self.id}"
+
+
 class StoreOrderItem(models.Model):
     order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey(
@@ -336,3 +444,178 @@ class StoreOrderNotification(models.Model):
 
     def __str__(self):
         return f"{self.order_id} {self.channel} {self.status}"
+
+
+class StoreDeliveryRequest(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="delivery_requests")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_delivery_requests",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=StoreDeliveryRequestStatus.choices,
+        default=StoreDeliveryRequestStatus.PUBLISHED,
+        db_index=True,
+    )
+    total_weight_kg = models.DecimalField(max_digits=12, decimal_places=3)
+    required_driver_count = models.PositiveSmallIntegerField(default=1)
+    accepted_driver_count = models.PositiveSmallIntegerField(default=0)
+    per_driver_weight_limit_kg = models.DecimalField(max_digits=12, decimal_places=3, default=25000)
+    vehicle_type = models.CharField(max_length=100, blank=True)
+    pickup_window_start = models.DateTimeField(null=True, blank=True)
+    pickup_window_end = models.DateTimeField(null=True, blank=True)
+    dispatch_deadline = models.DateTimeField(null=True, blank=True)
+    pickup_notes = models.TextField(blank=True)
+    dispatcher_notes = models.TextField(blank=True)
+    shipment_snapshot = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["order", "status", "created_at"]),
+            models.Index(fields=["status", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"DeliveryRequest({self.order_id}) {self.status}"
+
+
+class StoreDeliveryOffer(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(StoreDeliveryRequest, on_delete=models.CASCADE, related_name="offers")
+    driver = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="store_delivery_offers",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=StoreDeliveryOfferStatus.choices,
+        default=StoreDeliveryOfferStatus.OFFERED,
+        db_index=True,
+    )
+    response_note = models.TextField(blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        unique_together = ("request", "driver")
+        indexes = [
+            models.Index(fields=["driver", "status", "created_at"]),
+            models.Index(fields=["request", "status"]),
+        ]
+
+    def __str__(self):
+        return f"DeliveryOffer({self.request_id}) {self.driver_id} {self.status}"
+
+
+class StoreDeliveryAssignment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(StoreDeliveryRequest, on_delete=models.CASCADE, related_name="assignments")
+    offer = models.OneToOneField(
+        StoreDeliveryOffer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assignment",
+    )
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="delivery_assignments")
+    driver = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="store_delivery_assignments",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=StoreDeliveryAssignmentStatus.choices,
+        default=StoreDeliveryAssignmentStatus.ACCEPTED,
+        db_index=True,
+    )
+    load_sequence = models.PositiveSmallIntegerField(default=1)
+    planned_weight_kg = models.DecimalField(max_digits=12, decimal_places=3)
+    vehicle_type = models.CharField(max_length=100, blank=True)
+    vehicle_plate = models.CharField(max_length=80, blank=True)
+    driver_phone = models.CharField(max_length=40, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    arrived_for_loading_at = models.DateTimeField(null=True, blank=True)
+    loaded_at = models.DateTimeField(null=True, blank=True)
+    in_transit_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    proof_submitted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("load_sequence", "created_at")
+        unique_together = ("request", "driver")
+        indexes = [
+            models.Index(fields=["driver", "status", "created_at"]),
+            models.Index(fields=["order", "status"]),
+            models.Index(fields=["request", "status"]),
+        ]
+
+    def __str__(self):
+        return f"DeliveryAssignment({self.order_id}) {self.driver_id} {self.status}"
+
+
+class StoreDeliveryEvent(models.Model):
+    request = models.ForeignKey(StoreDeliveryRequest, on_delete=models.CASCADE, related_name="events")
+    assignment = models.ForeignKey(
+        StoreDeliveryAssignment,
+        on_delete=models.CASCADE,
+        related_name="events",
+        null=True,
+        blank=True,
+    )
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    event = models.CharField(max_length=80)
+    from_status = models.CharField(max_length=24, blank=True)
+    to_status = models.CharField(max_length=24, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.request_id} {self.event}"
+
+
+class StoreDeliveryDocument(models.Model):
+    assignment = models.ForeignKey(StoreDeliveryAssignment, on_delete=models.CASCADE, related_name="documents")
+    document_type = models.CharField(
+        max_length=32,
+        choices=StoreDeliveryDocumentType.choices,
+        default=StoreDeliveryDocumentType.OTHER,
+    )
+    file = models.FileField(upload_to=delivery_document_upload_path)
+    note = models.TextField(blank=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_delivery_documents",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"DeliveryDocument({self.assignment_id}) {self.document_type}"

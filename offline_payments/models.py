@@ -19,6 +19,7 @@ class ReceiptAttemptStatus(models.TextChoices):
     PENDING = "pending", "در انتظار بررسی"
     APPROVED = "approved", "تایید شده"
     REJECTED = "rejected", "رد شده"
+    REVERSED = "reversed", "برگشت خورده"
 
 
 class NotificationStatus(models.TextChoices):
@@ -152,6 +153,7 @@ class OfflinePayment(models.Model):
 class OfflinePaymentReceipt(models.Model):
     payment = models.ForeignKey(OfflinePayment, on_delete=models.CASCADE, related_name="receipts")
     file = models.FileField(upload_to=receipt_upload_path)
+    amount = models.BigIntegerField(default=0)
     reference_number = models.CharField(max_length=30)
     note = models.TextField(blank=True)
     status = models.CharField(

@@ -1,13 +1,20 @@
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from accounts.models import RoleCode
 from accounts.permissions import IsAdminOrActiveAdminRole
+from accounts.services import user_has_role
 
 from .models import (
+    StoreDeliveryAssignment,
+    StoreDeliveryOffer,
+    StoreDeliveryRequest,
     StoreBuyerAddress,
     StoreBuyerInvoiceProfile,
     StoreOrder,
@@ -32,6 +39,14 @@ from .serializers import (
     StoreOrderTransitionSerializer,
     StorePaymentConfirmSerializer,
     StorePaymentSerializer,
+    StoreDeliveryAssignmentSerializer,
+    StoreDeliveryAssignmentTransitionSerializer,
+    StoreDeliveryDocumentSerializer,
+    StoreDeliveryDocumentUploadSerializer,
+    StoreDeliveryOfferResponseSerializer,
+    StoreDeliveryOfferSerializer,
+    StoreDeliveryRequestCreateSerializer,
+    StoreDeliveryRequestSerializer,
 )
 from .services import remaining_amount_for_order, set_order_status
 
@@ -51,6 +66,30 @@ def _dashboard_notification(kind, severity, title, order, body, at=None, href="/
         "href": href,
         "created_at": at.isoformat() if at else None,
     }
+
+
+class IsActiveDriverRole(permissions.BasePermission):
+    message = "Active driver role is required."
+
+    def has_permission(self, request, view):
+        return user_has_role(request.user, RoleCode.DRIVER, require_active=True)
+
+
+def _delivery_request_queryset():
+    return (
+        StoreDeliveryRequest.objects.select_related("order", "order__buyer", "created_by")
+        .prefetch_related(
+            "order__items",
+            "offers",
+            "offers__driver",
+            "assignments",
+            "assignments__driver",
+            "assignments__documents",
+            "assignments__events",
+            "events",
+        )
+        .order_by("-created_at")
+    )
 
 
 class StoreBuyerAddressViewSet(viewsets.ModelViewSet):
@@ -250,6 +289,117 @@ class StorePendingPaymentsAPIView(APIView):
         )
         serializer = StoreOrderReadSerializer(orders, many=True, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminDeliveryRequestListCreateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def get(self, request):
+        queryset = _delivery_request_queryset()
+        status_param = (request.query_params.get("status") or "").strip()
+        order_id = (request.query_params.get("order") or "").strip()
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        if order_id:
+            queryset = queryset.filter(order_id=order_id)
+        serializer = StoreDeliveryRequestSerializer(queryset, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = StoreDeliveryRequestCreateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        delivery_request = serializer.save()
+        output = StoreDeliveryRequestSerializer(delivery_request, context={"request": request})
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+
+class DriverLoadOfferListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDriverRole]
+
+    def get(self, request):
+        offers = (
+            StoreDeliveryOffer.objects.filter(driver=request.user)
+            .select_related("request", "request__order", "request__order__buyer", "driver")
+            .order_by("-created_at")
+        )
+        offer_status = (request.query_params.get("status") or "").strip()
+        if offer_status:
+            offers = offers.filter(status=offer_status)
+        serializer = StoreDeliveryOfferSerializer(offers, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class DriverLoadOfferRespondAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDriverRole]
+
+    def post(self, request, pk):
+        offer = get_object_or_404(
+            StoreDeliveryOffer.objects.select_related("request", "driver").filter(driver=request.user),
+            pk=pk,
+        )
+        serializer = StoreDeliveryOfferResponseSerializer(data=request.data, context={"request": request, "offer": offer})
+        serializer.is_valid(raise_exception=True)
+        assignment = serializer.save()
+        if assignment:
+            output = StoreDeliveryAssignmentSerializer(assignment, context={"request": request})
+            return Response(output.data, status=status.HTTP_201_CREATED)
+        offer.refresh_from_db()
+        output = StoreDeliveryOfferSerializer(offer, context={"request": request})
+        return Response(output.data, status=status.HTTP_200_OK)
+
+
+class DriverAssignmentListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDriverRole]
+
+    def get(self, request):
+        assignments = (
+            StoreDeliveryAssignment.objects.filter(driver=request.user)
+            .select_related("request", "order", "driver")
+            .prefetch_related("documents", "events")
+            .order_by("-created_at")
+        )
+        assignment_status = (request.query_params.get("status") or "").strip()
+        if assignment_status:
+            assignments = assignments.filter(status=assignment_status)
+        serializer = StoreDeliveryAssignmentSerializer(assignments, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class DriverAssignmentTransitionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDriverRole]
+
+    def post(self, request, pk):
+        assignment = get_object_or_404(
+            StoreDeliveryAssignment.objects.select_related("request", "order", "driver").filter(driver=request.user),
+            pk=pk,
+        )
+        serializer = StoreDeliveryAssignmentTransitionSerializer(
+            data=request.data,
+            context={"request": request, "assignment": assignment},
+        )
+        serializer.is_valid(raise_exception=True)
+        assignment = serializer.save()
+        output = StoreDeliveryAssignmentSerializer(assignment, context={"request": request})
+        return Response(output.data, status=status.HTTP_200_OK)
+
+
+class DriverAssignmentDocumentAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDriverRole]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        assignment = get_object_or_404(
+            StoreDeliveryAssignment.objects.select_related("request", "driver").filter(driver=request.user),
+            pk=pk,
+        )
+        serializer = StoreDeliveryDocumentUploadSerializer(
+            data=request.data,
+            context={"request": request, "assignment": assignment},
+        )
+        serializer.is_valid(raise_exception=True)
+        document = serializer.save()
+        output = StoreDeliveryDocumentSerializer(document, context={"request": request})
+        return Response(output.data, status=status.HTTP_201_CREATED)
 
 
 class AdminStoreOrderViewSet(viewsets.ModelViewSet):

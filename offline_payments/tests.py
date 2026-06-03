@@ -17,6 +17,7 @@ from .models import (
     OfflinePayment,
     OfflinePaymentNotification,
     OfflinePaymentStatus,
+    ReceiptAttemptStatus,
     SatnaBankAccount,
     SatnaBankAccountAuditLog,
 )
@@ -72,11 +73,12 @@ class OfflinePaymentAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         return response
 
-    def upload(self, payment_id, reference="123456", filename="receipt.png", content_type="image/png"):
+    def upload(self, payment_id, reference="123456", filename="receipt.png", content_type="image/png", amount=None):
         self.client.force_authenticate(self.buyer)
         return self.client.post(
             f"/api/v1/offline-payments/{payment_id}/upload-receipt/",
             {
+                "amount": amount if amount is not None else self.order.total_amount,
                 "reference_number": reference,
                 "receipt_file": SimpleUploadedFile(filename, b"receipt-content", content_type=content_type),
             },
@@ -88,6 +90,14 @@ class OfflinePaymentAPITests(APITestCase):
         return self.client.patch(
             f"/api/v1/admin/offline-payments/{payment_id}/review/",
             {"decision": decision, "admin_note": note},
+            format="json",
+        )
+
+    def reverse_receipt(self, payment_id, receipt_id, note="اشتباه در تایید فیش"):
+        self.client.force_authenticate(self.admin)
+        return self.client.patch(
+            f"/api/v1/admin/offline-payments/{payment_id}/receipts/{receipt_id}/reverse/",
+            {"admin_note": note},
             format="json",
         )
 
@@ -237,7 +247,207 @@ class OfflinePaymentAPITests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.payment_status, StorePaymentStatus.PAID)
         self.assertEqual(self.order.status, StoreOrderStatus.PAID)
-        self.assertEqual(StorePayment.objects.filter(provider_reference=f"satna:{payment_id}").count(), 1)
+        receipt = OfflinePayment.objects.get(pk=payment_id).receipts.get()
+        self.assertEqual(StorePayment.objects.filter(provider_reference=f"satna:{payment_id}:{receipt.id}").count(), 1)
+
+    def test_admin_can_reverse_full_direct_receipt_approval(self):
+        payment_id = self.initiate().data["id"]
+        self.assertEqual(self.upload(payment_id).status_code, status.HTTP_201_CREATED)
+        approved = self.review(payment_id, "approve")
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+        receipt = OfflinePayment.objects.get(pk=payment_id).receipts.get()
+
+        reversed_response = self.reverse_receipt(payment_id, receipt.id)
+
+        self.assertEqual(reversed_response.status_code, status.HTTP_200_OK, reversed_response.data)
+        self.order.refresh_from_db()
+        receipt.refresh_from_db()
+        store_payment = StorePayment.objects.get(provider_reference=f"satna:{payment_id}:{receipt.id}")
+        self.assertEqual(receipt.status, ReceiptAttemptStatus.REVERSED)
+        self.assertEqual(store_payment.status, StorePaymentStatus.REFUNDED)
+        self.assertEqual(self.order.payment_status, StorePaymentStatus.PENDING)
+        self.assertEqual(self.order.status, StoreOrderStatus.PAYMENT_PENDING)
+        self.assertEqual(reversed_response.data["status"], OfflinePaymentStatus.PENDING_RECEIPT)
+        self.assertEqual(reversed_response.data["approved_amount"], 0)
+        self.assertEqual(reversed_response.data["remaining_amount"], self.order.total_amount)
+        self.assertTrue(OfflinePayment.objects.get(pk=payment_id).audit_logs.filter(action="RECEIPT_APPROVAL_REVERSED").exists())
+
+        report = self.client.get("/api/v1/admin/offline-payments/financial-report/")
+        self.assertEqual(report.status_code, status.HTTP_200_OK, report.data)
+        self.assertEqual(report.data["summary"]["total_approved_amount"], 0)
+
+    def test_partial_direct_receipt_reversal_recalculates_remaining_amount(self):
+        payment_id = self.initiate().data["id"]
+        first_amount = 600_000_000
+        second_amount = 900_000_000
+        self.assertEqual(self.upload(payment_id, reference="111111", amount=first_amount).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.review(payment_id, "approve").status_code, status.HTTP_200_OK)
+        first_receipt = OfflinePayment.objects.get(pk=payment_id).receipts.get(reference_number="111111")
+        self.assertEqual(self.upload(payment_id, reference="222222", amount=second_amount).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.review(payment_id, "approve").status_code, status.HTTP_200_OK)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.payment_status, StorePaymentStatus.PAID)
+
+        reversed_response = self.reverse_receipt(payment_id, first_receipt.id)
+
+        self.assertEqual(reversed_response.status_code, status.HTTP_200_OK, reversed_response.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.payment_status, StorePaymentStatus.PENDING)
+        self.assertEqual(self.order.status, StoreOrderStatus.PAYMENT_PENDING)
+        self.assertEqual(reversed_response.data["approved_amount"], second_amount)
+        self.assertEqual(reversed_response.data["remaining_amount"], first_amount)
+        self.assertEqual(
+            StorePayment.objects.get(provider_reference=f"satna:{payment_id}:{first_receipt.id}").status,
+            StorePaymentStatus.REFUNDED,
+        )
+        self.assertEqual(
+            StorePayment.objects.filter(provider_reference__startswith=f"satna:{payment_id}:", status=StorePaymentStatus.PAID).count(),
+            1,
+        )
+
+    def test_financial_report_totals_approved_receipt_amounts(self):
+        payment_id = self.initiate().data["id"]
+        first_amount = 600_000_000
+        second_amount = 900_000_000
+
+        self.assertEqual(self.upload(payment_id, reference="111111", amount=first_amount).status_code, status.HTTP_201_CREATED)
+        first_review = self.review(payment_id, "approve")
+        self.assertEqual(first_review.status_code, status.HTTP_200_OK, first_review.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.payment_status, StorePaymentStatus.PENDING)
+        self.assertEqual(first_review.data["approved_amount"], first_amount)
+        self.assertEqual(first_review.data["remaining_amount"], second_amount)
+
+        self.client.force_authenticate(self.admin)
+        partial_report = self.client.get("/api/v1/admin/offline-payments/financial-report/")
+        self.assertEqual(partial_report.status_code, status.HTTP_200_OK, partial_report.data)
+        self.assertEqual(partial_report.data["summary"]["total_approved_amount"], first_amount)
+        self.assertEqual(partial_report.data["summary"]["approved_receipt_count"], 1)
+        self.assertEqual(partial_report.data["summary"]["approved_payment_count"], 1)
+
+        self.assertEqual(self.upload(payment_id, reference="222222", amount=second_amount).status_code, status.HTTP_201_CREATED)
+        second_review = self.review(payment_id, "approve")
+        self.assertEqual(second_review.status_code, status.HTTP_200_OK, second_review.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.payment_status, StorePaymentStatus.PAID)
+        self.assertEqual(second_review.data["status"], OfflinePaymentStatus.APPROVED)
+
+        self.client.force_authenticate(self.admin)
+        report = self.client.get("/api/v1/admin/offline-payments/financial-report/")
+        self.assertEqual(report.status_code, status.HTTP_200_OK, report.data)
+        self.assertEqual(report.data["summary"]["total_approved_amount"], self.order.total_amount)
+        self.assertEqual(report.data["summary"]["direct_approved_amount"], self.order.total_amount)
+        self.assertEqual(report.data["summary"]["marketplace_approved_amount"], 0)
+        self.assertEqual(report.data["summary"]["approved_receipt_count"], 2)
+        self.assertEqual(report.data["summary"]["approved_payment_count"], 1)
+        self.assertEqual(len(report.data["rows"]), 2)
+        self.assertEqual(StorePayment.objects.filter(provider_reference__startswith=f"satna:{payment_id}:").count(), 2)
+
+    def test_financial_report_filters_csv_and_admin_access(self):
+        seller = User.objects.create_user(username="satna-report-seller", password="pass")
+        market_order = Order.objects.create(
+            type=OrderType.BUY,
+            status=OrderStatus.OFFER_SELECTED,
+            buyer=self.buyer,
+            assigned_provider=seller,
+            title="Marketplace report sheet",
+            price_agreed_amount=1_200_000_000,
+        )
+        offer = OrderOffer.objects.create(
+            order=market_order,
+            offered_by=seller,
+            price_total_amount=1_200_000_000,
+            status=OfferStatus.ACCEPTED,
+        )
+        market_order.selected_offer = offer
+        market_order.save(update_fields=["selected_offer"])
+        self.client.force_authenticate(self.buyer)
+        initiated = self.client.post(
+            "/api/v1/offline-payments/",
+            {"source_type": "marketplace_order", "source_id": str(market_order.id)},
+            format="json",
+        )
+        self.assertEqual(initiated.status_code, status.HTTP_201_CREATED, initiated.data)
+        payment_id = initiated.data["id"]
+        self.assertEqual(self.upload(payment_id, reference="998877", amount=1_200_000_000).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.review(payment_id, "approve").status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(self.buyer)
+        forbidden = self.client.get("/api/v1/admin/offline-payments/financial-report/")
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.admin)
+        filtered = self.client.get(
+            "/api/v1/admin/offline-payments/financial-report/",
+            {"source_type": "marketplace_order", "q": "998877"},
+        )
+        self.assertEqual(filtered.status_code, status.HTTP_200_OK, filtered.data)
+        self.assertEqual(filtered.data["summary"]["total_approved_amount"], 1_200_000_000)
+        self.assertEqual(filtered.data["summary"]["direct_approved_amount"], 0)
+        self.assertEqual(filtered.data["summary"]["marketplace_approved_amount"], 1_200_000_000)
+        self.assertEqual(filtered.data["rows"][0]["source_type"], "marketplace_order")
+        self.assertEqual(filtered.data["rows"][0]["reference_number"], "998877")
+
+        csv_response = self.client.get(
+            "/api/v1/admin/offline-payments/financial-report/",
+            {"source_type": "marketplace_order", "export": "csv"},
+        )
+        self.assertEqual(csv_response.status_code, status.HTTP_200_OK)
+        self.assertIn("text/csv", csv_response["Content-Type"])
+        self.assertIn(b"receipt_id", csv_response.content)
+        self.assertIn(b"998877", csv_response.content)
+
+    def test_marketplace_receipt_reversal_excludes_report_and_keeps_order_status(self):
+        seller = User.objects.create_user(username="satna-reversal-seller", password="pass")
+        market_order = Order.objects.create(
+            type=OrderType.BUY,
+            status=OrderStatus.OFFER_SELECTED,
+            buyer=self.buyer,
+            assigned_provider=seller,
+            title="Marketplace reversal sheet",
+            price_agreed_amount=1_200_000_000,
+        )
+        offer = OrderOffer.objects.create(
+            order=market_order,
+            offered_by=seller,
+            price_total_amount=1_200_000_000,
+            status=OfferStatus.ACCEPTED,
+        )
+        market_order.selected_offer = offer
+        market_order.save(update_fields=["selected_offer"])
+        self.client.force_authenticate(self.buyer)
+        initiated = self.client.post(
+            "/api/v1/offline-payments/",
+            {"source_type": "marketplace_order", "source_id": str(market_order.id)},
+            format="json",
+        )
+        payment_id = initiated.data["id"]
+        self.assertEqual(self.upload(payment_id, reference="445566", amount=1_200_000_000).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.review(payment_id, "approve").status_code, status.HTTP_200_OK)
+        receipt = OfflinePayment.objects.get(pk=payment_id).receipts.get()
+
+        self.client.force_authenticate(self.buyer)
+        forbidden = self.client.patch(
+            f"/api/v1/admin/offline-payments/{payment_id}/receipts/{receipt.id}/reverse/",
+            {"admin_note": "user should not reverse"},
+            format="json",
+        )
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        missing_note = self.reverse_receipt(payment_id, receipt.id, note="")
+        self.assertEqual(missing_note.status_code, status.HTTP_400_BAD_REQUEST)
+        reversed_response = self.reverse_receipt(payment_id, receipt.id)
+        self.assertEqual(reversed_response.status_code, status.HTTP_200_OK, reversed_response.data)
+        market_order.refresh_from_db()
+        receipt.refresh_from_db()
+        self.assertEqual(market_order.status, OrderStatus.OFFER_SELECTED)
+        self.assertEqual(receipt.status, ReceiptAttemptStatus.REVERSED)
+
+        self.client.force_authenticate(self.admin)
+        report = self.client.get("/api/v1/admin/offline-payments/financial-report/", {"q": "445566"})
+        self.assertEqual(report.status_code, status.HTTP_200_OK, report.data)
+        self.assertEqual(report.data["summary"]["total_approved_amount"], 0)
+        self.assertEqual(report.data["rows"], [])
 
     def test_satna_rejects_amount_below_one_billion_toman(self):
         self.order.total_amount = 999_999_999

@@ -1,5 +1,6 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from datetime import timedelta
+from pathlib import Path
 from secrets import token_urlsafe
 from urllib.parse import urlencode
 
@@ -7,10 +8,20 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from accounts.models import RoleCode, UserRole
 from products.models import DeliveryLocation, Offer, PricingBasis, PricingTier, Product
 
 from .models import (
     StoreOrder,
+    StoreDeliveryAssignment,
+    StoreDeliveryAssignmentStatus,
+    StoreDeliveryDocument,
+    StoreDeliveryDocumentType,
+    StoreDeliveryEvent,
+    StoreDeliveryOffer,
+    StoreDeliveryOfferStatus,
+    StoreDeliveryRequest,
+    StoreDeliveryRequestStatus,
     StoreOrderItem,
     StoreOrderNotification,
     StoreQuoteConfirmationStatus,
@@ -1026,6 +1037,324 @@ def reject_store_order_quote(order, reason, actor=None, note=""):
         meta={"reason": reason, "note": note},
     )
     return order
+
+
+MAX_DRIVER_LOAD_KG = Decimal("25000.000")
+
+DELIVERY_ASSIGNMENT_TRANSITIONS = {
+    StoreDeliveryAssignmentStatus.ACCEPTED: {StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING},
+    StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING: {StoreDeliveryAssignmentStatus.LOADED},
+    StoreDeliveryAssignmentStatus.LOADED: {StoreDeliveryAssignmentStatus.IN_TRANSIT},
+    StoreDeliveryAssignmentStatus.IN_TRANSIT: {StoreDeliveryAssignmentStatus.DELIVERED},
+    StoreDeliveryAssignmentStatus.DELIVERED: {StoreDeliveryAssignmentStatus.PROOF_SUBMITTED},
+}
+
+DELIVERY_ASSIGNMENT_TIMESTAMP_FIELDS = {
+    StoreDeliveryAssignmentStatus.ACCEPTED: "accepted_at",
+    StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING: "arrived_for_loading_at",
+    StoreDeliveryAssignmentStatus.LOADED: "loaded_at",
+    StoreDeliveryAssignmentStatus.IN_TRANSIT: "in_transit_at",
+    StoreDeliveryAssignmentStatus.DELIVERED: "delivered_at",
+    StoreDeliveryAssignmentStatus.PROOF_SUBMITTED: "proof_submitted_at",
+}
+
+
+def delivery_weight_kg_for_order(order):
+    weight = Decimal("0")
+    for item in order.items.all():
+        item_weight = item.final_weight_kg if item.final_weight_kg is not None else item.estimated_weight_kg
+        if item_weight is not None:
+            weight += Decimal(str(item_weight))
+    return weight.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
+def required_driver_count_for_weight(weight_kg):
+    weight = Decimal(str(weight_kg or 0))
+    if weight <= 0:
+        return 0
+    return int((weight / MAX_DRIVER_LOAD_KG).to_integral_value(rounding=ROUND_CEILING))
+
+
+def active_driver_users(driver_ids=None):
+    roles = UserRole.objects.filter(role=RoleCode.DRIVER, is_active=True).select_related("user")
+    if driver_ids:
+        roles = roles.filter(user_id__in=driver_ids)
+    return [role.user for role in roles.order_by("user__username", "user_id")]
+
+
+def delivery_request_blockers(order):
+    blockers = list(risk_blockers_for_order(order, StoreOrderStatus.FULFILLMENT_PENDING))
+    weight = delivery_weight_kg_for_order(order)
+    if weight <= 0:
+        blockers.append("shipment_weight_missing")
+    active_exists = order.delivery_requests.exclude(
+        status__in=[StoreDeliveryRequestStatus.CANCELLED, StoreDeliveryRequestStatus.COMPLETED]
+    ).exists()
+    if active_exists:
+        blockers.append("active_delivery_request_exists")
+    return blockers
+
+
+def _first_order_item_title(order):
+    first_item = order.items.first()
+    return first_item.product_name if first_item else str(order.id)
+
+
+def delivery_shipment_snapshot(order, total_weight_kg, required_driver_count):
+    quote = order.metadata.get("quote") if isinstance(order.metadata, dict) else {}
+    loading_points = quote.get("loading_points") if isinstance(quote, dict) and isinstance(quote.get("loading_points"), list) else []
+    items = []
+    item_loading_points = {int(point.get("item_id")): point for point in loading_points if point.get("item_id")}
+    for item in order.items.all():
+        item_weight = item.final_weight_kg if item.final_weight_kg is not None else item.estimated_weight_kg
+        loading_point = item_loading_points.get(item.id) or item.delivery_snapshot or {}
+        items.append(
+            {
+                "id": item.id,
+                "product_name": item.product_name,
+                "quantity": str(item.quantity),
+                "quantity_unit": item.quantity_unit,
+                "estimated_weight_kg": str(item.estimated_weight_kg or ""),
+                "final_weight_kg": str(item.final_weight_kg or ""),
+                "planned_weight_kg": str(item_weight or ""),
+                "loading_point": loading_point,
+            }
+        )
+    return {
+        "order_id": str(order.id),
+        "order_title": _first_order_item_title(order),
+        "buyer_username": order.buyer.username,
+        "contact_name": order.contact_name,
+        "contact_phone": order.contact_phone,
+        "destination": {
+            "province": order.destination_province,
+            "city": order.destination_city,
+            "address": order.destination_address,
+            "delivery_notes": order.delivery_notes,
+        },
+        "total_amount": order.total_amount,
+        "currency": order.currency,
+        "total_weight_kg": str(total_weight_kg),
+        "required_driver_count": required_driver_count,
+        "per_driver_weight_limit_kg": str(MAX_DRIVER_LOAD_KG),
+        "items": items,
+        "loading_points": loading_points,
+    }
+
+
+def write_delivery_event(request_obj, event, actor=None, assignment=None, from_status="", to_status="", payload=None):
+    return StoreDeliveryEvent.objects.create(
+        request=request_obj,
+        assignment=assignment,
+        actor_user=actor if getattr(actor, "is_authenticated", False) else None,
+        event=event,
+        from_status=from_status or "",
+        to_status=to_status or "",
+        payload=payload or {},
+    )
+
+
+@transaction.atomic
+def create_delivery_request(order, actor, driver_ids=None, **payload):
+    order = StoreOrder.objects.select_for_update().prefetch_related("items", "delivery_requests").get(pk=order.pk)
+    blockers = delivery_request_blockers(order)
+    if blockers:
+        raise ValueError(f"delivery_blockers:{','.join(blockers)}")
+
+    total_weight_kg = delivery_weight_kg_for_order(order)
+    required_driver_count = required_driver_count_for_weight(total_weight_kg)
+    drivers = active_driver_users(driver_ids)
+    if len(drivers) < required_driver_count:
+        raise ValueError("not_enough_active_drivers")
+
+    request_obj = StoreDeliveryRequest.objects.create(
+        order=order,
+        created_by=actor if getattr(actor, "is_authenticated", False) else None,
+        total_weight_kg=total_weight_kg,
+        required_driver_count=required_driver_count,
+        per_driver_weight_limit_kg=MAX_DRIVER_LOAD_KG,
+        vehicle_type=(payload.get("vehicle_type") or "").strip(),
+        pickup_window_start=payload.get("pickup_window_start"),
+        pickup_window_end=payload.get("pickup_window_end"),
+        dispatch_deadline=payload.get("dispatch_deadline"),
+        pickup_notes=(payload.get("pickup_notes") or "").strip(),
+        dispatcher_notes=(payload.get("dispatcher_notes") or "").strip(),
+        shipment_snapshot=delivery_shipment_snapshot(order, total_weight_kg, required_driver_count),
+        metadata=payload.get("metadata") or {},
+    )
+    StoreDeliveryOffer.objects.bulk_create(
+        [StoreDeliveryOffer(request=request_obj, driver=driver) for driver in drivers],
+        ignore_conflicts=True,
+    )
+    write_delivery_event(
+        request_obj,
+        "DELIVERY_REQUEST_PUBLISHED",
+        actor,
+        payload={
+            "driver_count": len(drivers),
+            "required_driver_count": required_driver_count,
+            "total_weight_kg": str(total_weight_kg),
+        },
+    )
+    return request_obj
+
+
+def planned_weight_for_sequence(total_weight_kg, sequence):
+    remaining_before = Decimal(str(total_weight_kg)) - (MAX_DRIVER_LOAD_KG * Decimal(sequence - 1))
+    return min(MAX_DRIVER_LOAD_KG, max(Decimal("0"), remaining_before)).quantize(Decimal("0.001"))
+
+
+@transaction.atomic
+def respond_to_delivery_offer(offer, actor, action, note=""):
+    offer = (
+        StoreDeliveryOffer.objects.select_for_update()
+        .select_related("request", "request__order", "driver")
+        .get(pk=offer.pk)
+    )
+    request_obj = StoreDeliveryRequest.objects.select_for_update().get(pk=offer.request_id)
+    if offer.driver_id != actor.id:
+        raise ValueError("offer_not_for_driver")
+    if offer.status != StoreDeliveryOfferStatus.OFFERED:
+        raise ValueError("offer_not_open")
+    if request_obj.status in {StoreDeliveryRequestStatus.CANCELLED, StoreDeliveryRequestStatus.COMPLETED}:
+        raise ValueError("delivery_request_closed")
+
+    now = timezone.now()
+    note = (note or "").strip()
+    if action == "decline":
+        offer.status = StoreDeliveryOfferStatus.DECLINED
+        offer.response_note = note
+        offer.responded_at = now
+        offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
+        write_delivery_event(request_obj, "DELIVERY_OFFER_DECLINED", actor, payload={"offer_id": str(offer.id), "note": note})
+        return None
+
+    if action != "accept":
+        raise ValueError("invalid_offer_action")
+
+    accepted_count = request_obj.assignments.exclude(status=StoreDeliveryAssignmentStatus.CANCELLED).count()
+    if accepted_count >= request_obj.required_driver_count:
+        raise ValueError("delivery_capacity_full")
+
+    sequence = accepted_count + 1
+    assignment = StoreDeliveryAssignment.objects.create(
+        request=request_obj,
+        offer=offer,
+        order=request_obj.order,
+        driver=actor,
+        status=StoreDeliveryAssignmentStatus.ACCEPTED,
+        load_sequence=sequence,
+        planned_weight_kg=planned_weight_for_sequence(request_obj.total_weight_kg, sequence),
+        vehicle_type=request_obj.vehicle_type,
+        driver_phone=getattr(getattr(actor, "profile", None), "phone", "") or "",
+        accepted_at=now,
+    )
+    offer.status = StoreDeliveryOfferStatus.ACCEPTED
+    offer.response_note = note
+    offer.responded_at = now
+    offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
+    request_obj.accepted_driver_count = accepted_count + 1
+    request_obj.status = (
+        StoreDeliveryRequestStatus.ASSIGNED
+        if request_obj.accepted_driver_count >= request_obj.required_driver_count
+        else StoreDeliveryRequestStatus.PUBLISHED
+    )
+    request_obj.save(update_fields=["accepted_driver_count", "status", "updated_at"])
+    write_delivery_event(
+        request_obj,
+        "DELIVERY_OFFER_ACCEPTED",
+        actor,
+        assignment=assignment,
+        to_status=assignment.status,
+        payload={"offer_id": str(offer.id), "planned_weight_kg": str(assignment.planned_weight_kg)},
+    )
+    return assignment
+
+
+def validate_delivery_file(file):
+    extension = Path(getattr(file, "name", "")).suffix.lower()
+    allowed = {".jpg", ".jpeg", ".png", ".pdf", ".zip"}
+    if extension not in allowed:
+        raise ValueError("invalid_delivery_document_extension")
+    max_mb = int(getattr(settings, "STORE_DELIVERY_DOCUMENT_MAX_SIZE_MB", 10))
+    if file.size > max_mb * 1024 * 1024:
+        raise ValueError("delivery_document_too_large")
+
+
+@transaction.atomic
+def transition_delivery_assignment(assignment, actor, target_status, note=""):
+    assignment = (
+        StoreDeliveryAssignment.objects.select_for_update()
+        .select_related("request", "order", "driver")
+        .get(pk=assignment.pk)
+    )
+    if assignment.driver_id != actor.id:
+        raise ValueError("assignment_not_for_driver")
+    target_status = (target_status or "").strip()
+    allowed = DELIVERY_ASSIGNMENT_TRANSITIONS.get(assignment.status, set())
+    if target_status not in allowed:
+        raise ValueError("invalid_delivery_transition")
+    if target_status in {
+        StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING,
+        StoreDeliveryAssignmentStatus.LOADED,
+    }:
+        blockers = risk_blockers_for_order(assignment.order, StoreOrderStatus.FULFILLMENT_PENDING)
+        if blockers:
+            raise ValueError(f"delivery_blockers:{','.join(blockers)}")
+
+    previous = assignment.status
+    now = timezone.now()
+    assignment.status = target_status
+    timestamp_field = DELIVERY_ASSIGNMENT_TIMESTAMP_FIELDS.get(target_status)
+    update_fields = ["status", "updated_at"]
+    if timestamp_field:
+        setattr(assignment, timestamp_field, now)
+        update_fields.append(timestamp_field)
+    assignment.save(update_fields=update_fields)
+
+    request_obj = assignment.request
+    active_statuses = {StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING, StoreDeliveryAssignmentStatus.LOADED, StoreDeliveryAssignmentStatus.IN_TRANSIT}
+    if target_status == StoreDeliveryAssignmentStatus.PROOF_SUBMITTED and not request_obj.assignments.exclude(
+        status=StoreDeliveryAssignmentStatus.PROOF_SUBMITTED
+    ).exists():
+        request_obj.status = StoreDeliveryRequestStatus.COMPLETED
+    elif target_status in active_statuses:
+        request_obj.status = StoreDeliveryRequestStatus.IN_PROGRESS
+    request_obj.save(update_fields=["status", "updated_at"])
+
+    write_delivery_event(
+        request_obj,
+        "DELIVERY_ASSIGNMENT_STATUS_CHANGED",
+        actor,
+        assignment=assignment,
+        from_status=previous,
+        to_status=target_status,
+        payload={"note": (note or "").strip()},
+    )
+    return assignment
+
+
+@transaction.atomic
+def upload_delivery_document(assignment, actor, file, document_type=StoreDeliveryDocumentType.OTHER, note=""):
+    assignment = StoreDeliveryAssignment.objects.select_for_update().select_related("request", "driver").get(pk=assignment.pk)
+    if assignment.driver_id != actor.id:
+        raise ValueError("assignment_not_for_driver")
+    validate_delivery_file(file)
+    document = StoreDeliveryDocument.objects.create(
+        assignment=assignment,
+        document_type=document_type or StoreDeliveryDocumentType.OTHER,
+        file=file,
+        note=(note or "").strip(),
+        uploaded_by=actor,
+    )
+    write_delivery_event(
+        assignment.request,
+        "DELIVERY_DOCUMENT_UPLOADED",
+        actor,
+        assignment=assignment,
+        payload={"document_id": document.id, "document_type": document.document_type},
+    )
+    return document
 
 
 @transaction.atomic

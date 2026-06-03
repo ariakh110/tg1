@@ -1,4 +1,6 @@
-from django.http import FileResponse
+import csv
+
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -13,11 +15,34 @@ from .serializers import (
     BankAccountSerializer,
     OfflinePaymentInitiateSerializer,
     OfflinePaymentSerializer,
+    ReceiptApprovalReversalSerializer,
     ReceiptUploadSerializer,
     ReviewSerializer,
     UnlockSerializer,
 )
-from .services import bank_accounts, expire_if_due, primary_bank_account
+from .services import bank_accounts, expire_if_due, primary_bank_account, satna_financial_report
+
+
+REPORT_CSV_COLUMNS = (
+    "receipt_id",
+    "payment_id",
+    "source_type",
+    "source_id",
+    "source_title",
+    "buyer_username",
+    "buyer_email",
+    "receipt_amount",
+    "currency",
+    "reference_number",
+    "approved_at",
+    "payment_created_at",
+    "payment_status",
+    "payment_amount",
+    "bank_account_id",
+    "bank_name",
+    "iban",
+    "account_holder",
+)
 
 
 def serialize_payment(payment, request):
@@ -83,12 +108,12 @@ class ReceiptUploadAPIView(APIView):
 class ReceiptFileAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request, pk):
+    def get(self, request, pk, receipt_id=None):
         payment = get_object_or_404(OfflinePayment.objects.prefetch_related("receipts"), pk=pk)
         is_admin = IsAdminOrActiveAdminRole().has_permission(request, self)
         if payment.user_id != request.user.id and not is_admin:
             return Response({"detail": "دسترسی به این فیش مجاز نیست."}, status=status.HTTP_403_FORBIDDEN)
-        receipt = payment.receipts.first()
+        receipt = payment.receipts.filter(pk=receipt_id).first() if receipt_id else payment.receipts.first()
         if not receipt:
             return Response({"detail": "فیشی بارگذاری نشده است."}, status=status.HTTP_404_NOT_FOUND)
         return FileResponse(receipt.file.open("rb"), as_attachment=False, filename=receipt.file.name.rsplit("/", 1)[-1])
@@ -109,6 +134,24 @@ class AdminOfflinePaymentListAPIView(APIView):
         for payment in payments:
             expire_if_due(payment)
         return Response(OfflinePaymentSerializer(payments, many=True, context={"request": request}).data)
+
+
+class AdminOfflinePaymentFinancialReportAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def get(self, request):
+        report = satna_financial_report(request.query_params)
+        export = (request.query_params.get("export") or request.query_params.get("format") or "").strip().lower()
+        if export == "csv":
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = 'attachment; filename="satna-financial-report.csv"'
+            response.write("\ufeff")
+            writer = csv.writer(response)
+            writer.writerow(REPORT_CSV_COLUMNS)
+            for row in report["rows"]:
+                writer.writerow([row.get(column, "") for column in REPORT_CSV_COLUMNS])
+            return response
+        return Response(report)
 
 
 class AdminSatnaBankAccountListCreateAPIView(APIView):
@@ -147,6 +190,20 @@ class AdminOfflinePaymentReviewAPIView(APIView):
     def patch(self, request, pk):
         payment = get_object_or_404(OfflinePayment, pk=pk)
         serializer = ReviewSerializer(data=request.data, context={"request": request, "payment": payment})
+        serializer.is_valid(raise_exception=True)
+        payment = serializer.save()
+        return Response(serialize_payment(payment, request))
+
+
+class AdminOfflinePaymentReceiptReversalAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def patch(self, request, pk, receipt_id):
+        payment = get_object_or_404(OfflinePayment, pk=pk)
+        serializer = ReceiptApprovalReversalSerializer(
+            data=request.data,
+            context={"request": request, "payment": payment, "receipt_id": receipt_id},
+        )
         serializer.is_valid(raise_exception=True)
         payment = serializer.save()
         return Response(serialize_payment(payment, request))

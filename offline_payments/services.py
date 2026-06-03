@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import serializers
 
 from orders.models import OrderStatus
@@ -44,6 +46,7 @@ ACTIVE_STATUSES = {
 }
 UPLOADABLE_STATUSES = {
     OfflinePaymentStatus.PENDING_RECEIPT,
+    OfflinePaymentStatus.PENDING_REVIEW,
     OfflinePaymentStatus.REJECTED,
 }
 MIN_AMOUNT = 1_000_000_000
@@ -222,6 +225,21 @@ def _validate_amount(amount):
         )
 
 
+def receipt_amounts(payment):
+    amounts = payment.receipts.aggregate(
+        approved=Sum("amount", filter=Q(status=ReceiptAttemptStatus.APPROVED)),
+        pending=Sum("amount", filter=Q(status=ReceiptAttemptStatus.PENDING)),
+    )
+    approved = int(amounts["approved"] or 0)
+    pending = int(amounts["pending"] or 0)
+    return {
+        "approved": approved,
+        "pending": pending,
+        "remaining": max(int(payment.amount) - approved, 0),
+        "available_to_upload": max(int(payment.amount) - approved - pending, 0),
+    }
+
+
 def _existing_active(**source):
     candidates = OfflinePayment.objects.filter(status__in=ACTIVE_STATUSES, **source).order_by("-created_at")
     for payment in candidates:
@@ -300,7 +318,7 @@ def validate_receipt_file(file):
 
 
 @transaction.atomic
-def upload_receipt(payment, actor, file, reference_number, note="", request=None):
+def upload_receipt(payment, actor, file, amount, reference_number, note="", request=None):
     payment = OfflinePayment.objects.select_for_update().get(pk=payment.pk)
     expire_if_due(payment)
     if payment.user_id != actor.id:
@@ -309,39 +327,52 @@ def upload_receipt(payment, actor, file, reference_number, note="", request=None
         raise serializers.ValidationError({"detail": "بارگذاری فیش قفل شده است. با پشتیبانی تماس بگیرید."})
     if payment.status not in UPLOADABLE_STATUSES:
         raise serializers.ValidationError({"detail": "در وضعیت فعلی امکان بارگذاری فیش وجود ندارد."})
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError) as exc:
+        raise serializers.ValidationError({"amount": "مبلغ فیش باید یک عدد صحیح به تومان باشد."}) from exc
+    if amount <= 0:
+        raise serializers.ValidationError({"amount": "مبلغ فیش باید بیشتر از صفر باشد."})
+    amounts = receipt_amounts(payment)
+    if amount > amounts["available_to_upload"]:
+        raise serializers.ValidationError(
+            {"amount": f"مبلغ فیش نباید بیشتر از مانده قابل ثبت ({amounts['available_to_upload']:,} تومان) باشد."}
+        )
     reference_number = str(reference_number or "").strip()
     if not reference_number.isdigit() or len(reference_number) > 30:
         raise serializers.ValidationError({"reference_number": "شماره مرجع ساتنا باید فقط شامل عدد و حداکثر ۳۰ رقم باشد."})
     validate_receipt_file(file)
     one_hour_ago = timezone.now() - timedelta(hours=1)
-    if OfflinePaymentReceipt.objects.filter(payment__user=actor, created_at__gte=one_hour_ago).count() >= 5:
-        raise serializers.ValidationError({"detail": "حداکثر پنج بارگذاری فیش در یک ساعت مجاز است."})
+    upload_limit = int(getattr(settings, "OFFLINE_PAYMENT_RECEIPT_UPLOAD_LIMIT_PER_HOUR", 5))
+    if OfflinePaymentReceipt.objects.filter(payment__user=actor, created_at__gte=one_hour_ago).count() >= upload_limit:
+        raise serializers.ValidationError({"detail": f"حداکثر {upload_limit} بارگذاری فیش در یک ساعت مجاز است."})
     receipt = OfflinePaymentReceipt.objects.create(
         payment=payment,
         file=file,
+        amount=amount,
         reference_number=reference_number,
         note=str(note or "").strip(),
     )
     payment.status = OfflinePaymentStatus.PENDING_REVIEW
     payment.admin_note = ""
     payment.save(update_fields=["status", "admin_note", "updated_at"])
-    audit(payment, "RECEIPT_UPLOADED", actor, request, {"receipt_id": receipt.id})
+    audit(payment, "RECEIPT_UPLOADED", actor, request, {"receipt_id": receipt.id, "amount": amount})
     notify(payment, "receipt_uploaded")
     return payment
 
 
-def _approve_store_payment(payment, actor):
+def _approve_store_receipt(payment, receipt, actor):
     order = payment.store_order
-    provider_reference = f"satna:{payment.id}"
+    provider_reference = f"satna:{payment.id}:{receipt.id}"
     store_payment, created = StorePayment.objects.get_or_create(
         provider_reference=provider_reference,
         defaults={
             "order": order,
-            "amount": payment.amount,
+            "amount": receipt.amount,
             "currency": order.currency,
             "status": StorePaymentStatus.PAID,
             "provider": "satna_offline",
-            "raw_payload": {"offline_payment_id": str(payment.id)},
+            "raw_payload": {"offline_payment_id": str(payment.id), "receipt_id": receipt.id},
         },
     )
     if not created:
@@ -354,7 +385,7 @@ def _approve_store_payment(payment, actor):
             StoreOrderStatus.PAID,
             "STORE_ORDER_PAYMENT_CONFIRMED",
             actor,
-            meta={"payment_id": store_payment.id, "offline_payment_id": str(payment.id)},
+            meta={"payment_id": store_payment.id, "offline_payment_id": str(payment.id), "receipt_id": receipt.id},
         )
     else:
         order.payment_status = StorePaymentStatus.PENDING
@@ -365,55 +396,188 @@ def _approve_store_payment(payment, actor):
             to_status=order.status,
             event="STORE_ORDER_PARTIAL_PAYMENT_CONFIRMED",
             actor_user=actor,
-            meta={"payment_id": store_payment.id, "offline_payment_id": str(payment.id)},
+            meta={
+                "payment_id": store_payment.id,
+                "offline_payment_id": str(payment.id),
+                "receipt_id": receipt.id,
+                "amount": receipt.amount,
+                "remaining_amount": remaining_amount_for_order(order),
+            },
         )
     return store_payment
 
 
+def _payment_status_for_amounts(payment, amounts):
+    if amounts["remaining"] <= 0:
+        return OfflinePaymentStatus.APPROVED
+    if payment.rejection_count >= 3:
+        return OfflinePaymentStatus.LOCKED
+    if amounts["pending"] > 0:
+        return OfflinePaymentStatus.PENDING_REVIEW
+    if payment.rejection_count > 0:
+        return OfflinePaymentStatus.REJECTED
+    return OfflinePaymentStatus.PENDING_RECEIPT
+
+
+def _reverse_store_receipt(payment, receipt, actor, note):
+    order = payment.store_order
+    provider_reference = f"satna:{payment.id}:{receipt.id}"
+    store_payment = StorePayment.objects.filter(provider_reference=provider_reference).first()
+    if store_payment and store_payment.status == StorePaymentStatus.PAID:
+        payload = dict(store_payment.raw_payload or {})
+        payload["reversal"] = {
+            "offline_payment_id": str(payment.id),
+            "receipt_id": receipt.id,
+            "admin_note": note,
+            "reversed_at": timezone.now().isoformat(),
+        }
+        store_payment.status = StorePaymentStatus.REFUNDED
+        store_payment.raw_payload = payload
+        store_payment.save(update_fields=["status", "raw_payload", "updated_at"])
+
+    previous_status = order.status
+    remaining = remaining_amount_for_order(order)
+    order.payment_status = StorePaymentStatus.PAID if remaining <= 0 else StorePaymentStatus.PENDING
+    if remaining > 0 and order.status == StoreOrderStatus.PAID:
+        order.status = StoreOrderStatus.PAYMENT_PENDING
+    order.save(update_fields=["payment_status", "status", "updated_at"])
+    StoreOrderStatusHistory.objects.create(
+        order=order,
+        from_status=previous_status,
+        to_status=order.status,
+        event="STORE_ORDER_SATNA_RECEIPT_REVERSED",
+        actor_user=actor,
+        meta={
+            "payment_id": store_payment.id if store_payment else None,
+            "offline_payment_id": str(payment.id),
+            "receipt_id": receipt.id,
+            "amount": receipt.amount,
+            "remaining_amount": remaining,
+            "admin_note": note,
+        },
+    )
+    return store_payment
+
+
 @transaction.atomic
-def review_payment(payment, actor, decision, admin_note="", request=None):
+def review_payment(payment, actor, decision, admin_note="", receipt_id=None, request=None):
     payment = OfflinePayment.objects.select_for_update().get(pk=payment.pk)
     expire_if_due(payment)
-    if payment.status != OfflinePaymentStatus.PENDING_REVIEW:
+    if payment.status not in {OfflinePaymentStatus.PENDING_REVIEW, OfflinePaymentStatus.LOCKED}:
         raise serializers.ValidationError({"detail": "فقط فیش در انتظار بررسی قابل تایید یا رد است."})
-    receipt = payment.receipts.first()
+    receipts = payment.receipts.filter(status=ReceiptAttemptStatus.PENDING)
+    receipt = receipts.filter(pk=receipt_id).first() if receipt_id else receipts.first()
     if not receipt:
         raise serializers.ValidationError({"detail": "فیشی برای بررسی وجود ندارد."})
     now = timezone.now()
     note = str(admin_note or "").strip()
     if decision == "approve":
         receipt.status = ReceiptAttemptStatus.APPROVED
-        payment.status = OfflinePaymentStatus.APPROVED
+        receipt.admin_note = note
+        receipt.reviewed_by = actor
+        receipt.reviewed_at = now
+        receipt.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at"])
         if payment.store_order_id:
-            _approve_store_payment(payment, actor)
+            _approve_store_receipt(payment, receipt, actor)
+        amounts = receipt_amounts(payment)
+        if amounts["remaining"] <= 0:
+            payment.status = OfflinePaymentStatus.APPROVED
+        elif payment.rejection_count >= 3:
+            payment.status = OfflinePaymentStatus.LOCKED
+        elif amounts["pending"] > 0:
+            payment.status = OfflinePaymentStatus.PENDING_REVIEW
+        else:
+            payment.status = OfflinePaymentStatus.PENDING_RECEIPT
         event = "RECEIPT_APPROVED"
         notification_event = "receipt_approved"
     elif decision == "reject":
         if not note:
             raise serializers.ValidationError({"admin_note": "دلیل رد فیش الزامی است."})
         receipt.status = ReceiptAttemptStatus.REJECTED
+        receipt.admin_note = note
+        receipt.reviewed_by = actor
+        receipt.reviewed_at = now
+        receipt.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at"])
         payment.rejection_count += 1
-        payment.status = (
-            OfflinePaymentStatus.LOCKED
-            if payment.rejection_count >= 3
-            else OfflinePaymentStatus.REJECTED
-        )
+        amounts = receipt_amounts(payment)
+        if payment.rejection_count >= 3:
+            payment.status = OfflinePaymentStatus.LOCKED
+        elif amounts["pending"] > 0:
+            payment.status = OfflinePaymentStatus.PENDING_REVIEW
+        else:
+            payment.status = OfflinePaymentStatus.REJECTED
         event = "PAYMENT_LOCKED" if payment.status == OfflinePaymentStatus.LOCKED else "RECEIPT_REJECTED"
         notification_event = "payment_locked" if payment.status == OfflinePaymentStatus.LOCKED else "receipt_rejected"
     else:
         raise serializers.ValidationError({"decision": "تصمیم بررسی باید approve یا reject باشد."})
-    receipt.admin_note = note
-    receipt.reviewed_by = actor
-    receipt.reviewed_at = now
-    receipt.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at"])
     payment.admin_note = note
     payment.reviewed_by = actor
     payment.reviewed_at = now
     payment.save(
         update_fields=["status", "rejection_count", "admin_note", "reviewed_by", "reviewed_at", "updated_at"]
     )
-    audit(payment, event, actor, request, {"receipt_id": receipt.id, "admin_note": note})
+    amounts = receipt_amounts(payment)
+    audit(
+        payment,
+        event,
+        actor,
+        request,
+        {
+            "receipt_id": receipt.id,
+            "amount": receipt.amount,
+            "admin_note": note,
+            "approved_amount": amounts["approved"],
+            "remaining_amount": amounts["remaining"],
+        },
+    )
     notify(payment, notification_event)
+    return payment
+
+
+@transaction.atomic
+def reverse_receipt_approval(payment, actor, receipt_id, admin_note="", request=None):
+    note = str(admin_note or "").strip()
+    if not note:
+        raise serializers.ValidationError({"admin_note": "دلیل برگشت تایید فیش الزامی است."})
+    payment = OfflinePayment.objects.select_for_update().get(pk=payment.pk)
+    receipt = payment.receipts.select_for_update().filter(
+        pk=receipt_id,
+        status=ReceiptAttemptStatus.APPROVED,
+    ).first()
+    if not receipt:
+        raise serializers.ValidationError({"detail": "فقط فیش تاییدشده قابل برگشت است."})
+
+    store_payment = None
+    if payment.store_order_id:
+        store_payment = _reverse_store_receipt(payment, receipt, actor, note)
+
+    now = timezone.now()
+    receipt.status = ReceiptAttemptStatus.REVERSED
+    receipt.admin_note = note
+    receipt.reviewed_by = actor
+    receipt.reviewed_at = now
+    receipt.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at"])
+
+    amounts = receipt_amounts(payment)
+    payment.status = _payment_status_for_amounts(payment, amounts)
+    payment.admin_note = note
+    payment.reviewed_by = actor
+    payment.reviewed_at = now
+    payment.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at", "updated_at"])
+    audit(
+        payment,
+        "RECEIPT_APPROVAL_REVERSED",
+        actor,
+        request,
+        {
+            "receipt_id": receipt.id,
+            "amount": receipt.amount,
+            "admin_note": note,
+            "store_payment_id": store_payment.id if store_payment else None,
+            "approved_amount": amounts["approved"],
+            "remaining_amount": amounts["remaining"],
+        },
+    )
     return payment
 
 
@@ -422,10 +586,143 @@ def unlock_payment(payment, actor, admin_note="", request=None):
     payment = OfflinePayment.objects.select_for_update().get(pk=payment.pk)
     if payment.status != OfflinePaymentStatus.LOCKED:
         raise serializers.ValidationError({"detail": "فقط پرداخت قفل‌شده قابل بازکردن است."})
-    payment.status = OfflinePaymentStatus.REJECTED
+    payment.status = (
+        OfflinePaymentStatus.PENDING_REVIEW
+        if payment.receipts.filter(status=ReceiptAttemptStatus.PENDING).exists()
+        else OfflinePaymentStatus.REJECTED
+    )
     payment.rejection_count = 0
     payment.admin_note = str(admin_note or "").strip()
     payment.save(update_fields=["status", "rejection_count", "admin_note", "updated_at"])
     audit(payment, "PAYMENT_UNLOCKED", actor, request, {"admin_note": payment.admin_note})
     notify(payment, "payment_unlocked")
     return payment
+
+
+def _report_datetime(value, *, end_of_day=False):
+    value = str(value or "").strip()
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        parsed_date = parse_date(value)
+        if parsed_date:
+            parsed = datetime.combine(parsed_date, time.max if end_of_day else time.min)
+    if parsed is None:
+        raise serializers.ValidationError({"date": "Invalid report date."})
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, TEHRAN_TZ)
+    return parsed
+
+
+def _payment_source_title(payment):
+    if payment.store_order_id:
+        first_item = payment.store_order.items.first()
+        return first_item.product_name if first_item else f"Store order {payment.store_order_id}"
+    return payment.marketplace_order.title if payment.marketplace_order_id else ""
+
+
+def _financial_report_row(receipt):
+    payment = receipt.payment
+    account = payment.target_bank_account_snapshot or bank_account_by_id(payment.target_iban_id) or {}
+    approved_at = receipt.reviewed_at or receipt.created_at
+    return {
+        "receipt_id": receipt.id,
+        "payment_id": str(payment.id),
+        "source_type": payment.source_type,
+        "source_id": str(payment.source_id),
+        "source_title": _payment_source_title(payment),
+        "buyer_id": payment.user_id,
+        "buyer_username": payment.user.username,
+        "buyer_email": payment.user.email,
+        "payment_status": payment.status,
+        "payment_amount": payment.amount,
+        "receipt_amount": receipt.amount,
+        "currency": payment.currency,
+        "reference_number": receipt.reference_number,
+        "approved_at": approved_at.isoformat() if approved_at else None,
+        "payment_created_at": payment.created_at.isoformat() if payment.created_at else None,
+        "bank_account_id": payment.target_iban_id,
+        "bank_name": account.get("bank_name", ""),
+        "iban": account.get("iban", ""),
+        "account_holder": account.get("account_holder", ""),
+    }
+
+
+def satna_financial_report(query_params):
+    receipts = (
+        OfflinePaymentReceipt.objects.filter(status=ReceiptAttemptStatus.APPROVED)
+        .select_related(
+            "payment",
+            "payment__user",
+            "payment__store_order",
+            "payment__marketplace_order",
+            "reviewed_by",
+        )
+        .prefetch_related("payment__store_order__items")
+        .order_by("-reviewed_at", "-created_at", "-id")
+    )
+
+    date_from = _report_datetime(
+        query_params.get("date_from") or query_params.get("approved_from"),
+        end_of_day=False,
+    )
+    date_to = _report_datetime(
+        query_params.get("date_to") or query_params.get("approved_to"),
+        end_of_day=True,
+    )
+    if date_from:
+        receipts = receipts.filter(reviewed_at__gte=date_from)
+    if date_to:
+        receipts = receipts.filter(reviewed_at__lte=date_to)
+
+    source_type = str(query_params.get("source_type") or "").strip()
+    if source_type:
+        if source_type not in {"store_order", "marketplace_order"}:
+            raise serializers.ValidationError({"source_type": "Invalid source type."})
+        if source_type == "store_order":
+            receipts = receipts.filter(payment__store_order__isnull=False)
+        else:
+            receipts = receipts.filter(payment__marketplace_order__isnull=False)
+
+    bank_account_id = str(query_params.get("bank_account_id") or "").strip()
+    if bank_account_id:
+        receipts = receipts.filter(payment__target_iban_id=bank_account_id)
+
+    search = str(query_params.get("q") or "").strip()
+    if search:
+        receipts = receipts.filter(
+            Q(reference_number__icontains=search)
+            | Q(payment__user__username__icontains=search)
+            | Q(payment__user__email__icontains=search)
+            | Q(payment__store_order__contact_name__icontains=search)
+            | Q(payment__store_order__contact_phone__icontains=search)
+            | Q(payment__store_order__items__product_name__icontains=search)
+            | Q(payment__marketplace_order__title__icontains=search)
+        ).distinct()
+
+    totals = receipts.aggregate(
+        approved_receipt_count=Count("id"),
+        approved_payment_count=Count("payment", distinct=True),
+        total_approved_amount=Sum("amount"),
+        direct_approved_amount=Sum("amount", filter=Q(payment__store_order__isnull=False)),
+        marketplace_approved_amount=Sum("amount", filter=Q(payment__marketplace_order__isnull=False)),
+    )
+    rows = [_financial_report_row(receipt) for receipt in receipts]
+    return {
+        "filters": {
+            "date_from": date_from.isoformat() if date_from else "",
+            "date_to": date_to.isoformat() if date_to else "",
+            "source_type": source_type,
+            "bank_account_id": bank_account_id,
+            "q": search,
+        },
+        "summary": {
+            "approved_receipt_count": int(totals["approved_receipt_count"] or 0),
+            "approved_payment_count": int(totals["approved_payment_count"] or 0),
+            "total_approved_amount": int(totals["total_approved_amount"] or 0),
+            "direct_approved_amount": int(totals["direct_approved_amount"] or 0),
+            "marketplace_approved_amount": int(totals["marketplace_approved_amount"] or 0),
+        },
+        "rows": rows,
+    }

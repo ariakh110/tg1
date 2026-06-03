@@ -2,11 +2,13 @@ from django.contrib.auth import get_user_model
 from datetime import timedelta
 import json
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from accounts.models import RoleCode, UserRole
 from orders.models import OrderRequest
 from products.models import (
     DeliveryLocation,
@@ -20,6 +22,14 @@ from products.models import (
 )
 
 from .models import (
+    StoreDeliveryAssignment,
+    StoreDeliveryAssignmentStatus,
+    StoreDeliveryDocument,
+    StoreDeliveryEvent,
+    StoreDeliveryOffer,
+    StoreDeliveryOfferStatus,
+    StoreDeliveryRequest,
+    StoreDeliveryRequestStatus,
     StoreNotificationStatus,
     StoreOrder,
     StoreOrderNotification,
@@ -752,3 +762,190 @@ class StoreOrderCheckoutTests(APITestCase):
         notification = StoreOrderNotification.objects.get(pk=send_res.data["id"])
         self.assertEqual(notification.recipient, "09121111111")
         self.assertEqual(notification.error_message, "sms_provider_not_configured")
+
+    def create_driver(self, username):
+        driver = User.objects.create_user(username=username, password="pass1234")
+        UserRole.objects.create(user=driver, role=RoleCode.DRIVER, is_active=True, activated_at=timezone.now())
+        return driver
+
+    def prepare_fulfillment_order(self, quantity="50", provider_reference="driver-load-payment"):
+        product, _offer, _tier = self.make_product(price=43000)
+        res = self.create_order(product, quantity=quantity)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.client.force_authenticate(self.admin)
+        payment_res = self.client.post(
+            f"/api/v1/admin/dashboard/store-orders/{res.data['id']}/confirm-payment/",
+            {"provider": "manual", "provider_reference": provider_reference},
+            format="json",
+        )
+        self.assertEqual(payment_res.status_code, status.HTTP_201_CREATED, payment_res.data)
+        update_res = self.client.patch(
+            f"/api/v1/admin/dashboard/store-orders/{res.data['id']}/",
+            {
+                "risk_status": StoreRiskStatus.APPROVED,
+                "stock_verified": True,
+                "proforma_confirmed": True,
+                "loading_permission": True,
+            },
+            format="json",
+        )
+        self.assertEqual(update_res.status_code, status.HTTP_200_OK, update_res.data)
+        return StoreOrder.objects.prefetch_related("items").get(pk=res.data["id"])
+
+    def test_admin_delivery_request_requires_clear_order_before_publish(self):
+        product, _offer, _tier = self.make_product(price=43000)
+        res = self.create_order(product, quantity="50")
+        driver = self.create_driver("driver-blocked")
+        self.client.force_authenticate(self.admin)
+
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {"order_id": res.data["id"], "driver_ids": [driver.id], "vehicle_type": "تریلی"},
+            format="json",
+        )
+
+        self.assertEqual(create_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("payment_not_confirmed", str(create_res.data))
+        self.assertEqual(StoreDeliveryRequest.objects.count(), 0)
+
+    def test_admin_publishes_high_tonnage_offer_to_multiple_active_drivers(self):
+        order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-load-payment-50")
+        drivers = [self.create_driver(f"driver-{index}") for index in range(1, 4)]
+        self.client.force_authenticate(self.admin)
+
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": str(order.id),
+                "driver_ids": [driver.id for driver in drivers],
+                "vehicle_type": "تریلی کفی",
+                "pickup_notes": "بارگیری از انبار اصفهان",
+                "dispatcher_notes": "هماهنگی قبل از ورود",
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["total_weight_kg"], "50000.000")
+        self.assertEqual(create_res.data["required_driver_count"], 2)
+        self.assertEqual(create_res.data["accepted_driver_count"], 0)
+        self.assertEqual(len(create_res.data["offers"]), 3)
+        self.assertEqual(create_res.data["shipment_snapshot"]["required_driver_count"], 2)
+        self.assertEqual(create_res.data["shipment_snapshot"]["items"][0]["planned_weight_kg"], "50000.000")
+
+        self.client.force_authenticate(drivers[0])
+        offer_res = self.client.get("/api/v1/store/driver/load-offers/")
+        self.assertEqual(offer_res.status_code, status.HTTP_200_OK, offer_res.data)
+        self.assertEqual(len(offer_res.data), 1)
+        self.assertEqual(offer_res.data[0]["total_weight_kg"], "50000.000")
+        self.assertEqual(offer_res.data[0]["required_driver_count"], 2)
+        self.assertEqual(offer_res.data[0]["pickup_notes"], "بارگیری از انبار اصفهان")
+
+    def test_driver_acceptance_caps_each_assignment_at_twenty_five_tons(self):
+        order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-load-payment-cap")
+        drivers = [self.create_driver(f"cap-driver-{index}") for index in range(1, 4)]
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {"order_id": str(order.id), "driver_ids": [driver.id for driver in drivers]},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        offers = list(StoreDeliveryOffer.objects.order_by("created_at"))
+
+        self.client.force_authenticate(drivers[0])
+        accept_one = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offers[0].id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.assertEqual(accept_one.status_code, status.HTTP_201_CREATED, accept_one.data)
+        self.assertEqual(accept_one.data["planned_weight_kg"], "25000.000")
+
+        self.client.force_authenticate(drivers[1])
+        accept_two = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offers[1].id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.assertEqual(accept_two.status_code, status.HTTP_201_CREATED, accept_two.data)
+        self.assertEqual(accept_two.data["planned_weight_kg"], "25000.000")
+
+        request_obj = StoreDeliveryRequest.objects.get(order=order)
+        self.assertEqual(request_obj.status, StoreDeliveryRequestStatus.ASSIGNED)
+        self.assertEqual(request_obj.accepted_driver_count, 2)
+        self.assertEqual(StoreDeliveryAssignment.objects.count(), 2)
+        self.assertTrue(all(row.planned_weight_kg <= 25000 for row in StoreDeliveryAssignment.objects.all()))
+
+        self.client.force_authenticate(drivers[2])
+        accept_three = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offers[2].id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.assertEqual(accept_three.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("delivery_capacity_full", str(accept_three.data))
+
+    def test_driver_cannot_respond_to_other_driver_offer(self):
+        order = self.prepare_fulfillment_order(quantity="25", provider_reference="driver-load-access")
+        owner = self.create_driver("offer-owner")
+        other = self.create_driver("offer-other")
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {"order_id": str(order.id), "driver_ids": [owner.id]},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        offer = StoreDeliveryOffer.objects.get()
+
+        self.client.force_authenticate(other)
+        response = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offer.id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(StoreDeliveryAssignment.objects.count(), 0)
+
+    @override_settings(DEFAULT_FILE_STORAGE="django.core.files.storage.FileSystemStorage")
+    def test_driver_assignment_transition_and_document_upload(self):
+        order = self.prepare_fulfillment_order(quantity="25", provider_reference="driver-load-doc")
+        driver = self.create_driver("doc-driver")
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {"order_id": str(order.id), "driver_ids": [driver.id]},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        offer = StoreDeliveryOffer.objects.get(driver=driver)
+
+        self.client.force_authenticate(driver)
+        accept_res = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offer.id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.assertEqual(accept_res.status_code, status.HTTP_201_CREATED, accept_res.data)
+        assignment_id = accept_res.data["id"]
+        transition_res = self.client.post(
+            f"/api/v1/store/driver/assignments/{assignment_id}/transition/",
+            {"status": StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING, "note": "arrived"},
+            format="json",
+        )
+        self.assertEqual(transition_res.status_code, status.HTTP_200_OK, transition_res.data)
+        self.assertEqual(transition_res.data["status"], StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING)
+
+        upload = SimpleUploadedFile("proof.pdf", b"%PDF-1.4\nproof\n", content_type="application/pdf")
+        upload_res = self.client.post(
+            f"/api/v1/store/driver/assignments/{assignment_id}/documents/",
+            {"document_type": "delivery_receipt", "file": upload, "note": "signed"},
+            format="multipart",
+        )
+
+        self.assertEqual(upload_res.status_code, status.HTTP_201_CREATED, upload_res.data)
+        self.assertEqual(upload_res.data["document_type"], "delivery_receipt")
+        self.assertEqual(StoreDeliveryDocument.objects.count(), 1)
+        self.assertTrue(StoreDeliveryEvent.objects.filter(event="DELIVERY_DOCUMENT_UPLOADED").exists())

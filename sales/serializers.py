@@ -10,6 +10,13 @@ from products.models import Product
 from .models import (
     StoreBuyerAddress,
     StoreBuyerInvoiceProfile,
+    StoreDeliveryAssignment,
+    StoreDeliveryAssignmentStatus,
+    StoreDeliveryDocument,
+    StoreDeliveryDocumentType,
+    StoreDeliveryEvent,
+    StoreDeliveryOffer,
+    StoreDeliveryRequest,
     StoreOrder,
     StoreOrderItem,
     StoreOrderNotification,
@@ -26,6 +33,7 @@ from .services import (
     create_store_order,
     confirm_store_order_quote,
     generate_payment_link,
+    create_delivery_request,
     is_order_price_expired,
     is_order_payment_overdue,
     paid_amount_for_order,
@@ -33,9 +41,12 @@ from .services import (
     record_final_weights,
     reject_store_order_quote,
     remaining_amount_for_order,
+    respond_to_delivery_offer,
     send_payment_link,
     submit_admin_quote,
     set_order_status,
+    transition_delivery_assignment,
+    upload_delivery_document,
     validate_order_transition,
 )
 
@@ -769,3 +780,264 @@ class StorePaymentConfirmSerializer(serializers.Serializer):
                 meta={"payment_id": payment.id, "amount": amount, "remaining_amount": remaining_amount_for_order(order)},
             )
         return payment
+
+
+class StoreDeliveryDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StoreDeliveryDocument
+        fields = (
+            "id",
+            "document_type",
+            "file_url",
+            "note",
+            "uploaded_by",
+            "uploaded_by_username",
+            "created_at",
+        )
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        if not obj.file:
+            return ""
+        request = self.context.get("request")
+        url = obj.file.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class StoreDeliveryEventSerializer(serializers.ModelSerializer):
+    actor_username = serializers.CharField(source="actor_user.username", read_only=True)
+
+    class Meta:
+        model = StoreDeliveryEvent
+        fields = (
+            "id",
+            "event",
+            "from_status",
+            "to_status",
+            "actor_user",
+            "actor_username",
+            "payload",
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class StoreDeliveryOfferSerializer(serializers.ModelSerializer):
+    driver_username = serializers.CharField(source="driver.username", read_only=True)
+    request_id = serializers.UUIDField(source="request.id", read_only=True)
+    order_id = serializers.UUIDField(source="request.order_id", read_only=True)
+    request_status = serializers.CharField(source="request.status", read_only=True)
+    shipment_snapshot = serializers.JSONField(source="request.shipment_snapshot", read_only=True)
+    total_weight_kg = serializers.DecimalField(source="request.total_weight_kg", max_digits=12, decimal_places=3, read_only=True)
+    required_driver_count = serializers.IntegerField(source="request.required_driver_count", read_only=True)
+    accepted_driver_count = serializers.IntegerField(source="request.accepted_driver_count", read_only=True)
+    vehicle_type = serializers.CharField(source="request.vehicle_type", read_only=True)
+    pickup_window_start = serializers.DateTimeField(source="request.pickup_window_start", read_only=True)
+    pickup_window_end = serializers.DateTimeField(source="request.pickup_window_end", read_only=True)
+    dispatch_deadline = serializers.DateTimeField(source="request.dispatch_deadline", read_only=True)
+    pickup_notes = serializers.CharField(source="request.pickup_notes", read_only=True)
+    dispatcher_notes = serializers.CharField(source="request.dispatcher_notes", read_only=True)
+
+    class Meta:
+        model = StoreDeliveryOffer
+        fields = (
+            "id",
+            "request_id",
+            "order_id",
+            "request_status",
+            "driver",
+            "driver_username",
+            "status",
+            "response_note",
+            "responded_at",
+            "created_at",
+            "updated_at",
+            "shipment_snapshot",
+            "total_weight_kg",
+            "required_driver_count",
+            "accepted_driver_count",
+            "vehicle_type",
+            "pickup_window_start",
+            "pickup_window_end",
+            "dispatch_deadline",
+            "pickup_notes",
+            "dispatcher_notes",
+        )
+        read_only_fields = fields
+
+
+class StoreDeliveryAssignmentSerializer(serializers.ModelSerializer):
+    driver_username = serializers.CharField(source="driver.username", read_only=True)
+    order_id = serializers.UUIDField(source="order.id", read_only=True)
+    request_id = serializers.UUIDField(source="request.id", read_only=True)
+    shipment_snapshot = serializers.JSONField(source="request.shipment_snapshot", read_only=True)
+    documents = StoreDeliveryDocumentSerializer(many=True, read_only=True)
+    events = StoreDeliveryEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = StoreDeliveryAssignment
+        fields = (
+            "id",
+            "request_id",
+            "order_id",
+            "driver",
+            "driver_username",
+            "status",
+            "load_sequence",
+            "planned_weight_kg",
+            "vehicle_type",
+            "vehicle_plate",
+            "driver_phone",
+            "accepted_at",
+            "arrived_for_loading_at",
+            "loaded_at",
+            "in_transit_at",
+            "delivered_at",
+            "proof_submitted_at",
+            "created_at",
+            "updated_at",
+            "shipment_snapshot",
+            "documents",
+            "events",
+        )
+        read_only_fields = fields
+
+
+class StoreDeliveryRequestSerializer(serializers.ModelSerializer):
+    order_id = serializers.UUIDField(source="order.id", read_only=True)
+    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    offers = StoreDeliveryOfferSerializer(many=True, read_only=True)
+    assignments = StoreDeliveryAssignmentSerializer(many=True, read_only=True)
+    events = StoreDeliveryEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = StoreDeliveryRequest
+        fields = (
+            "id",
+            "order_id",
+            "created_by",
+            "created_by_username",
+            "status",
+            "total_weight_kg",
+            "required_driver_count",
+            "accepted_driver_count",
+            "per_driver_weight_limit_kg",
+            "vehicle_type",
+            "pickup_window_start",
+            "pickup_window_end",
+            "dispatch_deadline",
+            "pickup_notes",
+            "dispatcher_notes",
+            "shipment_snapshot",
+            "metadata",
+            "created_at",
+            "updated_at",
+            "offers",
+            "assignments",
+            "events",
+        )
+        read_only_fields = fields
+
+
+class StoreDeliveryRequestCreateSerializer(serializers.Serializer):
+    order_id = serializers.UUIDField()
+    driver_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
+    vehicle_type = serializers.CharField(required=False, allow_blank=True)
+    pickup_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    pickup_window_end = serializers.DateTimeField(required=False, allow_null=True)
+    dispatch_deadline = serializers.DateTimeField(required=False, allow_null=True)
+    pickup_notes = serializers.CharField(required=False, allow_blank=True)
+    dispatcher_notes = serializers.CharField(required=False, allow_blank=True)
+    metadata = serializers.JSONField(required=False)
+
+    def validate_order_id(self, value):
+        try:
+            return StoreOrder.objects.prefetch_related("items", "delivery_requests").get(pk=value)
+        except StoreOrder.DoesNotExist as exc:
+            raise serializers.ValidationError("store_order_not_found") from exc
+
+    def save(self, **kwargs):
+        request = self.context["request"]
+        order = self.validated_data["order_id"]
+        try:
+            return create_delivery_request(
+                order,
+                request.user,
+                driver_ids=self.validated_data.get("driver_ids") or None,
+                vehicle_type=self.validated_data.get("vehicle_type", ""),
+                pickup_window_start=self.validated_data.get("pickup_window_start"),
+                pickup_window_end=self.validated_data.get("pickup_window_end"),
+                dispatch_deadline=self.validated_data.get("dispatch_deadline"),
+                pickup_notes=self.validated_data.get("pickup_notes", ""),
+                dispatcher_notes=self.validated_data.get("dispatcher_notes", ""),
+                metadata=self.validated_data.get("metadata") or {},
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            if detail.startswith("delivery_blockers:"):
+                blockers = [item for item in detail.split(":", 1)[1].split(",") if item]
+                raise serializers.ValidationError({"detail": "delivery_blockers", "blockers": blockers}) from exc
+            raise serializers.ValidationError({"detail": detail}) from exc
+
+
+class StoreDeliveryOfferResponseSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=("accept", "decline"))
+    note = serializers.CharField(required=False, allow_blank=True)
+
+    def save(self, **kwargs):
+        request = self.context["request"]
+        offer = self.context["offer"]
+        try:
+            return respond_to_delivery_offer(
+                offer,
+                request.user,
+                self.validated_data["action"],
+                note=self.validated_data.get("note", ""),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"detail": str(exc)}) from exc
+
+
+class StoreDeliveryAssignmentTransitionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=StoreDeliveryAssignmentStatus.choices)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+    def save(self, **kwargs):
+        request = self.context["request"]
+        assignment = self.context["assignment"]
+        try:
+            return transition_delivery_assignment(
+                assignment,
+                request.user,
+                self.validated_data["status"],
+                note=self.validated_data.get("note", ""),
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            if detail.startswith("delivery_blockers:"):
+                blockers = [item for item in detail.split(":", 1)[1].split(",") if item]
+                raise serializers.ValidationError({"detail": "delivery_blockers", "blockers": blockers}) from exc
+            raise serializers.ValidationError({"detail": detail}) from exc
+
+
+class StoreDeliveryDocumentUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(choices=StoreDeliveryDocumentType.choices, required=False)
+    file = serializers.FileField()
+    note = serializers.CharField(required=False, allow_blank=True)
+
+    def save(self, **kwargs):
+        request = self.context["request"]
+        assignment = self.context["assignment"]
+        try:
+            return upload_delivery_document(
+                assignment,
+                request.user,
+                self.validated_data["file"],
+                document_type=self.validated_data.get("document_type") or StoreDeliveryDocumentType.OTHER,
+                note=self.validated_data.get("note", ""),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"detail": str(exc)}) from exc
