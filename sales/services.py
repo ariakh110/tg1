@@ -1,5 +1,6 @@
 from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from datetime import timedelta
+from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 from secrets import token_urlsafe
 from urllib.parse import urlencode
@@ -12,6 +13,11 @@ from accounts.models import RoleCode, UserRole
 from products.models import DeliveryLocation, Offer, PricingBasis, PricingTier, Product
 
 from .models import (
+    FreightBidInvite,
+    FreightBidInviteStatus,
+    FreightBidOffer,
+    FreightBidSession,
+    FreightBidStatus,
     StoreOrder,
     StoreDeliveryAssignment,
     StoreDeliveryAssignmentStatus,
@@ -20,9 +26,12 @@ from .models import (
     StoreDeliveryEvent,
     StoreDeliveryOffer,
     StoreDeliveryOfferStatus,
+    StoreDeliveryRecipientType,
     StoreDeliveryRequest,
     StoreDeliveryRequestStatus,
+    StoreDriverOperationalProfile,
     StoreOrderItem,
+    StoreOrderLoadingVehicle,
     StoreOrderNotification,
     StoreQuoteConfirmationStatus,
     StoreOrderStatus,
@@ -49,7 +58,6 @@ PAYMENT_ACTIONABLE_STATUSES = {
 }
 
 LOADING_STATUSES = {
-    StoreOrderStatus.FULFILLMENT_PENDING,
     StoreOrderStatus.READY_FOR_PICKUP,
     StoreOrderStatus.SHIPPED,
     StoreOrderStatus.DELIVERED,
@@ -518,6 +526,8 @@ def risk_blockers_for_order(order, target_status=None, now=None):
         blockers.append("risk_blocked")
     if is_order_price_expired(order, now=now):
         blockers.append("price_expired")
+    if target_status == StoreOrderStatus.FULFILLMENT_PENDING:
+        return blockers
     if target_status in LOADING_STATUSES:
         if order.payment_status != StorePaymentStatus.PAID:
             blockers.append("payment_not_confirmed")
@@ -536,6 +546,23 @@ def risk_blockers_for_order(order, target_status=None, now=None):
             blockers.append("proforma_not_confirmed")
         if not order.loading_permission_at:
             blockers.append("loading_permission_not_recorded")
+        required_count = required_driver_count_for_weight(delivery_weight_kg_for_order(order))
+        assigned_count = order.delivery_assignments.exclude(status=StoreDeliveryAssignmentStatus.CANCELLED).count()
+        if required_count and assigned_count < required_count:
+            blockers.append("delivery_capacity_not_assigned")
+        weight_kg = delivery_weight_kg_for_order(order)
+        if weight_kg > MAX_DRIVER_LOAD_KG:
+            required_vehicles = required_driver_count_for_weight(weight_kg)
+            active_vehicles = list(order.loading_vehicles.filter(is_active=True).order_by("sequence", "id"))
+            if len(active_vehicles) < required_vehicles:
+                blockers.append("loading_vehicles_insufficient")
+            else:
+                names = [v.driver_name.strip() for v in active_vehicles[:required_vehicles]]
+                plates = [v.vehicle_plate.strip() for v in active_vehicles[:required_vehicles]]
+                if any(not n for n in names) or any(not p for p in plates):
+                    blockers.append("loading_vehicles_incomplete")
+                elif len(set(names)) < len(names):
+                    blockers.append("loading_vehicles_duplicate_drivers")
     return blockers
 
 
@@ -1040,6 +1067,13 @@ def reject_store_order_quote(order, reason, actor=None, note=""):
 
 
 MAX_DRIVER_LOAD_KG = Decimal("25000.000")
+DEFAULT_DELIVERY_OFFER_TTL_MINUTES = 30
+DEFAULT_DELIVERY_SEARCH_RADIUS_KM = 150
+DEFAULT_DELIVERY_CANDIDATE_BUFFER = 2
+LOGISTICS_ROLE_CODES = {
+    RoleCode.DRIVER,
+    RoleCode.CARRIER,
+}
 
 DELIVERY_ASSIGNMENT_TRANSITIONS = {
     StoreDeliveryAssignmentStatus.ACCEPTED: {StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING},
@@ -1075,15 +1109,298 @@ def required_driver_count_for_weight(weight_kg):
     return int((weight / MAX_DRIVER_LOAD_KG).to_integral_value(rounding=ROUND_CEILING))
 
 
+def decimal_or_none(value):
+    if value in (None, ""):
+        return None
+    return Decimal(str(value))
+
+
+def mirror_first_loading_vehicle(order):
+    """اولین خودرو active را به فیلدهای legacy سفارش منعکس می‌کند."""
+    first = order.loading_vehicles.filter(is_active=True).order_by("sequence", "id").first()
+    order.driver_name = first.driver_name if first else ""
+    order.driver_phone = first.driver_phone if first else ""
+    order.vehicle_type = first.vehicle_type if first else ""
+    order.vehicle_plate = first.vehicle_plate if first else ""
+    order.save(update_fields=["driver_name", "driver_phone", "vehicle_type", "vehicle_plate", "updated_at"])
+
+
+def normalized_positive_int(value, default=0, maximum=None):
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = int(default)
+    result = max(0, result)
+    if maximum is not None:
+        result = min(result, maximum)
+    return result
+
+
+def normalize_delivery_recipient_type(value):
+    value = (value or StoreDeliveryRecipientType.ALL).strip().upper()
+    valid_values = {choice[0] for choice in StoreDeliveryRecipientType.choices}
+    return value if value in valid_values else StoreDeliveryRecipientType.ALL
+
+
+def role_codes_for_recipient_type(recipient_type):
+    recipient_type = normalize_delivery_recipient_type(recipient_type)
+    if recipient_type == StoreDeliveryRecipientType.DRIVER:
+        return {RoleCode.DRIVER}
+    if recipient_type == StoreDeliveryRecipientType.CARRIER:
+        return {RoleCode.CARRIER}
+    return LOGISTICS_ROLE_CODES
+
+
+def recipient_type_for_role(role):
+    return StoreDeliveryRecipientType.CARRIER if role.role == RoleCode.CARRIER else StoreDeliveryRecipientType.DRIVER
+
+
+def active_logistics_roles(recipient_ids=None, recipient_type=StoreDeliveryRecipientType.ALL):
+    roles = UserRole.objects.filter(
+        role__in=role_codes_for_recipient_type(recipient_type),
+        is_active=True,
+    ).select_related(
+        "user",
+        "user__profile",
+        "user__store_driver_profile",
+    )
+    if recipient_ids:
+        roles = roles.filter(user_id__in=recipient_ids)
+    unique_roles = {}
+    for role in roles.order_by("user__username", "user_id", "role"):
+        unique_roles.setdefault(role.user_id, role)
+    return list(unique_roles.values())
+
+
+def active_driver_roles(driver_ids=None):
+    return active_logistics_roles(driver_ids, recipient_type=StoreDeliveryRecipientType.DRIVER)
+
+
 def active_driver_users(driver_ids=None):
-    roles = UserRole.objects.filter(role=RoleCode.DRIVER, is_active=True).select_related("user")
-    if driver_ids:
-        roles = roles.filter(user_id__in=driver_ids)
-    return [role.user for role in roles.order_by("user__username", "user_id")]
+    return [role.user for role in active_driver_roles(driver_ids)]
+
+
+def ensure_driver_operational_profile(user):
+    profile, _created = StoreDriverOperationalProfile.objects.get_or_create(user=user)
+    return profile
+
+
+def haversine_distance_km(lat1, lon1, lat2, lon2):
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    lat1 = radians(float(lat1))
+    lon1 = radians(float(lon1))
+    lat2 = radians(float(lat2))
+    lon2 = radians(float(lon2))
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return Decimal(str(6371 * 2 * asin(sqrt(a)))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _location_value(mapping, *keys):
+    if not isinstance(mapping, dict):
+        return ""
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def resolve_delivery_loading_location(order, payload=None):
+    payload = payload or {}
+    quote = order.metadata.get("quote") if isinstance(order.metadata, dict) else {}
+    loading_points = quote.get("loading_points") if isinstance(quote, dict) and isinstance(quote.get("loading_points"), list) else []
+    first_point = loading_points[0] if loading_points else {}
+    if not first_point:
+        first_item = order.items.first()
+        first_point = first_item.delivery_snapshot if first_item and isinstance(first_item.delivery_snapshot, dict) else {}
+    province = (payload.get("pickup_province") or _location_value(first_point, "province", "pickup_province") or "").strip()
+    city = (payload.get("pickup_city") or _location_value(first_point, "city", "pickup_city") or "").strip()
+    address = (payload.get("pickup_address") or _location_value(first_point, "address", "pickup_address") or "").strip()
+    latitude = decimal_or_none(payload.get("pickup_latitude") or _location_value(first_point, "latitude", "lat", "pickup_latitude"))
+    longitude = decimal_or_none(payload.get("pickup_longitude") or _location_value(first_point, "longitude", "lng", "lon", "pickup_longitude"))
+    return {
+        "province": province,
+        "city": city,
+        "address": address,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
+
+def resolve_delivery_destination(order, payload=None):
+    payload = payload or {}
+    return {
+        "province": (payload.get("destination_province") or order.destination_province or "").strip(),
+        "city": (payload.get("destination_city") or order.destination_city or "").strip(),
+        "address": (payload.get("destination_address") or order.destination_address or "").strip(),
+        "latitude": decimal_or_none(
+            payload.get("destination_latitude")
+            if payload.get("destination_latitude") not in (None, "")
+            else order.destination_latitude
+        ),
+        "longitude": decimal_or_none(
+            payload.get("destination_longitude")
+            if payload.get("destination_longitude") not in (None, "")
+            else order.destination_longitude
+        ),
+        "delivery_notes": order.delivery_notes or "",
+    }
+
+
+def sync_order_delivery_destination(order, destination):
+    update_fields = []
+    field_map = {
+        "destination_province": destination.get("province") or "",
+        "destination_city": destination.get("city") or "",
+        "destination_address": destination.get("address") or "",
+        "destination_latitude": destination.get("latitude"),
+        "destination_longitude": destination.get("longitude"),
+    }
+    for field, value in field_map.items():
+        if getattr(order, field) != value:
+            setattr(order, field, value)
+            update_fields.append(field)
+    if update_fields:
+        order.save(update_fields=[*update_fields, "updated_at"])
+
+
+def delivery_request_location(request_obj):
+    return {
+        "province": request_obj.pickup_province,
+        "city": request_obj.pickup_city,
+        "address": request_obj.pickup_address,
+        "latitude": request_obj.pickup_latitude,
+        "longitude": request_obj.pickup_longitude,
+    }
+
+
+def is_profile_geo_match(profile, location, search_radius_km):
+    pickup_lat = location.get("latitude")
+    pickup_lng = location.get("longitude")
+    if pickup_lat is not None and pickup_lng is not None and profile.current_latitude is not None and profile.current_longitude is not None:
+        distance = haversine_distance_km(pickup_lat, pickup_lng, profile.current_latitude, profile.current_longitude)
+        request_radius = normalized_positive_int(search_radius_km, DEFAULT_DELIVERY_SEARCH_RADIUS_KM) or DEFAULT_DELIVERY_SEARCH_RADIUS_KM
+        driver_radius = normalized_positive_int(profile.service_radius_km, DEFAULT_DELIVERY_SEARCH_RADIUS_KM) or DEFAULT_DELIVERY_SEARCH_RADIUS_KM
+        if distance <= min(Decimal(request_radius), Decimal(driver_radius)):
+            return True, distance, "coordinate_radius"
+        return False, distance, "outside_radius"
+
+    pickup_city = (location.get("city") or "").strip()
+    pickup_province = (location.get("province") or "").strip()
+    if pickup_city and profile.current_city and pickup_city == profile.current_city:
+        return True, None, "city_match"
+    if pickup_province and profile.current_province and pickup_province == profile.current_province:
+        return True, None, "province_match"
+    if not pickup_city and not pickup_province and pickup_lat is None and pickup_lng is None:
+        return True, None, "no_pickup_location"
+    return False, None, "location_mismatch"
+
+
+def driver_match_payload(role, profile, location, search_radius_km, manual=False, rank=None):
+    distance = None
+    reason = "manual"
+    eligible = True
+    if profile:
+        eligible, distance, reason = is_profile_geo_match(profile, location, search_radius_km)
+    elif not manual:
+        eligible = False
+        reason = "profile_missing"
+    return {
+        "user": role.user,
+        "recipient_type": recipient_type_for_role(role),
+        "profile": profile,
+        "eligible": eligible,
+        "distance_km": distance,
+        "match_reason": reason,
+        "match_rank": rank,
+    }
+
+
+def match_delivery_drivers(
+    *,
+    order=None,
+    request_obj=None,
+    driver_ids=None,
+    recipient_type=StoreDeliveryRecipientType.ALL,
+    exclude_driver_ids=None,
+    total_weight_kg=None,
+    required_driver_count=None,
+    limit=None,
+    location=None,
+    search_radius_km=None,
+    manual=False,
+):
+    if request_obj is not None:
+        order = request_obj.order
+        location = location or delivery_request_location(request_obj)
+        search_radius_km = search_radius_km if search_radius_km is not None else request_obj.search_radius_km
+        total_weight_kg = total_weight_kg if total_weight_kg is not None else request_obj.total_weight_kg
+        required_driver_count = required_driver_count if required_driver_count is not None else request_obj.required_driver_count
+    if order is not None and location is None:
+        location = resolve_delivery_loading_location(order)
+    location = location or {}
+    search_radius_km = normalized_positive_int(search_radius_km, DEFAULT_DELIVERY_SEARCH_RADIUS_KM) or DEFAULT_DELIVERY_SEARCH_RADIUS_KM
+    total_weight_kg = Decimal(str(total_weight_kg or 0))
+    required_driver_count = int(required_driver_count or required_driver_count_for_weight(total_weight_kg))
+    planned_capacity = min(MAX_DRIVER_LOAD_KG, total_weight_kg) if total_weight_kg > 0 else MAX_DRIVER_LOAD_KG
+    exclude_driver_ids = set(exclude_driver_ids or [])
+    recipient_type = normalize_delivery_recipient_type(recipient_type)
+    roles = active_logistics_roles(driver_ids, recipient_type=recipient_type)
+    matches = []
+
+    for role in roles:
+        if role.user_id in exclude_driver_ids:
+            continue
+        profile = getattr(role.user, "store_driver_profile", None)
+        if manual:
+            match = driver_match_payload(role, profile, location, search_radius_km, manual=True)
+            match["eligible"] = True
+            matches.append(match)
+            continue
+        if not profile:
+            continue
+        if not profile.is_verified or not profile.is_available:
+            continue
+        if Decimal(str(profile.capacity_kg or 0)) < planned_capacity:
+            continue
+        match = driver_match_payload(role, profile, location, search_radius_km)
+        if match["eligible"]:
+            matches.append(match)
+
+    matches.sort(
+        key=lambda item: (
+            item["distance_km"] is None,
+            item["distance_km"] if item["distance_km"] is not None else Decimal("999999"),
+            item["user"].username,
+            item["user"].id,
+        )
+    )
+    default_limit = required_driver_count + DEFAULT_DELIVERY_CANDIDATE_BUFFER if not manual else len(matches)
+    limit = normalized_positive_int(limit, default_limit) or default_limit
+    selected = matches[:limit]
+    for index, match in enumerate(selected, start=1):
+        match["match_rank"] = index
+    return selected
 
 
 def delivery_request_blockers(order):
-    blockers = list(risk_blockers_for_order(order, StoreOrderStatus.FULFILLMENT_PENDING))
+    blockers = []
+    if order.status in TERMINAL_STATUSES:
+        blockers.append("terminal_order_status")
+    if order.risk_status == StoreRiskStatus.BLOCKED:
+        blockers.append("risk_blocked")
+    if is_order_price_expired(order):
+        blockers.append("price_expired")
+    if order.quote_confirmation_status in {
+        StoreQuoteConfirmationStatus.AWAITING_ADMIN_QUOTE,
+        StoreQuoteConfirmationStatus.AWAITING_BUYER,
+    }:
+        blockers.append("quote_not_confirmed")
+    if order.quote_confirmation_status == StoreQuoteConfirmationStatus.REJECTED:
+        blockers.append("quote_rejected_by_buyer")
     weight = delivery_weight_kg_for_order(order)
     if weight <= 0:
         blockers.append("shipment_weight_missing")
@@ -1100,9 +1417,11 @@ def _first_order_item_title(order):
     return first_item.product_name if first_item else str(order.id)
 
 
-def delivery_shipment_snapshot(order, total_weight_kg, required_driver_count):
+def delivery_shipment_snapshot(order, total_weight_kg, required_driver_count, loading_location=None, destination=None):
     quote = order.metadata.get("quote") if isinstance(order.metadata, dict) else {}
     loading_points = quote.get("loading_points") if isinstance(quote, dict) and isinstance(quote.get("loading_points"), list) else []
+    loading_location = loading_location or resolve_delivery_loading_location(order)
+    destination = destination or resolve_delivery_destination(order)
     items = []
     item_loading_points = {int(point.get("item_id")): point for point in loading_points if point.get("item_id")}
     for item in order.items.all():
@@ -1127,10 +1446,12 @@ def delivery_shipment_snapshot(order, total_weight_kg, required_driver_count):
         "contact_name": order.contact_name,
         "contact_phone": order.contact_phone,
         "destination": {
-            "province": order.destination_province,
-            "city": order.destination_city,
-            "address": order.destination_address,
-            "delivery_notes": order.delivery_notes,
+            "province": destination.get("province") or "",
+            "city": destination.get("city") or "",
+            "address": destination.get("address") or "",
+            "latitude": str(destination.get("latitude") or ""),
+            "longitude": str(destination.get("longitude") or ""),
+            "delivery_notes": destination.get("delivery_notes") or "",
         },
         "total_amount": order.total_amount,
         "currency": order.currency,
@@ -1139,6 +1460,13 @@ def delivery_shipment_snapshot(order, total_weight_kg, required_driver_count):
         "per_driver_weight_limit_kg": str(MAX_DRIVER_LOAD_KG),
         "items": items,
         "loading_points": loading_points,
+        "pickup": {
+            "province": loading_location.get("province") or "",
+            "city": loading_location.get("city") or "",
+            "address": loading_location.get("address") or "",
+            "latitude": str(loading_location.get("latitude") or ""),
+            "longitude": str(loading_location.get("longitude") or ""),
+        },
     }
 
 
@@ -1154,6 +1482,79 @@ def write_delivery_event(request_obj, event, actor=None, assignment=None, from_s
     )
 
 
+def delivery_offer_expiry(offer_ttl_minutes, now=None):
+    now = now or timezone.now()
+    ttl = normalized_positive_int(offer_ttl_minutes, DEFAULT_DELIVERY_OFFER_TTL_MINUTES, maximum=1440)
+    if ttl <= 0:
+        ttl = DEFAULT_DELIVERY_OFFER_TTL_MINUTES
+    return now + timedelta(minutes=ttl)
+
+
+def notify_delivery_offer(offer, actor=None):
+    driver = offer.driver
+    profile_phone = getattr(getattr(driver, "profile", None), "phone", "") or ""
+    recipient = driver.email or profile_phone or driver.username
+    notification = StoreOrderNotification.objects.create(
+        order=offer.request.order,
+        channel=StoreNotificationChannel.MANUAL,
+        recipient=recipient,
+        event="DELIVERY_LOAD_OFFERED",
+        status=StoreNotificationStatus.SENT,
+        actor_user=actor if getattr(actor, "is_authenticated", False) else None,
+        payload={
+            "delivery_request_id": str(offer.request_id),
+            "offer_id": str(offer.id),
+            "driver_id": offer.driver_id,
+            "recipient_type": offer.recipient_type,
+            "expires_at": offer.expires_at.isoformat() if offer.expires_at else None,
+            "distance_km": str(offer.distance_km or ""),
+            "match_rank": offer.match_rank,
+            "match_reason": offer.match_reason,
+        },
+    )
+    offer.notified_at = timezone.now()
+    offer.notification_status = StoreNotificationStatus.SENT
+    offer.save(update_fields=["notified_at", "notification_status", "updated_at"])
+    return notification
+
+
+def create_delivery_offers_for_matches(request_obj, matches, actor=None, event="DELIVERY_OFFERS_CREATED"):
+    created = []
+    now = timezone.now()
+    expires_at = delivery_offer_expiry(request_obj.offer_ttl_minutes, now=now)
+    for match in matches:
+        offer, is_created = StoreDeliveryOffer.objects.get_or_create(
+            request=request_obj,
+            driver=match["user"],
+            defaults={
+                "expires_at": expires_at,
+                "recipient_type": match.get("recipient_type") or StoreDeliveryRecipientType.DRIVER,
+                "distance_km": match.get("distance_km"),
+                "match_rank": match.get("match_rank"),
+                "match_reason": match.get("match_reason", ""),
+            },
+        )
+        if not is_created:
+            continue
+        notify_delivery_offer(offer, actor=actor)
+        write_delivery_event(
+            request_obj,
+            event,
+            actor,
+            payload={
+                "offer_id": str(offer.id),
+                "driver_id": offer.driver_id,
+                "recipient_type": offer.recipient_type,
+                "distance_km": str(offer.distance_km or ""),
+                "match_rank": offer.match_rank,
+                "match_reason": offer.match_reason,
+                "expires_at": offer.expires_at.isoformat() if offer.expires_at else None,
+            },
+        )
+        created.append(offer)
+    return created
+
+
 @transaction.atomic
 def create_delivery_request(order, actor, driver_ids=None, **payload):
     order = StoreOrder.objects.select_for_update().prefetch_related("items", "delivery_requests").get(pk=order.pk)
@@ -1163,8 +1564,28 @@ def create_delivery_request(order, actor, driver_ids=None, **payload):
 
     total_weight_kg = delivery_weight_kg_for_order(order)
     required_driver_count = required_driver_count_for_weight(total_weight_kg)
-    drivers = active_driver_users(driver_ids)
-    if len(drivers) < required_driver_count:
+    loading_location = resolve_delivery_loading_location(order, payload)
+    destination = resolve_delivery_destination(order, payload)
+    sync_order_delivery_destination(order, destination)
+    recipient_type = normalize_delivery_recipient_type(payload.get("recipient_type"))
+    search_radius_km = normalized_positive_int(payload.get("search_radius_km"), DEFAULT_DELIVERY_SEARCH_RADIUS_KM) or DEFAULT_DELIVERY_SEARCH_RADIUS_KM
+    offer_ttl_minutes = normalized_positive_int(payload.get("offer_ttl_minutes"), DEFAULT_DELIVERY_OFFER_TTL_MINUTES, maximum=1440)
+    if offer_ttl_minutes <= 0:
+        offer_ttl_minutes = DEFAULT_DELIVERY_OFFER_TTL_MINUTES
+    max_candidate_count = normalized_positive_int(payload.get("max_candidate_count"), 0, maximum=100)
+    manual = bool(driver_ids)
+    matches = match_delivery_drivers(
+        order=order,
+        driver_ids=driver_ids,
+        total_weight_kg=total_weight_kg,
+        required_driver_count=required_driver_count,
+        location=loading_location,
+        search_radius_km=search_radius_km,
+        limit=max_candidate_count or None,
+        manual=manual,
+        recipient_type=recipient_type,
+    )
+    if len(matches) < required_driver_count:
         raise ValueError("not_enough_active_drivers")
 
     request_obj = StoreDeliveryRequest.objects.create(
@@ -1173,29 +1594,58 @@ def create_delivery_request(order, actor, driver_ids=None, **payload):
         total_weight_kg=total_weight_kg,
         required_driver_count=required_driver_count,
         per_driver_weight_limit_kg=MAX_DRIVER_LOAD_KG,
+        recipient_type=recipient_type,
         vehicle_type=(payload.get("vehicle_type") or "").strip(),
+        pickup_province=loading_location.get("province") or "",
+        pickup_city=loading_location.get("city") or "",
+        pickup_address=loading_location.get("address") or "",
+        pickup_latitude=loading_location.get("latitude"),
+        pickup_longitude=loading_location.get("longitude"),
+        destination_province=destination.get("province") or "",
+        destination_city=destination.get("city") or "",
+        destination_address=destination.get("address") or "",
+        destination_latitude=destination.get("latitude"),
+        destination_longitude=destination.get("longitude"),
+        search_radius_km=search_radius_km,
+        offer_ttl_minutes=offer_ttl_minutes,
+        auto_reassign_enabled=bool(payload.get("auto_reassign_enabled", True)),
+        max_candidate_count=max_candidate_count,
         pickup_window_start=payload.get("pickup_window_start"),
         pickup_window_end=payload.get("pickup_window_end"),
         dispatch_deadline=payload.get("dispatch_deadline"),
         pickup_notes=(payload.get("pickup_notes") or "").strip(),
         dispatcher_notes=(payload.get("dispatcher_notes") or "").strip(),
-        shipment_snapshot=delivery_shipment_snapshot(order, total_weight_kg, required_driver_count),
+        shipment_snapshot=delivery_shipment_snapshot(
+            order,
+            total_weight_kg,
+            required_driver_count,
+            loading_location=loading_location,
+            destination=destination,
+        ),
         metadata=payload.get("metadata") or {},
     )
-    StoreDeliveryOffer.objects.bulk_create(
-        [StoreDeliveryOffer(request=request_obj, driver=driver) for driver in drivers],
-        ignore_conflicts=True,
-    )
+    created_offers = create_delivery_offers_for_matches(request_obj, matches, actor=actor, event="DELIVERY_REQUEST_OFFERED")
     write_delivery_event(
         request_obj,
         "DELIVERY_REQUEST_PUBLISHED",
         actor,
         payload={
-            "driver_count": len(drivers),
+            "driver_count": len(created_offers),
             "required_driver_count": required_driver_count,
             "total_weight_kg": str(total_weight_kg),
+            "search_radius_km": search_radius_km,
+            "auto_matched": not manual,
+            "recipient_type": recipient_type,
         },
     )
+    if order.status not in LOADING_STATUSES | {StoreOrderStatus.FULFILLMENT_PENDING}:
+        set_order_status(
+            order,
+            StoreOrderStatus.FULFILLMENT_PENDING,
+            "STORE_ORDER_DELIVERY_REQUESTED",
+            actor,
+            meta={"delivery_request_id": str(request_obj.id), "recipient_type": recipient_type},
+        )
     return request_obj
 
 
@@ -1204,70 +1654,191 @@ def planned_weight_for_sequence(total_weight_kg, sequence):
     return min(MAX_DRIVER_LOAD_KG, max(Decimal("0"), remaining_before)).quantize(Decimal("0.001"))
 
 
+def accepted_driver_count_for_request(request_obj):
+    return request_obj.assignments.exclude(status=StoreDeliveryAssignmentStatus.CANCELLED).count()
+
+
+def remaining_driver_slots(request_obj):
+    return max(0, int(request_obj.required_driver_count or 0) - accepted_driver_count_for_request(request_obj))
+
+
+def offered_driver_ids_for_request(request_obj):
+    return set(request_obj.offers.values_list("driver_id", flat=True))
+
+
 @transaction.atomic
-def respond_to_delivery_offer(offer, actor, action, note=""):
-    offer = (
-        StoreDeliveryOffer.objects.select_for_update()
-        .select_related("request", "request__order", "driver")
-        .get(pk=offer.pk)
+def reassign_delivery_request(request_obj, actor=None, reason="manual", driver_ids=None):
+    request_obj = (
+        StoreDeliveryRequest.objects.select_for_update()
+        .select_related("order", "order__buyer")
+        .prefetch_related("order__items", "offers", "assignments")
+        .get(pk=request_obj.pk)
     )
-    request_obj = StoreDeliveryRequest.objects.select_for_update().get(pk=offer.request_id)
-    if offer.driver_id != actor.id:
-        raise ValueError("offer_not_for_driver")
-    if offer.status != StoreDeliveryOfferStatus.OFFERED:
-        raise ValueError("offer_not_open")
     if request_obj.status in {StoreDeliveryRequestStatus.CANCELLED, StoreDeliveryRequestStatus.COMPLETED}:
-        raise ValueError("delivery_request_closed")
-
-    now = timezone.now()
-    note = (note or "").strip()
-    if action == "decline":
-        offer.status = StoreDeliveryOfferStatus.DECLINED
-        offer.response_note = note
-        offer.responded_at = now
-        offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
-        write_delivery_event(request_obj, "DELIVERY_OFFER_DECLINED", actor, payload={"offer_id": str(offer.id), "note": note})
-        return None
-
-    if action != "accept":
-        raise ValueError("invalid_offer_action")
-
-    accepted_count = request_obj.assignments.exclude(status=StoreDeliveryAssignmentStatus.CANCELLED).count()
-    if accepted_count >= request_obj.required_driver_count:
-        raise ValueError("delivery_capacity_full")
-
-    sequence = accepted_count + 1
-    assignment = StoreDeliveryAssignment.objects.create(
-        request=request_obj,
-        offer=offer,
-        order=request_obj.order,
-        driver=actor,
-        status=StoreDeliveryAssignmentStatus.ACCEPTED,
-        load_sequence=sequence,
-        planned_weight_kg=planned_weight_for_sequence(request_obj.total_weight_kg, sequence),
-        vehicle_type=request_obj.vehicle_type,
-        driver_phone=getattr(getattr(actor, "profile", None), "phone", "") or "",
-        accepted_at=now,
+        return []
+    needed = remaining_driver_slots(request_obj)
+    if needed <= 0:
+        return []
+    manual = bool(driver_ids)
+    if not manual and not request_obj.auto_reassign_enabled:
+        return []
+    matches = match_delivery_drivers(
+        request_obj=request_obj,
+        driver_ids=driver_ids,
+        exclude_driver_ids=offered_driver_ids_for_request(request_obj),
+        limit=needed if not manual else None,
+        manual=manual,
+        recipient_type=request_obj.recipient_type,
     )
-    offer.status = StoreDeliveryOfferStatus.ACCEPTED
-    offer.response_note = note
-    offer.responded_at = now
-    offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
-    request_obj.accepted_driver_count = accepted_count + 1
-    request_obj.status = (
-        StoreDeliveryRequestStatus.ASSIGNED
-        if request_obj.accepted_driver_count >= request_obj.required_driver_count
-        else StoreDeliveryRequestStatus.PUBLISHED
-    )
-    request_obj.save(update_fields=["accepted_driver_count", "status", "updated_at"])
-    write_delivery_event(
+    created = create_delivery_offers_for_matches(
         request_obj,
-        "DELIVERY_OFFER_ACCEPTED",
-        actor,
-        assignment=assignment,
-        to_status=assignment.status,
-        payload={"offer_id": str(offer.id), "planned_weight_kg": str(assignment.planned_weight_kg)},
+        matches,
+        actor=actor,
+        event="DELIVERY_OFFER_REASSIGNED",
     )
+    if created:
+        write_delivery_event(
+            request_obj,
+            "DELIVERY_REQUEST_REASSIGNED",
+            actor,
+            payload={
+                "reason": reason,
+                "created_offer_ids": [str(offer.id) for offer in created],
+                "needed_driver_count": needed,
+            },
+        )
+    return created
+
+
+@transaction.atomic
+def expire_delivery_offer(offer, now=None, actor=None, reassign=True):
+    now = now or timezone.now()
+    offer = StoreDeliveryOffer.objects.select_for_update().select_related("request", "request__order", "driver").get(pk=offer.pk)
+    if offer.status != StoreDeliveryOfferStatus.OFFERED:
+        return False
+    if offer.expires_at and offer.expires_at > now:
+        return False
+    offer.status = StoreDeliveryOfferStatus.EXPIRED
+    offer.responded_at = now
+    offer.save(update_fields=["status", "responded_at", "updated_at"])
+    write_delivery_event(
+        offer.request,
+        "DELIVERY_OFFER_EXPIRED",
+        actor,
+        payload={"offer_id": str(offer.id), "driver_id": offer.driver_id, "expires_at": offer.expires_at.isoformat() if offer.expires_at else None},
+    )
+    if reassign:
+        reassign_delivery_request(offer.request, actor=actor, reason="expired")
+    return True
+
+
+@transaction.atomic
+def expire_due_delivery_offers(now=None):
+    now = now or timezone.now()
+    offers = StoreDeliveryOffer.objects.filter(
+        status=StoreDeliveryOfferStatus.OFFERED,
+        expires_at__lte=now,
+    ).select_related("request", "request__order", "driver")
+    expired = 0
+    for offer in offers.iterator():
+        if expire_delivery_offer(offer, now=now, reassign=True):
+            expired += 1
+    return {"expired": expired}
+
+
+def respond_to_delivery_offer(offer, actor, action, note=""):
+    initial_offer = StoreDeliveryOffer.objects.select_related("request", "request__order", "driver").get(pk=offer.pk)
+    if initial_offer.driver_id != actor.id:
+        raise ValueError("offer_not_for_driver")
+    if initial_offer.status == StoreDeliveryOfferStatus.OFFERED and initial_offer.expires_at and initial_offer.expires_at <= timezone.now():
+        expire_delivery_offer(initial_offer, reassign=True)
+        raise ValueError("offer_expired")
+
+    with transaction.atomic():
+        offer = (
+            StoreDeliveryOffer.objects.select_for_update()
+            .select_related("request", "request__order", "driver")
+            .get(pk=offer.pk)
+        )
+        request_obj = StoreDeliveryRequest.objects.select_for_update().get(pk=offer.request_id)
+        if offer.driver_id != actor.id:
+            raise ValueError("offer_not_for_driver")
+        if offer.status != StoreDeliveryOfferStatus.OFFERED:
+            raise ValueError("offer_not_open")
+        if offer.expires_at and offer.expires_at <= timezone.now():
+            mark_expired_after_commit = True
+        else:
+            mark_expired_after_commit = False
+        if mark_expired_after_commit:
+            offer.status = StoreDeliveryOfferStatus.EXPIRED
+            offer.responded_at = timezone.now()
+            offer.save(update_fields=["status", "responded_at", "updated_at"])
+            write_delivery_event(
+                request_obj,
+                "DELIVERY_OFFER_EXPIRED",
+                actor,
+                payload={"offer_id": str(offer.id), "driver_id": offer.driver_id, "expires_at": offer.expires_at.isoformat() if offer.expires_at else None},
+            )
+            transaction.on_commit(lambda: reassign_delivery_request(request_obj, actor=actor, reason="expired"))
+            expired = True
+            assignment = None
+        elif request_obj.status in {StoreDeliveryRequestStatus.CANCELLED, StoreDeliveryRequestStatus.COMPLETED}:
+            raise ValueError("delivery_request_closed")
+        else:
+            now = timezone.now()
+            note = (note or "").strip()
+            if action == "decline":
+                offer.status = StoreDeliveryOfferStatus.DECLINED
+                offer.response_note = note
+                offer.responded_at = now
+                offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
+                write_delivery_event(request_obj, "DELIVERY_OFFER_DECLINED", actor, payload={"offer_id": str(offer.id), "note": note})
+                transaction.on_commit(lambda: reassign_delivery_request(request_obj, actor=actor, reason="declined"))
+                expired = False
+                assignment = None
+            else:
+                if action != "accept":
+                    raise ValueError("invalid_offer_action")
+                accepted_count = accepted_driver_count_for_request(request_obj)
+                if accepted_count >= request_obj.required_driver_count:
+                    raise ValueError("delivery_capacity_full")
+                sequence = accepted_count + 1
+                assignment = StoreDeliveryAssignment.objects.create(
+                    request=request_obj,
+                    offer=offer,
+                    order=request_obj.order,
+                    driver=actor,
+                    recipient_type=offer.recipient_type,
+                    status=StoreDeliveryAssignmentStatus.ACCEPTED,
+                    load_sequence=sequence,
+                    planned_weight_kg=planned_weight_for_sequence(request_obj.total_weight_kg, sequence),
+                    vehicle_type=request_obj.vehicle_type,
+                    driver_phone=getattr(getattr(actor, "profile", None), "phone", "") or "",
+                    accepted_at=now,
+                )
+                offer.status = StoreDeliveryOfferStatus.ACCEPTED
+                offer.response_note = note
+                offer.responded_at = now
+                offer.save(update_fields=["status", "response_note", "responded_at", "updated_at"])
+                request_obj.accepted_driver_count = accepted_count + 1
+                request_obj.status = (
+                    StoreDeliveryRequestStatus.ASSIGNED
+                    if request_obj.accepted_driver_count >= request_obj.required_driver_count
+                    else StoreDeliveryRequestStatus.PUBLISHED
+                )
+                request_obj.save(update_fields=["accepted_driver_count", "status", "updated_at"])
+                write_delivery_event(
+                    request_obj,
+                    "DELIVERY_OFFER_ACCEPTED",
+                    actor,
+                    assignment=assignment,
+                    to_status=assignment.status,
+                    payload={"offer_id": str(offer.id), "planned_weight_kg": str(assignment.planned_weight_kg)},
+                )
+                expired = False
+
+    if expired:
+        raise ValueError("offer_expired")
     return assignment
 
 
@@ -1294,11 +1865,8 @@ def transition_delivery_assignment(assignment, actor, target_status, note=""):
     allowed = DELIVERY_ASSIGNMENT_TRANSITIONS.get(assignment.status, set())
     if target_status not in allowed:
         raise ValueError("invalid_delivery_transition")
-    if target_status in {
-        StoreDeliveryAssignmentStatus.ARRIVED_FOR_LOADING,
-        StoreDeliveryAssignmentStatus.LOADED,
-    }:
-        blockers = risk_blockers_for_order(assignment.order, StoreOrderStatus.FULFILLMENT_PENDING)
+    if target_status == StoreDeliveryAssignmentStatus.IN_TRANSIT:
+        blockers = risk_blockers_for_order(assignment.order, StoreOrderStatus.SHIPPED)
         if blockers:
             raise ValueError(f"delivery_blockers:{','.join(blockers)}")
 
@@ -1490,3 +2058,93 @@ def create_store_order(user, validated_data):
         meta={"item_count": len(created_items), "needs_quote": needs_quote},
     )
     return order
+
+
+# ── Freight Bidding ──────────────────────────────────────────────────────────
+
+def start_freight_bid_session(order, carrier_users, deadline_at, admin_note="", created_by=None):
+    """Create a new open bid session and invite all given carriers."""
+    with transaction.atomic():
+        session = FreightBidSession.objects.create(
+            order=order,
+            deadline_at=deadline_at,
+            admin_note=admin_note,
+            created_by=created_by,
+        )
+        for carrier in carrier_users:
+            FreightBidInvite.objects.create(session=session, carrier=carrier)
+    return session
+
+
+def _try_auto_award(session):
+    """
+    If all non-declined invites have submitted offers, pick the lowest and award.
+    Returns True if awarded, False otherwise.
+    """
+    pending_invites = session.invites.filter(status=FreightBidInviteStatus.INVITED)
+    if pending_invites.exists():
+        return False
+    offers = FreightBidOffer.objects.filter(
+        invite__session=session
+    ).order_by("amount").select_related("invite")
+    if not offers.exists():
+        return False
+    winner = offers.first()
+    session.winner_offer = winner
+    session.status = FreightBidStatus.AWARDED
+    session.save(update_fields=["winner_offer", "status", "updated_at"])
+    return True
+
+
+def submit_freight_bid_offer(invite, amount, note=""):
+    """Carrier submits a price offer for an invite."""
+    with transaction.atomic():
+        if invite.status != FreightBidInviteStatus.INVITED:
+            raise ValueError("invite_not_open")
+        if invite.session.status != FreightBidStatus.OPEN:
+            raise ValueError("session_not_open")
+        offer = FreightBidOffer.objects.create(invite=invite, amount=amount, note=note)
+        invite.status = FreightBidInviteStatus.QUOTED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+        _try_auto_award(invite.session)
+    return offer
+
+
+def decline_freight_bid_invite(invite):
+    """Carrier declines an invite."""
+    with transaction.atomic():
+        if invite.status != FreightBidInviteStatus.INVITED:
+            raise ValueError("invite_not_open")
+        invite.status = FreightBidInviteStatus.DECLINED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+        _try_auto_award(invite.session)
+
+
+def confirm_freight_bid(session):
+    """Buyer confirms the awarded freight quote → order moves to FULFILLMENT_PENDING."""
+    with transaction.atomic():
+        if session.status != FreightBidStatus.AWARDED:
+            raise ValueError("session_not_awarded")
+        session.status = FreightBidStatus.BUYER_CONFIRMED
+        session.save(update_fields=["status", "updated_at"])
+        order = session.order
+        if order.status == StoreOrderStatus.PAID:
+            order.status = StoreOrderStatus.FULFILLMENT_PENDING
+            order.save(update_fields=["status", "updated_at"])
+            StoreOrderStatusHistory.objects.create(
+                order=order,
+                from_status=StoreOrderStatus.PAID,
+                to_status=StoreOrderStatus.FULFILLMENT_PENDING,
+                event="FREIGHT_CONFIRMED",
+            )
+
+
+def reject_freight_bid(session):
+    """Buyer rejects the awarded freight quote → session cancelled, order stays PAID."""
+    with transaction.atomic():
+        if session.status != FreightBidStatus.AWARDED:
+            raise ValueError("session_not_awarded")
+        session.status = FreightBidStatus.BUYER_REJECTED
+        session.save(update_fields=["status", "updated_at"])

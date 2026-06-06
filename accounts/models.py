@@ -49,6 +49,7 @@ class RoleCode(models.TextChoices):
     WAREHOUSE_MANAGER = "WAREHOUSE_MANAGER", _("Warehouse Manager")
     CUTTER = "CUTTER", _("Cutter")
     DRIVER = "DRIVER", _("Driver")
+    CARRIER = "CARRIER", _("Carrier")
     QC = "QC", _("Quality Control")
     STRUCTURAL_DESIGNER = "STRUCTURAL_DESIGNER", _("Structural Designer")
     ADMIN = "ADMIN", _("Admin")

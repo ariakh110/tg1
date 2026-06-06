@@ -30,10 +30,13 @@ from .models import (
     StoreDeliveryOfferStatus,
     StoreDeliveryRequest,
     StoreDeliveryRequestStatus,
+    StoreDriverOperationalProfile,
     StoreNotificationStatus,
     StoreOrder,
+    StoreOrderLoadingVehicle,
     StoreOrderNotification,
     StoreOrderStatus,
+    StoreOrderWeighbridgeSlip,
     StoreQuoteConfirmationStatus,
     StoreRiskStatus,
 )
@@ -694,14 +697,14 @@ class StoreOrderCheckoutTests(APITestCase):
         order = StoreOrder.objects.get(pk=res.data["id"])
         self.assertEqual(order.payment_status, "PENDING")
 
-    def test_loading_transition_requires_payment_and_risk_checks(self):
+    def test_release_transition_requires_payment_and_risk_checks(self):
         product, _offer, _tier = self.make_product(price=43000)
         res = self.create_order(product, quantity="1")
         self.client.force_authenticate(self.admin)
 
         blocked_res = self.client.post(
             f"/api/v1/admin/dashboard/store-orders/{res.data['id']}/transition/",
-            {"status": StoreOrderStatus.FULFILLMENT_PENDING},
+            {"status": StoreOrderStatus.READY_FOR_PICKUP},
             format="json",
         )
 
@@ -768,6 +771,40 @@ class StoreOrderCheckoutTests(APITestCase):
         UserRole.objects.create(user=driver, role=RoleCode.DRIVER, is_active=True, activated_at=timezone.now())
         return driver
 
+    def create_carrier(self, username):
+        carrier = User.objects.create_user(username=username, password="pass1234")
+        UserRole.objects.create(user=carrier, role=RoleCode.CARRIER, is_active=True, activated_at=timezone.now())
+        return carrier
+
+    def create_driver_profile(
+        self,
+        driver,
+        *,
+        is_verified=True,
+        is_available=True,
+        province="Isfahan",
+        city="Isfahan",
+        latitude="32.654600",
+        longitude="51.668000",
+        service_radius_km=200,
+        capacity_kg="25000.000",
+        vehicle_type="trailer",
+        vehicle_plate="IR-TEST",
+    ):
+        return StoreDriverOperationalProfile.objects.create(
+            user=driver,
+            is_verified=is_verified,
+            is_available=is_available,
+            current_province=province,
+            current_city=city,
+            current_latitude=latitude,
+            current_longitude=longitude,
+            service_radius_km=service_radius_km,
+            capacity_kg=capacity_kg,
+            vehicle_type=vehicle_type,
+            vehicle_plate=vehicle_plate,
+        )
+
     def prepare_fulfillment_order(self, quantity="50", provider_reference="driver-load-payment"):
         product, _offer, _tier = self.make_product(price=43000)
         res = self.create_order(product, quantity=quantity)
@@ -792,21 +829,97 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(update_res.status_code, status.HTTP_200_OK, update_res.data)
         return StoreOrder.objects.prefetch_related("items").get(pk=res.data["id"])
 
-    def test_admin_delivery_request_requires_clear_order_before_publish(self):
+    def test_admin_delivery_request_allows_priced_unpaid_order_before_release(self):
         product, _offer, _tier = self.make_product(price=43000)
         res = self.create_order(product, quantity="50")
-        driver = self.create_driver("driver-blocked")
+        drivers = [self.create_driver("driver-unpaid-1"), self.create_driver("driver-unpaid-2")]
         self.client.force_authenticate(self.admin)
 
         create_res = self.client.post(
             "/api/v1/admin/dashboard/delivery-requests/",
-            {"order_id": res.data["id"], "driver_ids": [driver.id], "vehicle_type": "تریلی"},
+            {"order_id": res.data["id"], "driver_ids": [driver.id for driver in drivers], "vehicle_type": "trailer"},
             format="json",
         )
 
-        self.assertEqual(create_res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("payment_not_confirmed", str(create_res.data))
-        self.assertEqual(StoreDeliveryRequest.objects.count(), 0)
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["required_driver_count"], 2)
+        self.assertEqual(StoreDeliveryRequest.objects.count(), 1)
+        order = StoreOrder.objects.get(pk=res.data["id"])
+        self.assertEqual(order.status, StoreOrderStatus.FULFILLMENT_PENDING)
+
+        transition_res = self.client.post(
+            f"/api/v1/admin/dashboard/store-orders/{order.id}/transition/",
+            {"status": StoreOrderStatus.READY_FOR_PICKUP},
+            format="json",
+        )
+        self.assertEqual(transition_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("order_transition_blockers", str(transition_res.data["detail"]))
+        self.assertIn("payment_not_confirmed", transition_res.data["blockers"])
+        self.assertIn("final_weight_not_recorded", transition_res.data["blockers"])
+
+    def test_admin_delivery_request_stores_pickup_and_destination_coordinates(self):
+        product, _offer, _tier = self.make_product(price=43000)
+        res = self.create_order(product, quantity="25")
+        driver = self.create_driver("geo-driver")
+        self.client.force_authenticate(self.admin)
+
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": res.data["id"],
+                "driver_ids": [driver.id],
+                "pickup_province": "Isfahan",
+                "pickup_city": "Mobarakeh",
+                "pickup_address": "Loading gate 2",
+                "pickup_latitude": "32.340000",
+                "pickup_longitude": "51.500000",
+                "destination_province": "Tehran",
+                "destination_city": "Tehran",
+                "destination_address": "Buyer warehouse",
+                "destination_latitude": "35.700000",
+                "destination_longitude": "51.400000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["pickup_address"], "Loading gate 2")
+        self.assertEqual(create_res.data["destination_address"], "Buyer warehouse")
+        self.assertEqual(create_res.data["destination_latitude"], "35.700000")
+        order = StoreOrder.objects.get(pk=res.data["id"])
+        self.assertEqual(str(order.destination_latitude), "35.700000")
+        self.assertEqual(str(order.destination_longitude), "51.400000")
+
+    def test_admin_can_publish_offer_to_driver_and_carrier_recipients(self):
+        order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-carrier-load-payment")
+        driver = self.create_driver("mixed-driver")
+        carrier = self.create_carrier("mixed-carrier")
+        self.client.force_authenticate(self.admin)
+
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": str(order.id),
+                "recipient_type": "ALL",
+                "recipient_ids": [driver.id, carrier.id],
+                "vehicle_type": "trailer",
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["required_driver_count"], 2)
+        self.assertEqual(set(StoreDeliveryOffer.objects.values_list("recipient_type", flat=True)), {"DRIVER", "CARRIER"})
+
+        offer = StoreDeliveryOffer.objects.get(driver=carrier)
+        self.client.force_authenticate(carrier)
+        accept_res = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offer.id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.assertEqual(accept_res.status_code, status.HTTP_201_CREATED, accept_res.data)
+        self.assertEqual(accept_res.data["recipient_type"], "CARRIER")
 
     def test_admin_publishes_high_tonnage_offer_to_multiple_active_drivers(self):
         order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-load-payment-50")
@@ -818,9 +931,9 @@ class StoreOrderCheckoutTests(APITestCase):
             {
                 "order_id": str(order.id),
                 "driver_ids": [driver.id for driver in drivers],
-                "vehicle_type": "تریلی کفی",
-                "pickup_notes": "بارگیری از انبار اصفهان",
-                "dispatcher_notes": "هماهنگی قبل از ورود",
+                "vehicle_type": "flatbed trailer",
+                "pickup_notes": "loading from isfahan warehouse",
+                "dispatcher_notes": "call before arrival",
             },
             format="json",
         )
@@ -839,7 +952,7 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(len(offer_res.data), 1)
         self.assertEqual(offer_res.data[0]["total_weight_kg"], "50000.000")
         self.assertEqual(offer_res.data[0]["required_driver_count"], 2)
-        self.assertEqual(offer_res.data[0]["pickup_notes"], "بارگیری از انبار اصفهان")
+        self.assertEqual(offer_res.data[0]["pickup_notes"], "loading from isfahan warehouse")
 
     def test_driver_acceptance_caps_each_assignment_at_twenty_five_tons(self):
         order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-load-payment-cap")
@@ -949,3 +1062,341 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(upload_res.data["document_type"], "delivery_receipt")
         self.assertEqual(StoreDeliveryDocument.objects.count(), 1)
         self.assertTrue(StoreDeliveryEvent.objects.filter(event="DELIVERY_DOCUMENT_UPLOADED").exists())
+
+    def test_driver_can_update_profile_and_admin_can_verify_it(self):
+        driver = self.create_driver("profile-driver")
+
+        self.client.force_authenticate(driver)
+        update_res = self.client.patch(
+            "/api/v1/store/driver/profile/",
+            {
+                "is_available": True,
+                "is_verified": True,
+                "current_province": "Isfahan",
+                "current_city": "Mobarakeh",
+                "current_latitude": "32.340000",
+                "current_longitude": "51.500000",
+                "vehicle_type": "trailer",
+                "vehicle_plate": "11-A-222",
+                "service_radius_km": 120,
+            },
+            format="json",
+        )
+        self.assertEqual(update_res.status_code, status.HTTP_200_OK, update_res.data)
+        self.assertTrue(update_res.data["is_available"])
+        self.assertFalse(update_res.data["is_verified"])
+        self.assertTrue(update_res.data["last_location_at"])
+
+        self.client.force_authenticate(self.admin)
+        verify_res = self.client.patch(
+            f"/api/v1/admin/dashboard/driver-profiles/{driver.id}/",
+            {"is_verified": True},
+            format="json",
+        )
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK, verify_res.data)
+        self.assertTrue(verify_res.data["is_verified"])
+        self.assertTrue(verify_res.data["verified_at"])
+
+    def test_geo_match_preview_returns_nearest_verified_available_drivers(self):
+        order = self.prepare_fulfillment_order(quantity="25", provider_reference="driver-geo-preview")
+        near = self.create_driver("geo-near")
+        far = self.create_driver("geo-far")
+        unverified = self.create_driver("geo-unverified")
+        self.create_driver_profile(near, latitude="32.330000", longitude="51.500000", city="Mobarakeh")
+        self.create_driver_profile(far, latitude="32.800000", longitude="51.900000", city="Isfahan")
+        self.create_driver_profile(unverified, is_verified=False, latitude="32.331000", longitude="51.501000", city="Mobarakeh")
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/match-drivers/",
+            {
+                "order_id": str(order.id),
+                "pickup_latitude": "32.340000",
+                "pickup_longitude": "51.510000",
+                "search_radius_km": 200,
+                "limit": 5,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual([row["username"] for row in response.data], ["geo-near", "geo-far"])
+        self.assertLess(float(response.data[0]["distance_km"]), float(response.data[1]["distance_km"]))
+
+    def test_auto_publish_uses_nearest_verified_drivers_and_notifies_with_expiry(self):
+        order = self.prepare_fulfillment_order(quantity="50", provider_reference="driver-geo-publish")
+        near = self.create_driver("publish-near")
+        second = self.create_driver("publish-second")
+        far = self.create_driver("publish-far")
+        self.create_driver_profile(near, latitude="32.330000", longitude="51.500000", city="Mobarakeh")
+        self.create_driver_profile(second, latitude="32.360000", longitude="51.540000", city="Mobarakeh")
+        self.create_driver_profile(far, latitude="35.700000", longitude="51.400000", city="Tehran", service_radius_km=50)
+
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": str(order.id),
+                "pickup_province": "Isfahan",
+                "pickup_city": "Mobarakeh",
+                "pickup_latitude": "32.340000",
+                "pickup_longitude": "51.510000",
+                "search_radius_km": 120,
+                "offer_ttl_minutes": 15,
+                "max_candidate_count": 2,
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["required_driver_count"], 2)
+        self.assertEqual(create_res.data["pickup_city"], "Mobarakeh")
+        self.assertEqual(len(create_res.data["offers"]), 2)
+        ranked_offers = sorted(create_res.data["offers"], key=lambda row: row["match_rank"])
+        self.assertEqual([offer["driver_username"] for offer in ranked_offers], ["publish-near", "publish-second"])
+        self.assertTrue(all(offer["expires_at"] for offer in create_res.data["offers"]))
+        self.assertEqual(
+            StoreOrderNotification.objects.filter(order=order, event="DELIVERY_LOAD_OFFERED", status=StoreNotificationStatus.SENT).count(),
+            2,
+        )
+
+    def test_expired_offer_reassigns_to_next_nearby_driver(self):
+        from .tasks import expire_delivery_offers
+
+        order = self.prepare_fulfillment_order(quantity="25", provider_reference="driver-geo-expire")
+        first = self.create_driver("expire-first")
+        second = self.create_driver("expire-second")
+        self.create_driver_profile(first, latitude="32.330000", longitude="51.500000", city="Mobarakeh")
+        self.create_driver_profile(second, latitude="32.350000", longitude="51.530000", city="Mobarakeh")
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": str(order.id),
+                "pickup_latitude": "32.340000",
+                "pickup_longitude": "51.510000",
+                "search_radius_km": 120,
+                "offer_ttl_minutes": 1,
+                "max_candidate_count": 1,
+            },
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        offer = StoreDeliveryOffer.objects.get(driver=first)
+        offer.expires_at = timezone.now() - timedelta(minutes=1)
+        offer.save(update_fields=["expires_at"])
+
+        result = expire_delivery_offers()
+
+        self.assertEqual(result, {"expired": 1})
+        offer.refresh_from_db()
+        self.assertEqual(offer.status, StoreDeliveryOfferStatus.EXPIRED)
+        self.assertTrue(StoreDeliveryOffer.objects.filter(driver=second, status=StoreDeliveryOfferStatus.OFFERED).exists())
+        self.assertTrue(StoreDeliveryEvent.objects.filter(event="DELIVERY_REQUEST_REASSIGNED").exists())
+
+    def test_driver_cannot_accept_expired_offer(self):
+        order = self.prepare_fulfillment_order(quantity="25", provider_reference="driver-geo-expired-accept")
+        driver = self.create_driver("expired-accept-driver")
+        self.create_driver_profile(driver, latitude="32.330000", longitude="51.500000", city="Mobarakeh")
+        self.client.force_authenticate(self.admin)
+        create_res = self.client.post(
+            "/api/v1/admin/dashboard/delivery-requests/",
+            {
+                "order_id": str(order.id),
+                "pickup_latitude": "32.340000",
+                "pickup_longitude": "51.510000",
+                "search_radius_km": 120,
+                "max_candidate_count": 1,
+            },
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        offer = StoreDeliveryOffer.objects.get(driver=driver)
+        offer.expires_at = timezone.now() - timedelta(minutes=1)
+        offer.save(update_fields=["expires_at"])
+
+        self.client.force_authenticate(driver)
+        accept_res = self.client.post(
+            f"/api/v1/store/driver/load-offers/{offer.id}/respond/",
+            {"action": "accept"},
+            format="json",
+        )
+
+        self.assertEqual(accept_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("offer_expired", str(accept_res.data))
+        offer.refresh_from_db()
+        self.assertEqual(offer.status, StoreDeliveryOfferStatus.EXPIRED)
+
+
+@override_settings(MEDIA_ROOT="/tmp/test_media_loading_vehicles")
+class LoadingVehicleWeighbridgeTests(APITestCase):
+    """Tests for multi-vehicle loading and weighbridge slip endpoints."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username="lv_admin", password="pass", is_staff=True)
+        self.buyer = User.objects.create_user(username="lv_buyer", password="pass")
+        # Create minimal order
+        self.order = StoreOrder.objects.create(
+            buyer=self.buyer,
+            status=StoreOrderStatus.READY_FOR_PICKUP,
+            payment_status="PAID",
+            contact_name="Test",
+            contact_phone="09000000000",
+            destination_province="Isfahan",
+            destination_city="Isfahan",
+            destination_address="Test",
+            total_amount=1000000,
+        )
+        self.base_url = f"/api/v1/admin/dashboard/store-orders/{self.order.id}"
+
+    # ── Loading vehicles ─────────────────────────────────────────────────
+
+    def test_create_vehicle_and_mirrors_legacy(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(
+            f"{self.base_url}/loading-vehicles/",
+            {"driver_name": "Ali", "driver_phone": "09111111111", "vehicle_type": "truck", "vehicle_plate": "12A345"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.driver_name, "Ali")
+        self.assertEqual(self.order.vehicle_plate, "12A345")
+
+    def test_list_vehicles(self):
+        StoreOrderLoadingVehicle.objects.create(order=self.order, sequence=1, driver_name="Ali", vehicle_plate="12A345")
+        self.client.force_authenticate(self.admin)
+        res = self.client.get(f"{self.base_url}/loading-vehicles/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+
+    def test_update_vehicle_mirrors_legacy(self):
+        v = StoreOrderLoadingVehicle.objects.create(order=self.order, sequence=1, driver_name="Ali", vehicle_plate="12A345")
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(
+            f"{self.base_url}/loading-vehicles/{v.id}/",
+            {"driver_name": "Reza", "vehicle_plate": "99B123"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.driver_name, "Reza")
+
+    def test_delete_vehicle_clears_legacy(self):
+        v = StoreOrderLoadingVehicle.objects.create(order=self.order, sequence=1, driver_name="Ali", vehicle_plate="12A345")
+        self.order.driver_name = "Ali"
+        self.order.vehicle_plate = "12A345"
+        self.order.save(update_fields=["driver_name", "vehicle_plate"])
+        self.client.force_authenticate(self.admin)
+        res = self.client.delete(f"{self.base_url}/loading-vehicles/{v.id}/")
+        self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.driver_name, "")
+
+    # ── Transition validation ─────────────────────────────────────────────
+
+    def _make_heavy_order(self):
+        from products.models import ProductCategory, Product, ProductSpecification, Offer, PricingTier, PricingBasis
+        from .models import StoreOrderItem
+        category = ProductCategory.objects.create(name="LV Cat", code="lv-cat", product_kind="sheet")
+        product = Product.objects.create(category=category, name="Heavy", short_description="", description="", is_active=True)
+        ProductSpecification.objects.create(product=product, material_type="sheet", steel_grade="ST37", surface_finish="black",
+                                            manufacturing_process="sheet", factory="mobarakeh", cut_type="cut",
+                                            thickness_mm="5", width_mm="1250", length_mm="6000")
+        seller_user = User.objects.create_user(username="lv_seller_u", password="pass")
+        from products.models import Seller
+        seller = Seller.objects.create(user=seller_user, company_name="S", business_type="P", location="I", is_verified=True)
+        offer = Offer.objects.create(product=product, seller=seller, is_active=True)
+        tier = PricingTier.objects.create(offer=offer, tier_name="T", unit_price=1000, price_basis=PricingBasis.TON, minimum_quantity=1)
+        order = StoreOrder.objects.create(
+            buyer=self.buyer, status=StoreOrderStatus.FULFILLMENT_PENDING,
+            payment_status="PAID", contact_name="T", contact_phone="09000000000",
+            destination_province="I", destination_city="I", destination_address="A",
+            total_amount=50000000,
+            stock_verified_at=timezone.now(), proforma_confirmed_at=timezone.now(), loading_permission_at=timezone.now(),
+        )
+        StoreOrderItem.objects.create(
+            order=order, product=product, offer=offer, pricing_tier=tier,
+            product_name="Heavy", seller_name="S",
+            quantity=50, quantity_unit="TON",
+            unit_price=1000000, total_price=50000000,
+            estimated_weight_kg="50000.000", final_weight_kg="50000.000",
+        )
+        return order
+
+    def test_transition_blocked_when_insufficient_vehicles(self):
+        order = self._make_heavy_order()
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(
+            f"/api/v1/admin/dashboard/store-orders/{order.id}/transition/",
+            {"status": StoreOrderStatus.READY_FOR_PICKUP, "event": "loading_ready"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("loading_vehicles_insufficient", str(res.data))
+
+    def test_transition_allowed_when_enough_vehicles(self):
+        order = self._make_heavy_order()
+        # 50 tons needs ceil(50000/25000) = 2 vehicles
+        StoreOrderLoadingVehicle.objects.create(order=order, sequence=1, driver_name="Ali", vehicle_plate="AA111")
+        StoreOrderLoadingVehicle.objects.create(order=order, sequence=2, driver_name="Reza", vehicle_plate="BB222")
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(
+            f"/api/v1/admin/dashboard/store-orders/{order.id}/transition/",
+            {"status": StoreOrderStatus.READY_FOR_PICKUP, "event": "loading_ready"},
+            format="json",
+        )
+        self.assertNotIn("loading_vehicles_insufficient", str(res.data))
+
+    # ── Weighbridge slips ─────────────────────────────────────────────────
+
+    def test_upload_slip_and_list(self):
+        self.client.force_authenticate(self.admin)
+        file_content = b"PDF fake content"
+        upload_file = SimpleUploadedFile("slip.pdf", file_content, content_type="application/pdf")
+        res = self.client.post(
+            f"{self.base_url}/weighbridge-slips/",
+            {"file": upload_file, "slip_number": "WB-001", "weight_kg": "24500.000"},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertTrue(StoreOrderWeighbridgeSlip.objects.filter(order=self.order).exists())
+
+        list_res = self.client.get(f"{self.base_url}/weighbridge-slips/")
+        self.assertEqual(list_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(list_res.data), 1)
+        self.assertEqual(list_res.data[0]["slip_number"], "WB-001")
+
+    def test_delete_slip(self):
+        slip = StoreOrderWeighbridgeSlip.objects.create(
+            order=self.order,
+            file=SimpleUploadedFile("s.pdf", b"x"),
+            slip_number="WB-DEL",
+        )
+        self.client.force_authenticate(self.admin)
+        res = self.client.delete(f"{self.base_url}/weighbridge-slips/{slip.id}/")
+        self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(StoreOrderWeighbridgeSlip.objects.filter(pk=slip.id).exists())
+
+    def test_buyer_sees_slips_in_order_detail(self):
+        StoreOrderWeighbridgeSlip.objects.create(
+            order=self.order,
+            file=SimpleUploadedFile("wb.pdf", b"x"),
+            slip_number="BUYER-VISIBLE",
+        )
+        self.client.force_authenticate(self.buyer)
+        res = self.client.get(f"/api/v1/store/orders/{self.order.id}/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        slips = res.data.get("weighbridge_slips", [])
+        self.assertEqual(len(slips), 1)
+        self.assertEqual(slips[0]["slip_number"], "BUYER-VISIBLE")
+
+    def test_invalid_file_extension_rejected(self):
+        self.client.force_authenticate(self.admin)
+        bad_file = SimpleUploadedFile("bad.exe", b"x", content_type="application/octet-stream")
+        res = self.client.post(
+            f"{self.base_url}/weighbridge-slips/",
+            {"file": bad_file},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)

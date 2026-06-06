@@ -257,6 +257,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "offline_payments.tasks.send_payment_deadline_reminders",
         "schedule": 60.0,
     },
+    "sales-expire-delivery-offers": {
+        "task": "sales.tasks.expire_delivery_offers",
+        "schedule": 60.0,
+    },
 }
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"
 CKEDITOR_5_MAX_FILE_SIZE = int(os.environ.get("CKEDITOR_5_MAX_FILE_SIZE_MB", 5))

@@ -74,6 +74,12 @@ class StoreDeliveryRequestStatus(models.TextChoices):
     CANCELLED = "CANCELLED", "Cancelled"
 
 
+class StoreDeliveryRecipientType(models.TextChoices):
+    ALL = "ALL", "Drivers and carriers"
+    DRIVER = "DRIVER", "Driver"
+    CARRIER = "CARRIER", "Carrier"
+
+
 class StoreDeliveryOfferStatus(models.TextChoices):
     OFFERED = "OFFERED", "Offered"
     ACCEPTED = "ACCEPTED", "Accepted"
@@ -206,6 +212,8 @@ class StoreOrder(models.Model):
     destination_province = models.CharField(max_length=100, blank=True)
     destination_city = models.CharField(max_length=100, blank=True)
     destination_address = models.TextField(blank=True)
+    destination_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    destination_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     delivery_notes = models.TextField(blank=True)
     driver_name = models.CharField(max_length=160, blank=True)
     driver_phone = models.CharField(max_length=40, blank=True)
@@ -466,7 +474,27 @@ class StoreDeliveryRequest(models.Model):
     required_driver_count = models.PositiveSmallIntegerField(default=1)
     accepted_driver_count = models.PositiveSmallIntegerField(default=0)
     per_driver_weight_limit_kg = models.DecimalField(max_digits=12, decimal_places=3, default=25000)
+    recipient_type = models.CharField(
+        max_length=16,
+        choices=StoreDeliveryRecipientType.choices,
+        default=StoreDeliveryRecipientType.ALL,
+        db_index=True,
+    )
     vehicle_type = models.CharField(max_length=100, blank=True)
+    pickup_province = models.CharField(max_length=100, blank=True)
+    pickup_city = models.CharField(max_length=100, blank=True)
+    pickup_address = models.TextField(blank=True)
+    pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    destination_province = models.CharField(max_length=100, blank=True)
+    destination_city = models.CharField(max_length=100, blank=True)
+    destination_address = models.TextField(blank=True)
+    destination_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    destination_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    search_radius_km = models.PositiveIntegerField(default=150)
+    offer_ttl_minutes = models.PositiveSmallIntegerField(default=30)
+    auto_reassign_enabled = models.BooleanField(default=True, db_index=True)
+    max_candidate_count = models.PositiveSmallIntegerField(default=0)
     pickup_window_start = models.DateTimeField(null=True, blank=True)
     pickup_window_end = models.DateTimeField(null=True, blank=True)
     dispatch_deadline = models.DateTimeField(null=True, blank=True)
@@ -502,6 +530,23 @@ class StoreDeliveryOffer(models.Model):
         default=StoreDeliveryOfferStatus.OFFERED,
         db_index=True,
     )
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    notified_at = models.DateTimeField(null=True, blank=True)
+    notification_status = models.CharField(
+        max_length=20,
+        choices=StoreNotificationStatus.choices,
+        default=StoreNotificationStatus.PENDING,
+        db_index=True,
+    )
+    recipient_type = models.CharField(
+        max_length=16,
+        choices=StoreDeliveryRecipientType.choices,
+        default=StoreDeliveryRecipientType.DRIVER,
+        db_index=True,
+    )
+    distance_km = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    match_rank = models.PositiveSmallIntegerField(null=True, blank=True)
+    match_reason = models.CharField(max_length=120, blank=True)
     response_note = models.TextField(blank=True)
     responded_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -513,6 +558,7 @@ class StoreDeliveryOffer(models.Model):
         indexes = [
             models.Index(fields=["driver", "status", "created_at"]),
             models.Index(fields=["request", "status"]),
+            models.Index(fields=["status", "expires_at"]),
         ]
 
     def __str__(self):
@@ -534,6 +580,12 @@ class StoreDeliveryAssignment(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="store_delivery_assignments",
+    )
+    recipient_type = models.CharField(
+        max_length=16,
+        choices=StoreDeliveryRecipientType.choices,
+        default=StoreDeliveryRecipientType.DRIVER,
+        db_index=True,
     )
     status = models.CharField(
         max_length=24,
@@ -619,3 +671,129 @@ class StoreDeliveryDocument(models.Model):
 
     def __str__(self):
         return f"DeliveryDocument({self.assignment_id}) {self.document_type}"
+
+
+class FreightBidStatus(models.TextChoices):
+    OPEN = "OPEN", "Open"
+    AWARDED = "AWARDED", "Awarded"
+    BUYER_CONFIRMED = "BUYER_CONFIRMED", "Buyer confirmed"
+    BUYER_REJECTED = "BUYER_REJECTED", "Buyer rejected"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class FreightBidInviteStatus(models.TextChoices):
+    INVITED = "INVITED", "Invited"
+    DECLINED = "DECLINED", "Declined"
+    QUOTED = "QUOTED", "Quote submitted"
+
+
+class FreightBidSession(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name="freight_bid_sessions")
+    status = models.CharField(
+        max_length=20,
+        choices=FreightBidStatus.choices,
+        default=FreightBidStatus.OPEN,
+        db_index=True,
+    )
+    deadline_at = models.DateTimeField()
+    winner_offer = models.OneToOneField(
+        "FreightBidOffer",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="won_session",
+    )
+    admin_note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_freight_bid_sessions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=["order", "status"])]
+
+    def __str__(self):
+        return f"FreightBidSession({self.order_id}) {self.status}"
+
+
+class FreightBidInvite(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(FreightBidSession, on_delete=models.CASCADE, related_name="invites")
+    carrier = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="freight_bid_invites",
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=FreightBidInviteStatus.choices,
+        default=FreightBidInviteStatus.INVITED,
+        db_index=True,
+    )
+    invited_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("session", "carrier")
+        ordering = ("invited_at",)
+
+    def __str__(self):
+        return f"FreightBidInvite({self.session_id}) carrier={self.carrier_id} {self.status}"
+
+
+class FreightBidOffer(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invite = models.OneToOneField(FreightBidInvite, on_delete=models.CASCADE, related_name="offer")
+    amount = models.DecimalField(max_digits=14, decimal_places=0)
+    note = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"FreightBidOffer({self.invite_id}) {self.amount}"
+
+
+class StoreDriverOperationalProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="store_driver_profile",
+    )
+    is_available = models.BooleanField(default=False, db_index=True)
+    is_verified = models.BooleanField(default=False, db_index=True)
+    vehicle_type = models.CharField(max_length=100, blank=True)
+    vehicle_plate = models.CharField(max_length=80, blank=True)
+    capacity_kg = models.DecimalField(max_digits=12, decimal_places=3, default=25000)
+    service_radius_km = models.PositiveIntegerField(default=150)
+    current_province = models.CharField(max_length=100, blank=True)
+    current_city = models.CharField(max_length=100, blank=True)
+    current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    last_location_at = models.DateTimeField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="verified_store_driver_profiles",
+    )
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("user__username", "user_id")
+        indexes = [
+            models.Index(fields=["is_verified", "is_available"]),
+            models.Index(fields=["current_province", "current_city"]),
+        ]
+
+    def __str__(self):
+        return f"DriverProfile({self.user_id}) verified={self.is_verified} available={self.is_available}"

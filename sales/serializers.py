@@ -8,6 +8,11 @@ from accounts.services import user_has_role
 from products.models import Product
 
 from .models import (
+    FreightBidInvite,
+    FreightBidInviteStatus,
+    FreightBidOffer,
+    FreightBidSession,
+    FreightBidStatus,
     StoreBuyerAddress,
     StoreBuyerInvoiceProfile,
     StoreDeliveryAssignment,
@@ -16,10 +21,14 @@ from .models import (
     StoreDeliveryDocumentType,
     StoreDeliveryEvent,
     StoreDeliveryOffer,
+    StoreDeliveryRecipientType,
     StoreDeliveryRequest,
+    StoreDriverOperationalProfile,
     StoreOrder,
     StoreOrderItem,
+    StoreOrderLoadingVehicle,
     StoreOrderNotification,
+    StoreOrderWeighbridgeSlip,
     StoreQuoteConfirmationStatus,
     StoreOrderStatus,
     StoreOrderStatusHistory,
@@ -34,6 +43,9 @@ from .services import (
     confirm_store_order_quote,
     generate_payment_link,
     create_delivery_request,
+    ensure_driver_operational_profile,
+    match_delivery_drivers,
+    reassign_delivery_request,
     is_order_price_expired,
     is_order_payment_overdue,
     paid_amount_for_order,
@@ -227,12 +239,111 @@ class StoreOrderNotificationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class StoreOrderLoadingVehicleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreOrderLoadingVehicle
+        fields = (
+            "id",
+            "sequence",
+            "driver_name",
+            "driver_phone",
+            "vehicle_type",
+            "vehicle_plate",
+            "planned_weight_kg",
+            "loaded_weight_kg",
+            "note",
+            "is_active",
+            "created_at",
+        )
+        read_only_fields = ("id", "sequence", "created_at")
+
+
+class StoreOrderWeighbridgeSlipSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    loading_vehicle_id = serializers.IntegerField(source="loading_vehicle.id", read_only=True, allow_null=True)
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        if obj.file:
+            return obj.file.url
+        return None
+
+    class Meta:
+        model = StoreOrderWeighbridgeSlip
+        fields = (
+            "id",
+            "file_url",
+            "slip_number",
+            "weight_kg",
+            "note",
+            "loading_vehicle_id",
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class StoreOrderWeighbridgeSlipUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    loading_vehicle_id = serializers.IntegerField(required=False, allow_null=True)
+    slip_number = serializers.CharField(required=False, allow_blank=True)
+    weight_kg = serializers.DecimalField(max_digits=12, decimal_places=3, required=False, allow_null=True)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+    ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "pdf"}
+
+    def validate_file(self, value):
+        ext = (value.name or "").rsplit(".", 1)[-1].lower()
+        if ext not in self.ALLOWED_EXTENSIONS:
+            raise serializers.ValidationError("فرمت فایل مجاز نیست. JPG، PNG، WEBP یا PDF آپلود کنید.")
+        return value
+
+
+class FreightBidOfferReadSerializer(serializers.ModelSerializer):
+    carrier_name = serializers.SerializerMethodField()
+
+    def get_carrier_name(self, obj):
+        u = obj.invite.carrier
+        return u.get_full_name() or u.username or str(u.id)
+
+    class Meta:
+        model = FreightBidOffer
+        fields = ("id", "amount", "note", "submitted_at", "carrier_name")
+
+
+class FreightBidInviteReadSerializer(serializers.ModelSerializer):
+    carrier_id = serializers.IntegerField(source="carrier.id")
+    carrier_name = serializers.SerializerMethodField()
+    offer = FreightBidOfferReadSerializer(read_only=True, default=None)
+
+    def get_carrier_name(self, obj):
+        u = obj.carrier
+        return u.get_full_name() or u.username or str(u.id)
+
+    class Meta:
+        model = FreightBidInvite
+        fields = ("id", "carrier_id", "carrier_name", "status", "invited_at", "responded_at", "offer")
+
+
+class FreightBidSessionReadSerializer(serializers.ModelSerializer):
+    invites = FreightBidInviteReadSerializer(many=True, read_only=True)
+    winner_offer = FreightBidOfferReadSerializer(read_only=True)
+
+    class Meta:
+        model = FreightBidSession
+        fields = ("id", "status", "deadline_at", "admin_note", "winner_offer", "invites", "created_at")
+
+
 class StoreOrderReadSerializer(serializers.ModelSerializer):
     buyer_username = serializers.CharField(source="buyer.username", read_only=True)
     items = StoreOrderItemReadSerializer(many=True, read_only=True)
     status_history = StoreOrderStatusHistorySerializer(many=True, read_only=True)
     payments = StorePaymentSerializer(many=True, read_only=True)
     notifications = StoreOrderNotificationSerializer(many=True, read_only=True)
+    loading_vehicles = StoreOrderLoadingVehicleSerializer(many=True, read_only=True)
+    weighbridge_slips = StoreOrderWeighbridgeSlipSerializer(many=True, read_only=True)
+    freight_bid_sessions = FreightBidSessionReadSerializer(many=True, read_only=True)
     is_payment_overdue = serializers.SerializerMethodField()
     is_price_expired = serializers.SerializerMethodField()
     risk_blockers = serializers.SerializerMethodField()
@@ -276,6 +387,8 @@ class StoreOrderReadSerializer(serializers.ModelSerializer):
             "destination_province",
             "destination_city",
             "destination_address",
+            "destination_latitude",
+            "destination_longitude",
             "delivery_notes",
             "driver_name",
             "driver_phone",
@@ -318,6 +431,9 @@ class StoreOrderReadSerializer(serializers.ModelSerializer):
             "status_history",
             "payments",
             "notifications",
+            "loading_vehicles",
+            "weighbridge_slips",
+            "freight_bid_sessions",
         )
         read_only_fields = fields
 
@@ -412,6 +528,8 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
             "destination_province",
             "destination_city",
             "destination_address",
+            "destination_latitude",
+            "destination_longitude",
             "delivery_notes",
             "settlement_term_days",
             "payment_method",
@@ -454,6 +572,8 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
                 "city": address.city,
                 "address": address.address,
                 "phone": address.phone,
+                "latitude": None,
+                "longitude": None,
             }
         elif destination_payload:
             destination_serializer = StoreBuyerAddressSerializer(
@@ -508,6 +628,10 @@ class StoreOrderCreateSerializer(serializers.ModelSerializer):
             validated_data["destination_province"] = destination_payload.get("province", "")
             validated_data["destination_city"] = destination_payload.get("city", "")
             validated_data["destination_address"] = destination_payload.get("address", "")
+            if destination_payload.get("latitude") not in (None, ""):
+                validated_data["destination_latitude"] = destination_payload.get("latitude")
+            if destination_payload.get("longitude") not in (None, ""):
+                validated_data["destination_longitude"] = destination_payload.get("longitude")
             if destination_payload.get("phone") and not validated_data.get("contact_phone"):
                 validated_data["contact_phone"] = destination_payload.get("phone", "")
             metadata["destination_profile"] = dict(destination_payload)
@@ -528,12 +652,20 @@ class StoreOrderTransitionSerializer(serializers.Serializer):
     meta = serializers.JSONField(required=False)
 
     def validate_status(self, value):
+        return value
+
+    def validate(self, attrs):
         order = self.context["order"]
+        value = attrs["status"]
         try:
             validate_order_transition(order, value)
         except ValueError as exc:
-            raise serializers.ValidationError(str(exc))
-        return value
+            detail = str(exc)
+            blockers = [item for item in detail.split(",") if item]
+            if blockers:
+                raise serializers.ValidationError({"detail": "order_transition_blockers", "blockers": blockers}) from exc
+            raise serializers.ValidationError({"detail": detail}) from exc
+        return attrs
 
     def save(self, **kwargs):
         order = self.context["order"]
@@ -625,6 +757,8 @@ class StoreOrderAdminUpdateSerializer(serializers.ModelSerializer):
             "destination_province",
             "destination_city",
             "destination_address",
+            "destination_latitude",
+            "destination_longitude",
             "delivery_notes",
             "driver_name",
             "driver_phone",
@@ -782,6 +916,181 @@ class StorePaymentConfirmSerializer(serializers.Serializer):
         return payment
 
 
+class StoreDriverOperationalProfileSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    is_active_driver = serializers.SerializerMethodField()
+    is_active_carrier = serializers.SerializerMethodField()
+    active_logistics_roles = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StoreDriverOperationalProfile
+        fields = (
+            "id",
+            "user_id",
+            "username",
+            "email",
+            "is_active_driver",
+            "is_active_carrier",
+            "active_logistics_roles",
+            "is_available",
+            "is_verified",
+            "vehicle_type",
+            "vehicle_plate",
+            "capacity_kg",
+            "service_radius_km",
+            "current_province",
+            "current_city",
+            "current_latitude",
+            "current_longitude",
+            "last_location_at",
+            "verified_at",
+            "verified_by",
+            "note",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "user_id",
+            "username",
+            "email",
+            "is_active_driver",
+            "is_active_carrier",
+            "active_logistics_roles",
+            "verified_at",
+            "verified_by",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_is_active_driver(self, obj):
+        return obj.user.roles.filter(role="DRIVER", is_active=True).exists()
+
+    def get_is_active_carrier(self, obj):
+        return obj.user.roles.filter(role="CARRIER", is_active=True).exists()
+
+    def get_active_logistics_roles(self, obj):
+        return list(
+            obj.user.roles.filter(role__in=["DRIVER", "CARRIER"], is_active=True)
+            .order_by("role")
+            .values_list("role", flat=True)
+        )
+
+    def validate_capacity_kg(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("capacity_must_be_positive")
+        return value
+
+    def validate_service_radius_km(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("service_radius_must_be_positive")
+        return value
+
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        allow_admin_fields = bool(self.context.get("allow_admin_fields"))
+        location_fields = {"current_province", "current_city", "current_latitude", "current_longitude"}
+        if location_fields.intersection(validated_data) and "last_location_at" not in validated_data:
+            validated_data["last_location_at"] = timezone.now()
+        if "is_verified" in validated_data and allow_admin_fields:
+            new_verified = validated_data["is_verified"]
+            if new_verified and not instance.is_verified:
+                instance.verified_at = timezone.now()
+                instance.verified_by = request.user if request and request.user.is_authenticated else None
+            if not new_verified:
+                instance.verified_at = None
+                instance.verified_by = None
+        elif "is_verified" in validated_data:
+            validated_data.pop("is_verified", None)
+        return super().update(instance, validated_data)
+
+
+class StoreDeliveryDriverMatchSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    username = serializers.CharField()
+    recipient_type = serializers.CharField()
+    is_verified = serializers.BooleanField()
+    is_available = serializers.BooleanField()
+    vehicle_type = serializers.CharField(allow_blank=True)
+    vehicle_plate = serializers.CharField(allow_blank=True)
+    capacity_kg = serializers.DecimalField(max_digits=12, decimal_places=3)
+    service_radius_km = serializers.IntegerField()
+    current_province = serializers.CharField(allow_blank=True)
+    current_city = serializers.CharField(allow_blank=True)
+    current_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, allow_null=True)
+    current_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, allow_null=True)
+    distance_km = serializers.DecimalField(max_digits=8, decimal_places=2, allow_null=True)
+    match_rank = serializers.IntegerField()
+    match_reason = serializers.CharField()
+
+
+class StoreDeliveryDriverMatchRequestSerializer(serializers.Serializer):
+    order_id = serializers.UUIDField()
+    recipient_type = serializers.ChoiceField(choices=StoreDeliveryRecipientType.choices, required=False)
+    pickup_province = serializers.CharField(required=False, allow_blank=True)
+    pickup_city = serializers.CharField(required=False, allow_blank=True)
+    pickup_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    pickup_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    search_radius_km = serializers.IntegerField(required=False, min_value=1, max_value=5000)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+
+    def validate_order_id(self, value):
+        try:
+            return StoreOrder.objects.prefetch_related("items", "delivery_requests").get(pk=value)
+        except StoreOrder.DoesNotExist as exc:
+            raise serializers.ValidationError("store_order_not_found") from exc
+
+    def get_matches(self):
+        order = self.validated_data["order_id"]
+        has_location_input = any(
+            self.validated_data.get(field) not in (None, "")
+            for field in ("pickup_province", "pickup_city", "pickup_latitude", "pickup_longitude")
+        )
+        location = None
+        if has_location_input:
+            location = {
+                "province": self.validated_data.get("pickup_province", ""),
+                "city": self.validated_data.get("pickup_city", ""),
+                "latitude": self.validated_data.get("pickup_latitude"),
+                "longitude": self.validated_data.get("pickup_longitude"),
+            }
+        matches = match_delivery_drivers(
+            order=order,
+            total_weight_kg=sum((item.final_weight_kg if item.final_weight_kg is not None else item.estimated_weight_kg or 0) for item in order.items.all()),
+            location=location,
+            search_radius_km=self.validated_data.get("search_radius_km"),
+            limit=self.validated_data.get("limit"),
+            manual=False,
+            recipient_type=self.validated_data.get("recipient_type") or StoreDeliveryRecipientType.ALL,
+        )
+        rows = []
+        for match in matches:
+            profile = match["profile"]
+            rows.append(
+                {
+                    "user_id": match["user"].id,
+                    "username": match["user"].username,
+                    "recipient_type": match.get("recipient_type") or StoreDeliveryRecipientType.DRIVER,
+                    "is_verified": profile.is_verified,
+                    "is_available": profile.is_available,
+                    "vehicle_type": profile.vehicle_type,
+                    "vehicle_plate": profile.vehicle_plate,
+                    "capacity_kg": profile.capacity_kg,
+                    "service_radius_km": profile.service_radius_km,
+                    "current_province": profile.current_province,
+                    "current_city": profile.current_city,
+                    "current_latitude": profile.current_latitude,
+                    "current_longitude": profile.current_longitude,
+                    "distance_km": match["distance_km"],
+                    "match_rank": match["match_rank"],
+                    "match_reason": match["match_reason"],
+                }
+            )
+        return rows
+
+
 class StoreDeliveryDocumentSerializer(serializers.ModelSerializer):
     uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True)
     file_url = serializers.SerializerMethodField()
@@ -835,6 +1144,21 @@ class StoreDeliveryOfferSerializer(serializers.ModelSerializer):
     required_driver_count = serializers.IntegerField(source="request.required_driver_count", read_only=True)
     accepted_driver_count = serializers.IntegerField(source="request.accepted_driver_count", read_only=True)
     vehicle_type = serializers.CharField(source="request.vehicle_type", read_only=True)
+    recipient_type = serializers.CharField(read_only=True)
+    pickup_province = serializers.CharField(source="request.pickup_province", read_only=True)
+    pickup_city = serializers.CharField(source="request.pickup_city", read_only=True)
+    pickup_address = serializers.CharField(source="request.pickup_address", read_only=True)
+    pickup_latitude = serializers.DecimalField(source="request.pickup_latitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
+    pickup_longitude = serializers.DecimalField(source="request.pickup_longitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
+    destination_province = serializers.CharField(source="request.destination_province", read_only=True)
+    destination_city = serializers.CharField(source="request.destination_city", read_only=True)
+    destination_address = serializers.CharField(source="request.destination_address", read_only=True)
+    destination_latitude = serializers.DecimalField(source="request.destination_latitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
+    destination_longitude = serializers.DecimalField(source="request.destination_longitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
+    search_radius_km = serializers.IntegerField(source="request.search_radius_km", read_only=True)
+    offer_ttl_minutes = serializers.IntegerField(source="request.offer_ttl_minutes", read_only=True)
+    auto_reassign_enabled = serializers.BooleanField(source="request.auto_reassign_enabled", read_only=True)
+    max_candidate_count = serializers.IntegerField(source="request.max_candidate_count", read_only=True)
     pickup_window_start = serializers.DateTimeField(source="request.pickup_window_start", read_only=True)
     pickup_window_end = serializers.DateTimeField(source="request.pickup_window_end", read_only=True)
     dispatch_deadline = serializers.DateTimeField(source="request.dispatch_deadline", read_only=True)
@@ -851,6 +1175,12 @@ class StoreDeliveryOfferSerializer(serializers.ModelSerializer):
             "driver",
             "driver_username",
             "status",
+            "expires_at",
+            "notified_at",
+            "notification_status",
+            "distance_km",
+            "match_rank",
+            "match_reason",
             "response_note",
             "responded_at",
             "created_at",
@@ -860,6 +1190,21 @@ class StoreDeliveryOfferSerializer(serializers.ModelSerializer):
             "required_driver_count",
             "accepted_driver_count",
             "vehicle_type",
+            "recipient_type",
+            "pickup_province",
+            "pickup_city",
+            "pickup_address",
+            "pickup_latitude",
+            "pickup_longitude",
+            "destination_province",
+            "destination_city",
+            "destination_address",
+            "destination_latitude",
+            "destination_longitude",
+            "search_radius_km",
+            "offer_ttl_minutes",
+            "auto_reassign_enabled",
+            "max_candidate_count",
             "pickup_window_start",
             "pickup_window_end",
             "dispatch_deadline",
@@ -885,6 +1230,7 @@ class StoreDeliveryAssignmentSerializer(serializers.ModelSerializer):
             "order_id",
             "driver",
             "driver_username",
+            "recipient_type",
             "status",
             "load_sequence",
             "planned_weight_kg",
@@ -925,7 +1271,22 @@ class StoreDeliveryRequestSerializer(serializers.ModelSerializer):
             "required_driver_count",
             "accepted_driver_count",
             "per_driver_weight_limit_kg",
+            "recipient_type",
             "vehicle_type",
+            "pickup_province",
+            "pickup_city",
+            "pickup_address",
+            "pickup_latitude",
+            "pickup_longitude",
+            "destination_province",
+            "destination_city",
+            "destination_address",
+            "destination_latitude",
+            "destination_longitude",
+            "search_radius_km",
+            "offer_ttl_minutes",
+            "auto_reassign_enabled",
+            "max_candidate_count",
             "pickup_window_start",
             "pickup_window_end",
             "dispatch_deadline",
@@ -945,7 +1306,23 @@ class StoreDeliveryRequestSerializer(serializers.ModelSerializer):
 class StoreDeliveryRequestCreateSerializer(serializers.Serializer):
     order_id = serializers.UUIDField()
     driver_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
+    recipient_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
+    recipient_type = serializers.ChoiceField(choices=StoreDeliveryRecipientType.choices, required=False)
     vehicle_type = serializers.CharField(required=False, allow_blank=True)
+    pickup_province = serializers.CharField(required=False, allow_blank=True)
+    pickup_city = serializers.CharField(required=False, allow_blank=True)
+    pickup_address = serializers.CharField(required=False, allow_blank=True)
+    pickup_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    pickup_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    destination_province = serializers.CharField(required=False, allow_blank=True)
+    destination_city = serializers.CharField(required=False, allow_blank=True)
+    destination_address = serializers.CharField(required=False, allow_blank=True)
+    destination_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    destination_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    search_radius_km = serializers.IntegerField(required=False, min_value=1, max_value=5000)
+    offer_ttl_minutes = serializers.IntegerField(required=False, min_value=1, max_value=1440)
+    auto_reassign_enabled = serializers.BooleanField(required=False)
+    max_candidate_count = serializers.IntegerField(required=False, min_value=0, max_value=100)
     pickup_window_start = serializers.DateTimeField(required=False, allow_null=True)
     pickup_window_end = serializers.DateTimeField(required=False, allow_null=True)
     dispatch_deadline = serializers.DateTimeField(required=False, allow_null=True)
@@ -966,8 +1343,23 @@ class StoreDeliveryRequestCreateSerializer(serializers.Serializer):
             return create_delivery_request(
                 order,
                 request.user,
-                driver_ids=self.validated_data.get("driver_ids") or None,
+                driver_ids=(self.validated_data.get("recipient_ids") or self.validated_data.get("driver_ids") or None),
+                recipient_type=self.validated_data.get("recipient_type") or StoreDeliveryRecipientType.ALL,
                 vehicle_type=self.validated_data.get("vehicle_type", ""),
+                pickup_province=self.validated_data.get("pickup_province", ""),
+                pickup_city=self.validated_data.get("pickup_city", ""),
+                pickup_address=self.validated_data.get("pickup_address", ""),
+                pickup_latitude=self.validated_data.get("pickup_latitude"),
+                pickup_longitude=self.validated_data.get("pickup_longitude"),
+                destination_province=self.validated_data.get("destination_province", ""),
+                destination_city=self.validated_data.get("destination_city", ""),
+                destination_address=self.validated_data.get("destination_address", ""),
+                destination_latitude=self.validated_data.get("destination_latitude"),
+                destination_longitude=self.validated_data.get("destination_longitude"),
+                search_radius_km=self.validated_data.get("search_radius_km"),
+                offer_ttl_minutes=self.validated_data.get("offer_ttl_minutes"),
+                auto_reassign_enabled=self.validated_data.get("auto_reassign_enabled", True),
+                max_candidate_count=self.validated_data.get("max_candidate_count", 0),
                 pickup_window_start=self.validated_data.get("pickup_window_start"),
                 pickup_window_end=self.validated_data.get("pickup_window_end"),
                 dispatch_deadline=self.validated_data.get("dispatch_deadline"),
@@ -981,6 +1373,24 @@ class StoreDeliveryRequestCreateSerializer(serializers.Serializer):
                 blockers = [item for item in detail.split(":", 1)[1].split(",") if item]
                 raise serializers.ValidationError({"detail": "delivery_blockers", "blockers": blockers}) from exc
             raise serializers.ValidationError({"detail": detail}) from exc
+
+
+class StoreDeliveryReassignSerializer(serializers.Serializer):
+    driver_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+    def save(self, **kwargs):
+        request = self.context["request"]
+        delivery_request = self.context["delivery_request"]
+        try:
+            return reassign_delivery_request(
+                delivery_request,
+                actor=request.user,
+                reason=self.validated_data.get("reason", "manual") or "manual",
+                driver_ids=self.validated_data.get("driver_ids") or None,
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"detail": str(exc)}) from exc
 
 
 class StoreDeliveryOfferResponseSerializer(serializers.Serializer):
@@ -1021,6 +1431,17 @@ class StoreDeliveryAssignmentTransitionSerializer(serializers.Serializer):
                 blockers = [item for item in detail.split(":", 1)[1].split(",") if item]
                 raise serializers.ValidationError({"detail": "delivery_blockers", "blockers": blockers}) from exc
             raise serializers.ValidationError({"detail": detail}) from exc
+
+
+class FreightBidSessionCreateSerializer(serializers.Serializer):
+    carrier_ids = serializers.ListField(child=serializers.IntegerField(), min_length=1)
+    deadline_at = serializers.DateTimeField()
+    admin_note = serializers.CharField(required=False, allow_blank=True)
+
+
+class FreightBidOfferSubmitSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=0, min_value=1)
+    note = serializers.CharField(required=False, allow_blank=True)
 
 
 class StoreDeliveryDocumentUploadSerializer(serializers.Serializer):
