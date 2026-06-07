@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -16,6 +18,7 @@ from .models import (
     FreightBidInviteStatus,
     FreightBidSession,
     FreightBidStatus,
+    FreightRateSettings,
     StoreDeliveryAssignment,
     StoreDeliveryOffer,
     StoreDeliveryRequest,
@@ -34,6 +37,7 @@ from .serializers import (
     FreightBidOfferSubmitSerializer,
     FreightBidSessionCreateSerializer,
     FreightBidSessionReadSerializer,
+    FreightRateSettingsSerializer,
     StoreBuyerAddressSerializer,
     StoreBuyerInvoiceProfileSerializer,
     StoreFinalWeightSerializer,
@@ -66,10 +70,13 @@ from .serializers import (
     StoreOrderWeighbridgeSlipUploadSerializer,
 )
 from .services import (
+    calculate_freight_cost,
     confirm_freight_bid,
     decline_freight_bid_invite,
     delivery_weight_kg_for_order,
     ensure_driver_operational_profile,
+    freight_distance_km_for_order,
+    get_freight_rate_settings,
     mirror_first_loading_vehicle,
     reject_freight_bid,
     remaining_amount_for_order,
@@ -748,6 +755,77 @@ class AdminStoreOrderWeighbridgeSlipDestroyAPIView(APIView):
         slip.file.delete(save=False)
         slip.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Freight Rate Settings & Cost Estimation (ton-km) ─────────────────────────
+
+class AdminFreightRateSettingsAPIView(APIView):
+    """ادمین: مشاهده و ویرایش تنظیمات نرخ محاسبه کرایه (روش تن-کیلومتر).
+
+    این مقادیر (نرخ پایه، ضرایب ناوگان، کارمزد، حداقل کرایه) سالانه توسط شورای
+    عالی هماهنگی ترابری به‌روزرسانی می‌شوند، پس باید از پنل مدیریت قابل تغییر
+    باشند نه در کد.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def get(self, request):
+        settings_obj = get_freight_rate_settings()
+        return Response(FreightRateSettingsSerializer(settings_obj).data)
+
+    def patch(self, request):
+        settings_obj = get_freight_rate_settings()
+        serializer = FreightRateSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(updated_by=request.user)
+        return Response(serializer.data)
+
+
+class AdminFreightCostEstimateAPIView(APIView):
+    """ادمین: محاسبه پیش‌نمایش کرایه بر اساس وزن، مسافت و نوع خودرو.
+
+    اگر `order_id` داده شود ولی `distance_km`/`weight_kg` داده نشوند، این مقادیر
+    از مختصات بارگیری/تحویل و وزن سفارش برآورد می‌شوند (فاصله با فرمول هاورساین).
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+
+    def _decimal(self, raw):
+        if raw in (None, ""):
+            return None
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+
+    def get(self, request):
+        params = request.query_params
+        order_id = params.get("order_id")
+        weight_kg = self._decimal(params.get("weight_kg"))
+        distance_km = self._decimal(params.get("distance_km"))
+        vehicle_type = params.get("vehicle_type", "")
+        distance_estimated = False
+
+        if order_id:
+            order = get_object_or_404(StoreOrder, pk=order_id)
+            if weight_kg is None:
+                weight_kg = self._decimal(delivery_weight_kg_for_order(order))
+            if distance_km is None:
+                distance_km = freight_distance_km_for_order(order)
+                distance_estimated = distance_km is not None
+            if not vehicle_type:
+                vehicle_type = order.vehicle_type or ""
+
+        if weight_kg is None or distance_km is None:
+            return Response(
+                {"detail": "weight_and_distance_required", "message": "وزن و مسافت برای محاسبه کرایه الزامی است."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = calculate_freight_cost(weight_kg, distance_km, vehicle_type)
+        result["distance_estimated"] = distance_estimated
+        result["vehicle_type"] = vehicle_type
+        return Response(result)
 
 
 # ── Freight Bidding Views ────────────────────────────────────────────────────

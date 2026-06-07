@@ -797,3 +797,77 @@ class StoreDriverOperationalProfile(models.Model):
 
     def __str__(self):
         return f"DriverProfile({self.user_id}) verified={self.is_verified} available={self.is_available}"
+
+
+class FreightRateSettings(models.Model):
+    """تنظیمات نرخ محاسبه کرایه حمل (روش تن-کیلومتر) — تک‌رکورد و قابل ویرایش توسط ادمین.
+
+    نرخ‌های پیش‌فرض بر مبنای مصوبه شورای عالی هماهنگی ترابری سال ۱۴۰۵ هستند؛ چون این
+    نرخ‌ها هر سال تغییر می‌کنند (مثلاً سال ۱۴۰۶)، باید از طریق پنل مدیریت قابل ویرایش باشند
+    نه به صورت hardcode در کد.
+    """
+
+    DEFAULT_VEHICLE_COEFFICIENTS = {
+        "تریلی": "1.5",
+        "کامیون جفت": "1.2",
+        "کامیون تک": "1.0",
+        "خاور": "0.8",
+    }
+
+    singleton_id = models.PositiveSmallIntegerField(default=1, unique=True, editable=False)
+    year_label = models.CharField(max_length=20, default="1405")
+    base_rate_toman = models.DecimalField(
+        max_digits=10,
+        decimal_places=0,
+        default=1319,
+        help_text="نرخ پایه تن-کیلومتر (تومان) — مصوبه شورای عالی هماهنگی ترابری",
+    )
+    default_vehicle_coefficient = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=1,
+        help_text="ضریب ناوگان برای انواع خودرویی که در جدول ضرایب نیستند",
+    )
+    vehicle_coefficients = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="نگاشت نوع خودرو به ضریب ناوگان، مثل {\"تریلی\": 1.5}",
+    )
+    admin_fee_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=4,
+        help_text="کارمزد سازمان راهداری به درصد، روی کرایه خالص اعمال می‌شود",
+    )
+    minimum_amount_toman = models.DecimalField(
+        max_digits=14,
+        decimal_places=0,
+        default=500000,
+        help_text="حداقل کرایه قابل پیشنهاد (تومان)",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "تنظیمات نرخ حمل"
+        verbose_name_plural = "تنظیمات نرخ حمل"
+
+    def __str__(self):
+        return f"FreightRateSettings(year={self.year_label}, base={self.base_rate_toman})"
+
+    @classmethod
+    def get_solo(cls):
+        obj, created = cls.objects.get_or_create(
+            singleton_id=1,
+            defaults={"vehicle_coefficients": dict(cls.DEFAULT_VEHICLE_COEFFICIENTS)},
+        )
+        if created or not obj.vehicle_coefficients:
+            obj.vehicle_coefficients = dict(cls.DEFAULT_VEHICLE_COEFFICIENTS)
+            obj.save(update_fields=["vehicle_coefficients"])
+        return obj

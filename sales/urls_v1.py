@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AdminFreightBidSessionAPIView,
+    AdminFreightCostEstimateAPIView,
+    AdminFreightRateSettingsAPIView,
     AdminStoreOrderViewSet,
     AdminStoreOrderLoadingVehicleListCreateAPIView,
     AdminStoreOrderLoadingVehicleDetailAPIView,
@@ -60,6 +62,8 @@ urlpatterns = [
     path("admin/dashboard/store-orders/<uuid:pk>/loading-vehicles/<int:vehicle_pk>/", AdminStoreOrderLoadingVehicleDetailAPIView.as_view(), name="admin-store-order-loading-vehicle-detail"),
     path("admin/dashboard/store-orders/<uuid:pk>/weighbridge-slips/", AdminStoreOrderWeighbridgeSlipListCreateAPIView.as_view(), name="admin-store-order-weighbridge-slips"),
     path("admin/dashboard/store-orders/<uuid:pk>/weighbridge-slips/<int:slip_pk>/", AdminStoreOrderWeighbridgeSlipDestroyAPIView.as_view(), name="admin-store-order-weighbridge-slip-detail"),
+    path("admin/dashboard/freight-rate-settings/", AdminFreightRateSettingsAPIView.as_view(), name="admin-freight-rate-settings"),
+    path("admin/dashboard/freight-cost-estimate/", AdminFreightCostEstimateAPIView.as_view(), name="admin-freight-cost-estimate"),
     path("admin/dashboard/store-orders/<uuid:pk>/freight-bid/", AdminFreightBidSessionAPIView.as_view(), name="admin-store-order-freight-bid"),
     path("carrier/freight-bid-invites/", CarrierFreightBidInviteListAPIView.as_view(), name="carrier-freight-bid-invites"),
     path("carrier/freight-bid-invites/<uuid:invite_pk>/offer/", CarrierFreightBidOfferAPIView.as_view(), name="carrier-freight-bid-offer"),

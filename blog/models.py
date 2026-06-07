@@ -111,6 +111,26 @@ class MediaAsset(models.Model):
         return self.alt_text
 
 
+class HomepageSlide(models.Model):
+    title = models.CharField(max_length=255, blank=True, default="")
+    subtitle = models.CharField(max_length=255, blank=True, default="")
+    image = models.ImageField(upload_to='homepage/slides/')
+    link_url = models.CharField(max_length=500, blank=True, default="")
+    link_label = models.CharField(max_length=100, blank=True, default="")
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', '-created_at']
+        verbose_name = "اسلاید صفحه اصلی"
+        verbose_name_plural = "اسلایدهای صفحه اصلی"
+
+    def __str__(self):
+        return self.title or f"اسلاید #{self.pk}"
+
+
 class PostRevision(models.Model):
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='revisions')
     snapshot = models.JSONField(default=dict)

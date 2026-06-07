@@ -6,7 +6,7 @@ from bleach.css_sanitizer import CSSSanitizer
 from rest_framework import serializers
 
 from .editorjs import normalize_editor_data, render_editor_data
-from .models import Category, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 from .seo import analyze_post, build_article_schema, snapshot_post
 
 
@@ -334,6 +334,14 @@ class MediaAssetSerializer(serializers.ModelSerializer):
         model = MediaAsset
         fields = ['id', 'file', 'alt_text', 'title', 'caption', 'uploaded_by', 'created_at']
         read_only_fields = ['uploaded_by', 'created_at']
+
+
+class HomepageSlideSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HomepageSlide
+        fields = ['id', 'title', 'subtitle', 'image', 'link_url', 'link_label',
+                  'sort_order', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
 
 
 class SiteSEOSettingsSerializer(serializers.ModelSerializer):

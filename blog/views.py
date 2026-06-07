@@ -12,11 +12,12 @@ from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .ai import AIContentSuggestionError, generate_content_suggestions
 from .editorjs import render_editor_data
-from .models import Category, MediaAsset, Post, PostRevision, SiteSEOSettings
+from .models import Category, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
 from .seo import analyze_post, build_article_schema, post_url, snapshot_post
 from .serializers import (
     AdminPostSerializer,
     CategorySerializer,
+    HomepageSlideSerializer,
     MediaAssetSerializer,
     PostDetailSerializer,
     PostListSerializer,
@@ -162,6 +163,20 @@ class MediaAssetViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+
+class HomepageSlideViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = HomepageSlide.objects.filter(is_active=True).order_by('sort_order', '-created_at')
+    serializer_class = HomepageSlideSerializer
+    pagination_class = None
+    permission_classes = [AllowAny]
+
+
+class AdminHomepageSlideViewSet(viewsets.ModelViewSet):
+    queryset = HomepageSlide.objects.all().order_by('sort_order', '-created_at')
+    serializer_class = HomepageSlideSerializer
+    pagination_class = None
+    permission_classes = [IsAdminOrActiveAdminRole]
 
 
 class SEOAnalyzeView(APIView):

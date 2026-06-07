@@ -1,10 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    AdminPostViewSet,
     AdminCategoryViewSet,
+    AdminHomepageSlideViewSet,
+    AdminPostViewSet,
     AdminRobotsView,
     CategoryListView,
+    HomepageSlideViewSet,
     MediaAssetViewSet,
     PostViewSet,
     RobotsView,
@@ -20,6 +22,8 @@ router.register(r'categories', CategoryListView, basename='categories')
 router.register(r'admin/posts', AdminPostViewSet, basename='admin-posts')
 router.register(r'admin/categories', AdminCategoryViewSet, basename='admin-categories')
 router.register(r'admin/media', MediaAssetViewSet, basename='admin-media')
+router.register(r'homepage-slides', HomepageSlideViewSet, basename='homepage-slides')
+router.register(r'admin/homepage-slides', AdminHomepageSlideViewSet, basename='admin-homepage-slides')
 
 app_name = 'blog' # تعریف Namespace برای سئو و دسترسی‌های داخلی
 

@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    FreightRateSettings,
     StoreBuyerAddress,
     StoreBuyerInvoiceProfile,
     StoreOrder,
@@ -84,3 +85,27 @@ class StoreBuyerInvoiceProfileAdmin(admin.ModelAdmin):
     list_display = ("buyer", "buyer_type", "title", "full_name", "company_name", "phone", "is_default", "updated_at")
     list_filter = ("buyer_type", "is_default")
     search_fields = ("buyer__username", "full_name", "national_id", "company_name", "economic_code", "phone")
+
+
+@admin.register(FreightRateSettings)
+class FreightRateSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "year_label",
+        "base_rate_toman",
+        "default_vehicle_coefficient",
+        "admin_fee_percent",
+        "minimum_amount_toman",
+        "updated_by",
+        "updated_at",
+    )
+    readonly_fields = ("updated_at",)
+
+    def has_add_permission(self, request):
+        return not FreightRateSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)

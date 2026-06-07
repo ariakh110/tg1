@@ -18,6 +18,7 @@ from .models import (
     FreightBidOffer,
     FreightBidSession,
     FreightBidStatus,
+    FreightRateSettings,
     StoreOrder,
     StoreDeliveryAssignment,
     StoreDeliveryAssignmentStatus,
@@ -2058,6 +2059,78 @@ def create_store_order(user, validated_data):
         meta={"item_count": len(created_items), "needs_quote": needs_quote},
     )
     return order
+
+
+# ── Freight Cost Calculation (ton-km, مصوبه شورای عالی هماهنگی ترابری) ───────
+
+def get_freight_rate_settings():
+    """تنظیمات نرخ حمل را برمی‌گرداند (در صورت نبود، با مقادیر پیش‌فرض سال جاری ساخته می‌شود)."""
+    return FreightRateSettings.get_solo()
+
+
+def freight_vehicle_coefficient(vehicle_type, rate_settings=None):
+    rate_settings = rate_settings or get_freight_rate_settings()
+    coefficients = rate_settings.vehicle_coefficients if isinstance(rate_settings.vehicle_coefficients, dict) else {}
+    key = (vehicle_type or "").strip()
+    raw = coefficients.get(key) if key else None
+    if raw in (None, ""):
+        return Decimal(str(rate_settings.default_vehicle_coefficient))
+    try:
+        return Decimal(str(raw))
+    except Exception:
+        return Decimal(str(rate_settings.default_vehicle_coefficient))
+
+
+def calculate_freight_cost(weight_kg, distance_km, vehicle_type=""):
+    """محاسبه کرایه حمل بر اساس روش تن-کیلومتر:
+
+        کرایه خالص = وزن (تن) × مسافت (کیلومتر) × نرخ پایه × ضریب ناوگان
+        کرایه نهایی = کرایه خالص + کارمزد (٪) ، با رعایت حداقل کرایه
+
+    نرخ پایه، ضرایب ناوگان، کارمزد و حداقل کرایه از FreightRateSettings خوانده
+    می‌شوند تا تغییر سالانه نرخ‌ها (مثلاً برای ۱۴۰۶) نیازی به تغییر کد نداشته باشد.
+    """
+    rate_settings = get_freight_rate_settings()
+    weight_ton = Decimal(str(weight_kg or 0)) / Decimal("1000")
+    distance = Decimal(str(distance_km or 0))
+    base_rate = Decimal(str(rate_settings.base_rate_toman))
+    coefficient = freight_vehicle_coefficient(vehicle_type, rate_settings)
+    admin_fee_percent = Decimal(str(rate_settings.admin_fee_percent))
+    minimum_amount = Decimal(str(rate_settings.minimum_amount_toman))
+
+    net_amount = weight_ton * distance * base_rate * coefficient
+    admin_fee_amount = net_amount * admin_fee_percent / Decimal("100")
+    total_amount = net_amount + admin_fee_amount
+    minimum_applied = bool(minimum_amount and total_amount < minimum_amount)
+    if minimum_applied:
+        total_amount = minimum_amount
+
+    cents = Decimal("1")
+    return {
+        "weight_ton": weight_ton.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+        "distance_km": distance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        "base_rate_toman": base_rate.quantize(cents, rounding=ROUND_HALF_UP),
+        "vehicle_coefficient": coefficient,
+        "admin_fee_percent": admin_fee_percent,
+        "net_amount_toman": net_amount.quantize(cents, rounding=ROUND_HALF_UP),
+        "admin_fee_toman": admin_fee_amount.quantize(cents, rounding=ROUND_HALF_UP),
+        "minimum_amount_toman": minimum_amount.quantize(cents, rounding=ROUND_HALF_UP),
+        "minimum_applied": minimum_applied,
+        "total_amount_toman": total_amount.quantize(cents, rounding=ROUND_HALF_UP),
+        "year_label": rate_settings.year_label,
+    }
+
+
+def freight_distance_km_for_order(order):
+    """فاصله مبدأ تا مقصد سفارش را با فرمول هاورساین برآورد می‌کند (در صورت وجود مختصات)."""
+    loading = resolve_delivery_loading_location(order)
+    destination = resolve_delivery_destination(order)
+    return haversine_distance_km(
+        loading.get("latitude"),
+        loading.get("longitude"),
+        destination.get("latitude"),
+        destination.get("longitude"),
+    )
 
 
 # ── Freight Bidding ──────────────────────────────────────────────────────────

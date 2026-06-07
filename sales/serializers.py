@@ -13,6 +13,7 @@ from .models import (
     FreightBidOffer,
     FreightBidSession,
     FreightBidStatus,
+    FreightRateSettings,
     StoreBuyerAddress,
     StoreBuyerInvoiceProfile,
     StoreDeliveryAssignment,
@@ -333,6 +334,60 @@ class FreightBidSessionReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = FreightBidSession
         fields = ("id", "status", "deadline_at", "admin_note", "winner_offer", "invites", "created_at")
+
+
+class FreightRateSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FreightRateSettings
+        fields = (
+            "year_label",
+            "base_rate_toman",
+            "default_vehicle_coefficient",
+            "vehicle_coefficients",
+            "admin_fee_percent",
+            "minimum_amount_toman",
+            "updated_at",
+        )
+        read_only_fields = ("updated_at",)
+
+    def validate_base_rate_toman(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("نرخ پایه تن-کیلومتر باید بزرگ‌تر از صفر باشد.")
+        return value
+
+    def validate_default_vehicle_coefficient(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("ضریب پیش‌فرض ناوگان باید بزرگ‌تر از صفر باشد.")
+        return value
+
+    def validate_admin_fee_percent(self, value):
+        if value < 0:
+            raise serializers.ValidationError("کارمزد نمی‌تواند منفی باشد.")
+        return value
+
+    def validate_minimum_amount_toman(self, value):
+        if value < 0:
+            raise serializers.ValidationError("حداقل کرایه نمی‌تواند منفی باشد.")
+        return value
+
+    def validate_vehicle_coefficients(self, value):
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("ضرایب ناوگان باید به صورت نگاشت «نوع خودرو: ضریب» باشد.")
+        cleaned = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            try:
+                coefficient = Decimal(str(raw_value))
+            except Exception as exc:
+                raise serializers.ValidationError(f"ضریب «{raw_key}» باید یک عدد معتبر باشد.") from exc
+            if coefficient <= 0:
+                raise serializers.ValidationError(f"ضریب «{raw_key}» باید بزرگ‌تر از صفر باشد.")
+            cleaned[key] = str(coefficient)
+        return cleaned
 
 
 class StoreOrderReadSerializer(serializers.ModelSerializer):
