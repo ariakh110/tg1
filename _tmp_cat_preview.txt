@@ -1,0 +1,6 @@
+count=4
+keys=['active_product_count', 'children_count', 'code', 'full_path', 'hscode', 'id', 'is_active', 'level', 'merged_required_spec_fields', 'merged_spec_defaults', 'name', 'parent', 'product_count', 'product_kind', 'required_spec_fields', 'resolved_product_kind', 'sort_order', 'spec_defaults']
+id=9 name=ورق parent=None code=sheet kind=sheet cnt=5 img=False
+id=14 name=ورق سیاه parent=9 code=sheet-black kind=sheet cnt=1 img=False
+id=16 name=ورق آلیاژی parent=9 code=sheet-alloy kind=sheet cnt=0 img=False
+id=29 name=ورق اسیدشویی parent=9 code=sheet-acid-washed kind=sheet cnt=0 img=False

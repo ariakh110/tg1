@@ -1,0 +1,13 @@
+count=12
+id=9 name=ورق parent=None code=sheet active=True cnt=5
+id=14 name=ورق سیاه parent=9 code=sheet-black active=True cnt=1
+id=15 name=ورق روغنی parent=9 code=sheet-oiled active=True cnt=0
+id=16 name=ورق آلیاژی parent=9 code=sheet-alloy active=True cnt=0
+id=17 name=ورق رنگی parent=9 code=sheet-color active=True cnt=0
+id=18 name=ورق گالوانیزه parent=9 code=sheet-galvanized active=True cnt=0
+id=29 name=ورق اسیدشویی parent=9 code=sheet-acid-washed active=True cnt=0
+id=30 name=ورق استیل parent=9 code=sheet-stainless active=True cnt=0
+id=10 name=میلگرد parent=None code=rebar active=True cnt=0
+id=24 name=میلگرد آجدار parent=10 code=rebar-ribbed active=True cnt=0
+id=25 name=میلگرد ساده parent=10 code=rebar-plain active=True cnt=0
+id=11 name=قوطی و پروفیل parent=None code=profile active=True cnt=0
