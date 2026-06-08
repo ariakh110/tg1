@@ -6,7 +6,7 @@ from bleach.css_sanitizer import CSSSanitizer
 from rest_framework import serializers
 
 from .editorjs import normalize_editor_data, render_editor_data
-from .models import Category, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 from .seo import analyze_post, build_article_schema, snapshot_post
 
 
@@ -342,6 +342,33 @@ class HomepageSlideSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'subtitle', 'image', 'link_url', 'link_label',
                   'sort_order', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+
+class FeaturedLoadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeaturedLoad
+        fields = ['id', 'title', 'specification', 'image', 'available_quantity',
+                  'min_order_quantity', 'origin', 'delivery_time', 'quality_grade',
+                  'loading_cost_note', 'settlement_method', 'price', 'description',
+                  'cta_label', 'sort_order', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class FeaturedLoadAlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeaturedLoadAlert
+        fields = ['id', 'keyword', 'origin', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_keyword(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("این فیلد الزامی است.")
+        return value
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        return FeaturedLoadAlert.objects.create(user=user, **validated_data)
 
 
 class SiteSEOSettingsSerializer(serializers.ModelSerializer):

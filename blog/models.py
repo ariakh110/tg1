@@ -131,6 +131,81 @@ class HomepageSlide(models.Model):
         return self.title or f"اسلاید #{self.pk}"
 
 
+class FeaturedLoad(models.Model):
+    title = models.CharField(max_length=255)
+    specification = models.CharField(max_length=500, blank=True, default="")
+    image = models.ImageField(upload_to='featured-loads/', blank=True, null=True)
+    available_quantity = models.CharField(max_length=120, blank=True, default="")
+    min_order_quantity = models.CharField(max_length=120, blank=True, default="")
+    origin = models.CharField(max_length=255, blank=True, default="")
+    delivery_time = models.CharField(max_length=120, blank=True, default="")
+    quality_grade = models.CharField(max_length=255, blank=True, default="")
+    loading_cost_note = models.CharField(max_length=255, blank=True, default="")
+    settlement_method = models.CharField(max_length=255, blank=True, default="")
+    price = models.CharField(max_length=160, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    cta_label = models.CharField(max_length=120, blank=True, default="")
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', '-created_at']
+        verbose_name = "بار ویژه"
+        verbose_name_plural = "بارهای ویژه"
+
+    def __str__(self):
+        return self.title or f"بار ویژه #{self.pk}"
+
+
+class FeaturedLoadAlert(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='featured_load_alerts')
+    keyword = models.CharField(max_length=200)
+    origin = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "هشدار بار ویژه"
+        verbose_name_plural = "هشدارهای بار ویژه"
+
+    def __str__(self):
+        return f"{self.user.username}: {self.keyword}"
+
+
+class FeaturedLoadAlertChannel(models.TextChoices):
+    EMAIL = "EMAIL", "ایمیل"
+    SMS = "SMS", "پیامک"
+
+
+class FeaturedLoadAlertStatus(models.TextChoices):
+    PENDING = "PENDING", "در انتظار"
+    SENT = "SENT", "ارسال‌شده"
+    FAILED = "FAILED", "ناموفق"
+    SKIPPED = "SKIPPED", "نادیده‌گرفته‌شده"
+
+
+class FeaturedLoadAlertMatch(models.Model):
+    alert = models.ForeignKey(FeaturedLoadAlert, on_delete=models.CASCADE, related_name='matches')
+    load = models.ForeignKey(FeaturedLoad, on_delete=models.CASCADE, related_name='alert_matches')
+    channel = models.CharField(max_length=20, choices=FeaturedLoadAlertChannel.choices, default=FeaturedLoadAlertChannel.EMAIL)
+    status = models.CharField(max_length=20, choices=FeaturedLoadAlertStatus.choices, default=FeaturedLoadAlertStatus.PENDING, db_index=True)
+    error_message = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ('alert', 'load')
+        verbose_name = "تطبیق هشدار بار ویژه"
+        verbose_name_plural = "تطبیق‌های هشدار بار ویژه"
+
+    def __str__(self):
+        return f"{self.alert_id} -> {self.load_id} ({self.status})"
+
+
 class PostRevision(models.Model):
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='revisions')
     snapshot = models.JSONField(default=dict)

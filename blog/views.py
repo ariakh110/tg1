@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import pagination, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -12,11 +12,13 @@ from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .ai import AIContentSuggestionError, generate_content_suggestions
 from .editorjs import render_editor_data
-from .models import Category, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
+from .models import Category, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
 from .seo import analyze_post, build_article_schema, post_url, snapshot_post
 from .serializers import (
     AdminPostSerializer,
     CategorySerializer,
+    FeaturedLoadAlertSerializer,
+    FeaturedLoadSerializer,
     HomepageSlideSerializer,
     MediaAssetSerializer,
     PostDetailSerializer,
@@ -177,6 +179,35 @@ class AdminHomepageSlideViewSet(viewsets.ModelViewSet):
     serializer_class = HomepageSlideSerializer
     pagination_class = None
     permission_classes = [IsAdminOrActiveAdminRole]
+
+
+class FeaturedLoadViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = FeaturedLoad.objects.filter(is_active=True).order_by('sort_order', '-created_at')
+    serializer_class = FeaturedLoadSerializer
+    pagination_class = None
+    permission_classes = [AllowAny]
+
+
+class AdminFeaturedLoadViewSet(viewsets.ModelViewSet):
+    queryset = FeaturedLoad.objects.all().order_by('sort_order', '-created_at')
+    serializer_class = FeaturedLoadSerializer
+    pagination_class = None
+    permission_classes = [IsAdminOrActiveAdminRole]
+
+
+class FeaturedLoadAlertViewSet(viewsets.ModelViewSet):
+    serializer_class = FeaturedLoadAlertSerializer
+    pagination_class = None
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return FeaturedLoadAlert.objects.filter(user=self.request.user).order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
 
 
 class SEOAnalyzeView(APIView):
