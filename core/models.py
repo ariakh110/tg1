@@ -21,3 +21,33 @@ class Contact(
 
 	def __str__(self):
 		return f'{self.title}'
+
+
+class SiteSettings(models.Model):
+	"""تنظیمات سراسری سایت (تک‌نمونه‌ای) — نام سایت و کلیدهای فعال/غیرفعال بخش‌ها."""
+
+	# خالی یعنی «از پیش‌فرض فرانت استفاده کن»؛ ادمین می‌تواند نام دلخواه را اینجا بگذارد.
+	site_name = models.CharField(max_length=120, blank=True, default="")
+	marketplace_enabled = models.BooleanField(default=False)   # بارانداز کاربران (/orders)
+	featured_loads_enabled = models.BooleanField(default=True)  # بارانداز ویژه (/barandaz)
+	export_enabled = models.BooleanField(default=True)          # صادرات (/export)
+	offers_enabled = models.BooleanField(default=True)          # پیشنهادهای ویژه (/offers)
+	blog_enabled = models.BooleanField(default=True)            # وبلاگ (/blog)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		verbose_name = "Site Settings"
+		verbose_name_plural = "Site Settings"
+
+	def __str__(self):
+		return self.site_name
+
+	def save(self, *args, **kwargs):
+		# همیشه یک رکورد (singleton)
+		self.pk = 1
+		super().save(*args, **kwargs)
+
+	@classmethod
+	def load(cls):
+		obj, _created = cls.objects.get_or_create(pk=1)
+		return obj

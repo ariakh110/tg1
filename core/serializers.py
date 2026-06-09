@@ -17,3 +17,20 @@ class ContactSerializer(serializers.ModelSerializer):
 			'email',
 			'message'
 		)
+
+
+class SiteSettingsSerializer(serializers.ModelSerializer):
+	sections = serializers.SerializerMethodField()
+
+	class Meta:
+		model = models.SiteSettings
+		fields = ('site_name', 'sections')
+
+	def get_sections(self, obj):
+		return {
+			'marketplace': obj.marketplace_enabled,
+			'featured_loads': obj.featured_loads_enabled,
+			'export': obj.export_enabled,
+			'offers': obj.offers_enabled,
+			'blog': obj.blog_enabled,
+		}

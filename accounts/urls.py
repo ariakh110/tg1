@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     ProfileDetailView,
     RegisterAPIView,
+    GoogleAuthAPIView,
     ProfileAPIView,
     VerifyEmailView,
     ResendVerificationEmailView,
@@ -13,6 +14,7 @@ from products.views import SellerDetailView
 urlpatterns = [
     path("me/", ProfileDetailView.as_view(), name="profile-me"),
     path("auth/register/", RegisterAPIView.as_view(), name="api_register"),
+    path("auth/google/", GoogleAuthAPIView.as_view(), name="api_google_auth"),
     path("auth/profile/", ProfileAPIView.as_view(), name="api_profile"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),
     path("auth/resend-verification/", ResendVerificationEmailView.as_view(), name="resend-verification"),

@@ -236,6 +236,10 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
 VERIFICATION_RESEND_WINDOW_HOURS = 24
 VERIFICATION_RESEND_MAX = 5
 
+# Google Sign-In: همان Client ID وب که در فرانت NEXT_PUBLIC_GOOGLE_CLIENT_ID است.
+# تا وقتی خالی باشد، اندپوینت /api/auth/google/ غیرفعال است (503).
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+
 CKEDITOR_5_FILE_STORAGE = "tg1.storage_backends.CKEditor5Storage"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")

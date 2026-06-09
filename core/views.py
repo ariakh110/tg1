@@ -1,10 +1,12 @@
 from json import JSONDecodeError
 from django.http import JsonResponse
-from .serializers import ContactSerializer
+from .serializers import ContactSerializer, SiteSettingsSerializer
+from .models import SiteSettings
 from rest_framework.parsers import JSONParser
 from rest_framework import views, status
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
 
@@ -37,3 +39,40 @@ class ContactAPIView(views.APIView):
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except JSONDecodeError:
             return JsonResponse({"result": "error","message": "Json decoding error"}, status= 400)
+
+
+class SiteSettingsAPIView(views.APIView):
+    """تنظیمات سایت: GET عمومی، PATCH فقط ادمین."""
+
+    authentication_classes = [JWTAuthentication]
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAdminUser()]
+
+    def get(self, request):
+        return Response(SiteSettingsSerializer(SiteSettings.load()).data)
+
+    def patch(self, request):
+        obj = SiteSettings.load()
+        data = request.data if isinstance(request.data, dict) else {}
+
+        name = data.get("site_name")
+        if name is not None and str(name).strip():
+            obj.site_name = str(name).strip()[:120]
+
+        sections = data.get("sections") or {}
+        field_map = {
+            "marketplace": "marketplace_enabled",
+            "featured_loads": "featured_loads_enabled",
+            "export": "export_enabled",
+            "offers": "offers_enabled",
+            "blog": "blog_enabled",
+        }
+        for key, field in field_map.items():
+            if key in sections:
+                setattr(obj, field, bool(sections[key]))
+
+        obj.save()
+        return Response(SiteSettingsSerializer(obj).data)
