@@ -1,6 +1,6 @@
 
 from django.contrib import admin
-from .models import Category, FeaturedLoad, FeaturedLoadAlert, FeaturedLoadAlertMatch, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, FeaturedLoadAlertMatch, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
@@ -27,6 +27,14 @@ class FeaturedLoadAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     list_editable = ('sort_order', 'is_active')
     search_fields = ('title', 'specification', 'origin')
+
+
+@admin.register(FAQItem)
+class FAQItemAdmin(admin.ModelAdmin):
+    list_display = ('question', 'category', 'sort_order', 'is_active', 'updated_at')
+    list_filter = ('is_active', 'category')
+    list_editable = ('category', 'sort_order', 'is_active')
+    search_fields = ('question', 'answer', 'category')
 
 
 @admin.register(FeaturedLoadAlert)

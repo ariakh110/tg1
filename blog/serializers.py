@@ -6,7 +6,7 @@ from bleach.css_sanitizer import CSSSanitizer
 from rest_framework import serializers
 
 from .editorjs import normalize_editor_data, render_editor_data
-from .models import Category, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 from .seo import analyze_post, build_article_schema, snapshot_post
 
 
@@ -351,6 +351,14 @@ class FeaturedLoadSerializer(serializers.ModelSerializer):
                   'min_order_quantity', 'origin', 'delivery_time', 'quality_grade',
                   'loading_cost_note', 'settlement_method', 'price', 'description',
                   'cta_label', 'sort_order', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class FAQItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FAQItem
+        fields = ['id', 'category', 'question', 'answer', 'sort_order',
+                  'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
 

@@ -12,11 +12,12 @@ from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .ai import AIContentSuggestionError, generate_content_suggestions
 from .editorjs import render_editor_data
-from .models import Category, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
 from .seo import analyze_post, build_article_schema, post_url, snapshot_post
 from .serializers import (
     AdminPostSerializer,
     CategorySerializer,
+    FAQItemSerializer,
     FeaturedLoadAlertSerializer,
     FeaturedLoadSerializer,
     HomepageSlideSerializer,
@@ -191,6 +192,20 @@ class FeaturedLoadViewSet(viewsets.ReadOnlyModelViewSet):
 class AdminFeaturedLoadViewSet(viewsets.ModelViewSet):
     queryset = FeaturedLoad.objects.all().order_by('sort_order', '-created_at')
     serializer_class = FeaturedLoadSerializer
+    pagination_class = None
+    permission_classes = [IsAdminOrActiveAdminRole]
+
+
+class FAQViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = FAQItem.objects.filter(is_active=True).order_by('category', 'sort_order', 'id')
+    serializer_class = FAQItemSerializer
+    pagination_class = None
+    permission_classes = [AllowAny]
+
+
+class AdminFAQViewSet(viewsets.ModelViewSet):
+    queryset = FAQItem.objects.all().order_by('category', 'sort_order', 'id')
+    serializer_class = FAQItemSerializer
     pagination_class = None
     permission_classes = [IsAdminOrActiveAdminRole]
 

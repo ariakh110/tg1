@@ -159,6 +159,26 @@ class FeaturedLoad(models.Model):
         return self.title or f"بار ویژه #{self.pk}"
 
 
+class FAQItem(models.Model):
+    """پرسش و پاسخ متداول — قابل مدیریت از پنل ادمین، گروه‌بندی‌شده بر اساس دسته."""
+
+    category = models.CharField(max_length=120, blank=True, default="")
+    question = models.CharField(max_length=300)
+    answer = models.TextField()
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'sort_order', 'id']
+        verbose_name = "سوال متداول"
+        verbose_name_plural = "سوالات متداول"
+
+    def __str__(self):
+        return self.question
+
+
 class FeaturedLoadAlert(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='featured_load_alerts')
     keyword = models.CharField(max_length=200)
