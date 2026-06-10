@@ -20,7 +20,7 @@ urlpatterns = router.urls
 
 
 urlpatterns += [
-    path('admin/', admin.site.urls),
+    path('django-admin/', admin.site.urls),
     path('api/', include('products.urls')),
     # expose contact API under /api/contact so frontend requests to `${API_BASE}/contact` work
     path('api/contact', core_views.ContactAPIView.as_view()),
