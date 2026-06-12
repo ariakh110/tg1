@@ -33,6 +33,10 @@ class SiteSettings(models.Model):
 	export_enabled = models.BooleanField(default=True)          # صادرات (/export)
 	offers_enabled = models.BooleanField(default=True)          # پیشنهادهای ویژه (/offers)
 	blog_enabled = models.BooleanField(default=True)            # وبلاگ (/blog)
+	google_oauth_client_id = models.CharField(max_length=255, blank=True, default="")  # Client ID گوگل (مدیریت از پنل)
+	google_tag_manager_id = models.CharField(max_length=20, blank=True, default="")  # GTM-XXXXXXX (تزریق در فرانت)
+	openai_api_key = models.CharField(max_length=255, blank=True, default="")  # کلید OpenAI (محرمانه؛ در API عمومی برنمی‌گردد)
+	openai_content_model = models.CharField(max_length=80, blank=True, default="")  # مدل OpenAI برای سئو
 	updated_at = models.DateTimeField(auto_now=True)
 
 	class Meta:

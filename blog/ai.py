@@ -52,7 +52,10 @@ def _clean_suggestions(value):
 
 
 def generate_content_suggestions(title, content):
-    api_key = getattr(settings, "OPENAI_API_KEY", "")
+    from core.models import SiteSettings
+
+    site_settings = SiteSettings.load()
+    api_key = (site_settings.openai_api_key or getattr(settings, "OPENAI_API_KEY", "")).strip()
     if not api_key:
         raise AIContentSuggestionError("کلید OPENAI_API_KEY برای تولید پیشنهاد تنظیم نشده است.")
 
@@ -67,7 +70,7 @@ def generate_content_suggestions(title, content):
         f"عنوان: {title.strip()}\n\nمتن مطلب:\n{plain_content}"
     )
     body = {
-        "model": getattr(settings, "OPENAI_CONTENT_MODEL", "gpt-5-mini"),
+        "model": (site_settings.openai_content_model or getattr(settings, "OPENAI_CONTENT_MODEL", "gpt-5-mini")),
         "input": prompt,
         "text": {
             "format": {

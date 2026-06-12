@@ -120,7 +120,9 @@ class GoogleAuthAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-        client_id = getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "")
+        from core.models import SiteSettings
+
+        client_id = (SiteSettings.load().google_oauth_client_id or getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "")).strip()
         if not client_id:
             return Response(
                 {"detail": "google_login_unconfigured"},

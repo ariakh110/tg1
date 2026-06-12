@@ -62,6 +62,23 @@ class SiteSettingsAPIView(views.APIView):
         if name is not None and str(name).strip():
             obj.site_name = str(name).strip()[:120]
 
+        gid = data.get("google_oauth_client_id")
+        if gid is not None:
+            obj.google_oauth_client_id = str(gid).strip()[:255]
+
+        gtm = data.get("google_tag_manager_id")
+        if gtm is not None:
+            obj.google_tag_manager_id = str(gtm).strip()[:20]
+
+        model_name = data.get("openai_content_model")
+        if model_name is not None:
+            obj.openai_content_model = str(model_name).strip()[:80]
+
+        # کلید OpenAI محرمانه است: فقط با مقدار غیرخالی به‌روزرسانی می‌شود (در GET برنمی‌گردد)
+        openai_key = data.get("openai_api_key")
+        if openai_key is not None and str(openai_key).strip():
+            obj.openai_api_key = str(openai_key).strip()[:255]
+
         sections = data.get("sections") or {}
         field_map = {
             "marketplace": "marketplace_enabled",

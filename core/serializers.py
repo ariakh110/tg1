@@ -21,10 +21,14 @@ class ContactSerializer(serializers.ModelSerializer):
 
 class SiteSettingsSerializer(serializers.ModelSerializer):
 	sections = serializers.SerializerMethodField()
+	openai_configured = serializers.SerializerMethodField()
 
 	class Meta:
 		model = models.SiteSettings
-		fields = ('site_name', 'sections')
+		fields = ('site_name', 'google_oauth_client_id', 'google_tag_manager_id', 'openai_content_model', 'openai_configured', 'sections')
+
+	def get_openai_configured(self, obj):
+		return bool(obj.openai_api_key)
 
 	def get_sections(self, obj):
 		return {
