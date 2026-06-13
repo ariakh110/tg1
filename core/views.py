@@ -79,6 +79,15 @@ class SiteSettingsAPIView(views.APIView):
         if openai_key is not None and str(openai_key).strip():
             obj.openai_api_key = str(openai_key).strip()[:255]
 
+        # اسکریپت‌های سفارشی هدر/فوتر (HTML خام؛ متن کامل بدون محدودیت طول)
+        head_scripts = data.get("head_scripts")
+        if head_scripts is not None:
+            obj.head_scripts = str(head_scripts)
+
+        footer_scripts = data.get("footer_scripts")
+        if footer_scripts is not None:
+            obj.footer_scripts = str(footer_scripts)
+
         sections = data.get("sections") or {}
         field_map = {
             "marketplace": "marketplace_enabled",

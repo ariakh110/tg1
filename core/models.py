@@ -37,6 +37,8 @@ class SiteSettings(models.Model):
 	google_tag_manager_id = models.CharField(max_length=20, blank=True, default="")  # GTM-XXXXXXX (تزریق در فرانت)
 	openai_api_key = models.CharField(max_length=255, blank=True, default="")  # کلید OpenAI (محرمانه؛ در API عمومی برنمی‌گردد)
 	openai_content_model = models.CharField(max_length=80, blank=True, default="")  # مدل OpenAI برای سئو
+	head_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های هدر: داخل <head> تزریق می‌شوند (Analytics/Clarity/verification)
+	footer_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های فوتر: پیش از پایان <body> تزریق می‌شوند
 	updated_at = models.DateTimeField(auto_now=True)
 
 	class Meta:

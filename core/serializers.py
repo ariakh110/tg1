@@ -25,7 +25,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 
 	class Meta:
 		model = models.SiteSettings
-		fields = ('site_name', 'google_oauth_client_id', 'google_tag_manager_id', 'openai_content_model', 'openai_configured', 'sections')
+		fields = ('site_name', 'google_oauth_client_id', 'google_tag_manager_id', 'openai_content_model', 'openai_configured', 'head_scripts', 'footer_scripts', 'sections')
 
 	def get_openai_configured(self, obj):
 		return bool(obj.openai_api_key)
