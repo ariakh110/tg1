@@ -204,6 +204,20 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
         return Response({"count": queryset.count(), "results": serializer.data})
 
 
+def resolve_store_seller_id(request):
+    """در فروش مستقیم، خودِ فروشگاه (کاربر ادمینِ درخواست‌دهنده) فروشنده است."""
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return None
+    from core.models import SiteSettings
+    name = (SiteSettings.load().site_name or "").strip() or "فروشگاه"
+    seller, _ = Seller.objects.get_or_create(
+        user=user,
+        defaults={"company_name": name, "business_type": "فروش مستقیم", "location": ""},
+    )
+    return seller.id
+
+
 # ---------------- ProductViewSet ----------------
 class ProductViewSet(viewsets.ModelViewSet):
     """
@@ -411,7 +425,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 result = upsert_product_row(
                     request.data,
-                    default_seller_id=request.data.get("seller_id") or request.data.get("default_seller_id"),
+                    default_seller_id=request.data.get("seller_id") or request.data.get("default_seller_id") or resolve_store_seller_id(request),
                     create_missing=True,
                 )
                 product = Product.objects.get(pk=result["product_id"])
@@ -449,7 +463,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         create_missing = str(request.data.get("create_missing", "true")).lower() not in {"0", "false", "no"}
         result = bulk_upsert_products(
             rows,
-            default_seller_id=request.data.get("default_seller_id") or request.data.get("seller_id"),
+            default_seller_id=request.data.get("default_seller_id") or request.data.get("seller_id") or resolve_store_seller_id(request),
             create_missing=create_missing,
         )
         ProductAuditLog.objects.create(
