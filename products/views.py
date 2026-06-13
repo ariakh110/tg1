@@ -253,6 +253,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             return ProductDetailSerializer
         return ProductWriteSerializer
 
+    def get_object(self):
+        # امکان واکشی محصول هم با شناسهٔ عددی و هم با اسلاگ (برای URLهای سئوپسند)
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup = self.kwargs.get(self.lookup_field)
+        if lookup is not None and str(lookup).isdigit():
+            obj = get_object_or_404(queryset, pk=lookup)
+        else:
+            obj = get_object_or_404(queryset, slug=lookup)
+        self.check_object_permissions(self.request, obj)
+        return obj
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.action == "list":
