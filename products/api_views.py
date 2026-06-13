@@ -29,7 +29,11 @@ class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["id"]
 
     def get_queryset(self):
-        return Product.objects.annotate(
-            min_price=Min("offers__pricing_tiers__unit_price")
-        ).prefetch_related("offers", "images")
+        return (
+            Product.objects.annotate(
+                min_price=Min("offers__pricing_tiers__unit_price")
+            )
+            .select_related("specifications")
+            .prefetch_related("offers", "images", "offers__delivery_options")
+        )
 

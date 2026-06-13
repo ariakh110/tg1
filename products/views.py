@@ -38,7 +38,13 @@ from .permissions import (
     IsProductAssetOwnerOrAdmin,
     IsSellerOwnerOrAdmin,
 )
-from .admin_import import bulk_upsert_products, read_price_file, upsert_product_row
+from .admin_import import (
+    bulk_upsert_products,
+    format_dimension,
+    option_label,
+    read_price_file,
+    upsert_product_row,
+)
 
 # ---------------- Pagination استاندارد برای viewset ها ----------------
 class StandardResultsSetPagination(PageNumberPagination):
@@ -503,38 +509,36 @@ class ProductViewSet(viewsets.ModelViewSet):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "products"
-        headers = [
+        from django.core.exceptions import ObjectDoesNotExist
+
+        # ستون‌های قابل‌پردازش در آپلود (فقط همین‌ها خوانده می‌شوند):
+        mapped_headers = [
             "شناسه محصول",
             "نام کالا",
             "کد دسته",
             "شناسه فروشنده",
             "قیمت جدید",
-            "آلیاژ",
-            "نوع ورق/رول",
-            "نوع سطح",
-            "کارخانه",
-            "نوع برش",
-            "ضخامت",
-            "عرض",
-            "طول",
-            "قطر",
-            "وضعیت موجودی",
-            "استان",
-            "شهر",
-            "آدرس",
         ]
-        headers[5:5] = [
-            "price_basis",
-            "condition_label",
-            "dimension_width_mm",
-            "dimension_length_mm",
+        # ستون‌های «نمایشی» فقط برای خواناییِ انسان‌اند و در آپلود نادیده گرفته می‌شوند؛
+        # پیشوند «نمایش:» باعث می‌شود normalize_header آن‌ها را به هیچ فیلدی نگاشت نکند.
+        display_headers = [
+            "نمایش: آلیاژ",
+            "نمایش: شهر",
+            "نمایش: ضخامت",
+            "نمایش: عرض",
+            "نمایش: طول",
+            "نمایش: نوع ورق/رول",
+            "نمایش: سطح",
+            "نمایش: کارخانه",
+            "نمایش: وضعیت موجودی",
         ]
+        headers = mapped_headers + display_headers
         sheet.append(headers)
-        blank_tail = ["" for _ in range(len(headers) - 5)]
+
         products = (
             Product.objects.filter(is_active=True)
-            .select_related("category")
-            .prefetch_related("offers__pricing_tiers")
+            .select_related("category", "specifications")
+            .prefetch_related("offers__pricing_tiers", "offers__delivery_options")
             .order_by("category__name", "name")
         )
         for product in products:
@@ -546,16 +550,43 @@ class ProductViewSet(viewsets.ModelViewSet):
             ]
             current_price = min(prices) if prices else ""
             seller_id = next((offer.seller_id for offer in product.offers.all() if offer.seller_id), "")
+            try:
+                spec = product.specifications
+            except ObjectDoesNotExist:
+                spec = None
+            city = ""
+            for offer in product.offers.all():
+                for delivery in offer.delivery_options.all():
+                    if delivery.city:
+                        city = delivery.city
+                        break
+                if city:
+                    break
+            availability = (
+                product.get_availability_status_display()
+                if hasattr(product, "get_availability_status_display")
+                else (product.availability_status or "")
+            )
             sheet.append([
                 product.id,
                 product.name,
                 getattr(product.category, "code", "") or "",
                 seller_id,
                 current_price,
-                *blank_tail,
+                (getattr(spec, "steel_grade", "") or "") if spec else "",
+                city,
+                format_dimension(getattr(spec, "thickness_mm", None)) if spec else "",
+                format_dimension(getattr(spec, "width_mm", None)) if spec else "",
+                format_dimension(getattr(spec, "length_mm", None)) if spec else "",
+                option_label("manufacturing_process", getattr(spec, "manufacturing_process", "")) if spec else "",
+                option_label("surface_finish", getattr(spec, "surface_finish", "")) if spec else "",
+                option_label("factory", getattr(spec, "factory", "")) if spec else "",
+                availability,
             ])
         if not products:
-            sheet.append(["", "نمونه: ورق سیاه ۳ میل", "sheet", seller.id if seller else "", 140000, *blank_tail])
+            sample = ["", "نمونه: ورق سیاه ۳ میل", "sheet", seller.id if seller else "", 140000]
+            sample += ["" for _ in display_headers]
+            sheet.append(sample)
 
         header_fill = PatternFill("solid", fgColor="DCEBFF")
         for cell in sheet[1]:

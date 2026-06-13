@@ -546,14 +546,29 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 class ProductSummarySerializer(serializers.ModelSerializer):
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     thumbnail = serializers.SerializerMethodField()
+    steel_grade = serializers.SerializerMethodField()
+    city = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = ["id", "name", "slug", "min_price", "thumbnail"]
+        fields = ["id", "name", "slug", "min_price", "thumbnail", "steel_grade", "city"]
 
     def get_thumbnail(self, obj):
         first_image = obj.images.first()
         return self.context["request"].build_absolute_uri(first_image.image.url) if first_image else None
+
+    def get_steel_grade(self, obj):
+        try:
+            return obj.specifications.steel_grade or ""
+        except ProductSpecification.DoesNotExist:
+            return ""
+
+    def get_city(self, obj):
+        for offer in obj.offers.all():
+            for delivery in offer.delivery_options.all():
+                if delivery.city:
+                    return delivery.city
+        return ""
 # -------------------------
 # Utility: small factory mapping for views
 # -------------------------

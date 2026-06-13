@@ -492,39 +492,46 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
                 is_negotiable=False,
             )
         else:
+            # فقط قیمت/واحد را همیشه به‌روزرسانی کن؛ شرط و ابعادِ tier را تنها
+            # وقتی ردیف مقدار غیرخالی بدهد عوض کن تا آپلودِ «فقط قیمت» داده‌های موجود را پاک نکند.
             tier.unit_price = price
             tier.price_basis = price_basis
             tier.minimum_quantity = tier.minimum_quantity or 1
-            tier.condition_label = condition_label
-            tier.dimension_width_mm = dimension_width
-            tier.dimension_length_mm = dimension_length
-            tier.save(
-                update_fields=[
-                    "unit_price",
-                    "price_basis",
-                    "minimum_quantity",
-                    "condition_label",
-                    "dimension_width_mm",
-                    "dimension_length_mm",
-                ]
-            )
+            update_fields = ["unit_price", "price_basis", "minimum_quantity"]
+            if row.get("condition_label") not in ("", None):
+                tier.condition_label = condition_label
+                update_fields.append("condition_label")
+            if row.get("dimension_width_mm") not in ("", None):
+                tier.dimension_width_mm = dimension_width
+                update_fields.append("dimension_width_mm")
+            if row.get("dimension_length_mm") not in ("", None):
+                tier.dimension_length_mm = dimension_length
+                update_fields.append("dimension_length_mm")
+            tier.save(update_fields=update_fields)
         updated_price = True
 
     if has_delivery and offer is not None:
         delivery = offer.delivery_options.first()
-        delivery_data = {
-            "incoterm": row.get("incoterm") or "EXW",
-            "country": row.get("country") or "ایران",
-            "province": row.get("province") or "",
-            "city": row.get("city") or "",
-            "address": row.get("address") or "",
-        }
         if delivery is None:
-            DeliveryLocation.objects.create(offer=offer, **delivery_data)
+            DeliveryLocation.objects.create(
+                offer=offer,
+                incoterm=row.get("incoterm") or "EXW",
+                country=row.get("country") or "ایران",
+                province=row.get("province") or "",
+                city=row.get("city") or "",
+                address=row.get("address") or "",
+            )
         else:
-            for field, value in delivery_data.items():
-                setattr(delivery, field, value)
-            delivery.save(update_fields=list(delivery_data.keys()))
+            # روی رکورد موجود فقط فیلدهای ارائه‌شده را بنویس تا خالی‌ها پاک‌کننده نباشند.
+            provided = {
+                field: row.get(field)
+                for field in ("incoterm", "country", "province", "city", "address")
+                if row.get(field) not in ("", None)
+            }
+            if provided:
+                for field, value in provided.items():
+                    setattr(delivery, field, value)
+                delivery.save(update_fields=list(provided.keys()))
 
     return {
         "product_id": product.id,
