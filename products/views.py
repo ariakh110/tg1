@@ -530,54 +530,32 @@ class ProductViewSet(viewsets.ModelViewSet):
             "dimension_length_mm",
         ]
         sheet.append(headers)
-        sheet.append([
-            "",
-            "ورق سیاه ۳ میل مبارکه",
-            "sheet-black-mobarakeh",
-            seller.id if seller else "",
-            140000,
-            "kg",
-            "1500x6000",
-            1500,
-            6000,
-            "ST37",
-            "sheet",
-            "black",
-            "mobarakeh",
-            "cut",
-            3,
-            1500,
-            6000,
-            "",
-            "in_stock",
-            "اصفهان",
-            "مبارکه",
-            "کارخانه مبارکه",
-        ])
-        sheet.append([
-            "",
-            "میلگرد آجدار ۱۴",
-            "rebar-ribbed",
-            seller.id if seller else "",
-            28500,
-            "kg",
-            "",
-            "",
-            "",
-            "A3",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            12000,
-            14,
-            "in_stock",
-            "تهران",
-            "تهران",
-            "انبار تهران",
-        ])
+        blank_tail = ["" for _ in range(len(headers) - 5)]
+        products = (
+            Product.objects.filter(is_active=True)
+            .select_related("category")
+            .prefetch_related("offers__pricing_tiers")
+            .order_by("category__name", "name")
+        )
+        for product in products:
+            prices = [
+                tier.unit_price
+                for offer in product.offers.all()
+                for tier in offer.pricing_tiers.all()
+                if tier.unit_price
+            ]
+            current_price = min(prices) if prices else ""
+            seller_id = next((offer.seller_id for offer in product.offers.all() if offer.seller_id), "")
+            sheet.append([
+                product.id,
+                product.name,
+                getattr(product.category, "code", "") or "",
+                seller_id,
+                current_price,
+                *blank_tail,
+            ])
+        if not products:
+            sheet.append(["", "نمونه: ورق سیاه ۳ میل", "sheet", seller.id if seller else "", 140000, *blank_tail])
 
         header_fill = PatternFill("solid", fgColor="DCEBFF")
         for cell in sheet[1]:
@@ -594,6 +572,35 @@ class ProductViewSet(viewsets.ModelViewSet):
         response["Content-Disposition"] = 'attachment; filename="kavehmetal-products-template.xlsx"'
         workbook.save(response)
         return response
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="admin-bulk-prices",
+        permission_classes=[IsAdminOrActiveAdminRole],
+    )
+    def admin_bulk_prices(self, request):
+        """آپدیت گروهی قیمت محصولات از جدول پنل: prices=[{product_id, price}]."""
+        items = request.data.get("prices")
+        if not isinstance(items, list) or not items:
+            return Response({"detail": "فهرست قیمت‌ها خالی است."}, status=status.HTTP_400_BAD_REQUEST)
+        rows = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            pid = item.get("product_id")
+            price = item.get("price")
+            if pid in (None, "") or price in (None, ""):
+                continue
+            rows.append({"product_id": pid, "price": price})
+        if not rows:
+            return Response({"detail": "هیچ قیمت معتبری ارسال نشد."}, status=status.HTTP_400_BAD_REQUEST)
+        result = bulk_upsert_products(
+            rows,
+            default_seller_id=resolve_store_seller_id(request),
+            create_missing=False,
+        )
+        return Response(result, status=status.HTTP_200_OK)
 
 
 # ---------------- ProductSpecificationViewSet ----------------
