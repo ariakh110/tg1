@@ -3,12 +3,14 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AdminCategoryViewSet,
     AdminFAQViewSet,
+    AdminLandingViewSet,
     AdminFeaturedLoadViewSet,
     AdminHomepageSlideViewSet,
     AdminPostViewSet,
     AdminRobotsView,
     CategoryListView,
     FAQViewSet,
+    LandingViewSet,
     FeaturedLoadAlertViewSet,
     FeaturedLoadViewSet,
     HomepageSlideViewSet,
@@ -34,6 +36,8 @@ router.register(r'admin/featured-loads', AdminFeaturedLoadViewSet, basename='adm
 router.register(r'featured-load-alerts', FeaturedLoadAlertViewSet, basename='featured-load-alerts')
 router.register(r'faqs', FAQViewSet, basename='faqs')
 router.register(r'admin/faqs', AdminFAQViewSet, basename='admin-faqs')
+router.register(r'landings', LandingViewSet, basename='landings')
+router.register(r'admin/landings', AdminLandingViewSet, basename='admin-landings')
 
 app_name = 'blog' # تعریف Namespace برای سئو و دسترسی‌های داخلی
 

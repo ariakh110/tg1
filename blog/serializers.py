@@ -6,7 +6,7 @@ from bleach.css_sanitizer import CSSSanitizer
 from rest_framework import serializers
 
 from .editorjs import normalize_editor_data, render_editor_data
-from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, Landing, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 from .seo import analyze_post, build_article_schema, snapshot_post
 
 
@@ -358,6 +358,15 @@ class FAQItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = FAQItem
         fields = ['id', 'category', 'question', 'answer', 'sort_order',
+                  'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class LandingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Landing
+        fields = ['id', 'family', 'slug', 'title', 'tagline', 'intro', 'body',
+                  'steel_grade', 'meta_title', 'meta_description', 'sort_order',
                   'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 

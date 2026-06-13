@@ -179,6 +179,33 @@ class FAQItem(models.Model):
         return self.question
 
 
+class Landing(models.Model):
+    """لندینگ خوشه‌ای کلیدواژه‌ای (مثلاً «ورق ST52») — قابل مدیریت از پنل ادمین."""
+
+    family = models.CharField(max_length=40)  # خانوادهٔ محصول: sheet/rebar/beam/pipe/profile/billet
+    slug = models.SlugField(max_length=120, allow_unicode=True)
+    title = models.CharField(max_length=200)
+    tagline = models.CharField(max_length=300, blank=True, default="")
+    intro = models.TextField(blank=True, default="")
+    body = models.TextField(blank=True, default="")  # HTML دست‌نویس ادمین
+    steel_grade = models.CharField(max_length=80, blank=True, default="")  # فیلتر اختیاری محصولات بر اساس گرید
+    meta_title = models.CharField(max_length=200, blank=True, default="")
+    meta_description = models.CharField(max_length=300, blank=True, default="")
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['family', 'sort_order', 'id']
+        unique_together = (('family', 'slug'),)
+        verbose_name = "لندینگ"
+        verbose_name_plural = "لندینگ‌ها"
+
+    def __str__(self):
+        return f"{self.title} ({self.family})"
+
+
 class FeaturedLoadAlert(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='featured_load_alerts')
     keyword = models.CharField(max_length=200)

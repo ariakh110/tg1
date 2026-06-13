@@ -12,7 +12,7 @@ from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .ai import AIContentSuggestionError, generate_content_suggestions
 from .editorjs import render_editor_data
-from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, Landing, MediaAsset, Post, PostRevision, SiteSEOSettings
 from .seo import analyze_post, build_article_schema, post_url, snapshot_post
 from .serializers import (
     AdminPostSerializer,
@@ -21,6 +21,7 @@ from .serializers import (
     FeaturedLoadAlertSerializer,
     FeaturedLoadSerializer,
     HomepageSlideSerializer,
+    LandingSerializer,
     MediaAssetSerializer,
     PostDetailSerializer,
     PostListSerializer,
@@ -206,6 +207,21 @@ class FAQViewSet(viewsets.ReadOnlyModelViewSet):
 class AdminFAQViewSet(viewsets.ModelViewSet):
     queryset = FAQItem.objects.all().order_by('category', 'sort_order', 'id')
     serializer_class = FAQItemSerializer
+    pagination_class = None
+    permission_classes = [IsAdminOrActiveAdminRole]
+
+
+class LandingViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Landing.objects.filter(is_active=True).order_by('family', 'sort_order', 'id')
+    serializer_class = LandingSerializer
+    pagination_class = None
+    permission_classes = [AllowAny]
+    filterset_fields = ['family', 'slug']
+
+
+class AdminLandingViewSet(viewsets.ModelViewSet):
+    queryset = Landing.objects.all().order_by('family', 'sort_order', 'id')
+    serializer_class = LandingSerializer
     pagination_class = None
     permission_classes = [IsAdminOrActiveAdminRole]
 

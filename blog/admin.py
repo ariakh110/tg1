@@ -1,6 +1,6 @@
 
 from django.contrib import admin
-from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, FeaturedLoadAlertMatch, HomepageSlide, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
+from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, FeaturedLoadAlertMatch, HomepageSlide, Landing, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
@@ -35,6 +35,15 @@ class FAQItemAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'category')
     list_editable = ('category', 'sort_order', 'is_active')
     search_fields = ('question', 'answer', 'category')
+
+
+@admin.register(Landing)
+class LandingAdmin(admin.ModelAdmin):
+    list_display = ('title', 'family', 'slug', 'steel_grade', 'sort_order', 'is_active', 'updated_at')
+    list_filter = ('family', 'is_active')
+    list_editable = ('sort_order', 'is_active')
+    search_fields = ('title', 'slug', 'family', 'steel_grade')
+    prepopulated_fields = {'slug': ('title',)}
 
 
 @admin.register(FeaturedLoadAlert)
