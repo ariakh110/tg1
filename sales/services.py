@@ -256,6 +256,11 @@ def product_sales_mode(product):
 
 def default_coil_weight_ton(product):
     spec = getattr(product, "specifications", None)
+    # اگر «وزن واحد» (kg) برای محصول تنظیم شده باشد، همان وزنِ هر رول است؛
+    # وگرنه پیش‌فرضِ ثابت بر اساس ضخامت.
+    configured_kg = Decimal(str(getattr(spec, "weight_kg_per_unit", "") or 0))
+    if configured_kg > 0:
+        return (configured_kg / Decimal("1000")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
     if thickness >= Decimal("3"):
         return Decimal("22.5")
@@ -351,6 +356,9 @@ def normalize_order_item_selection(product, quantity, quantity_unit, selection_d
             return sheet_count, StoreQuantityUnit.SHEET, selection_details, cut_weight_kg
 
         coil_weight_ton = default_coil_weight_ton(product)
+        configured_roll_kg = Decimal(
+            str(getattr(getattr(product, "specifications", None), "weight_kg_per_unit", "") or 0)
+        )
         roll_count = _decimal_from_selection(selection_details.get("roll_count") or quantity or 1, "roll_count")
         if roll_count != roll_count.to_integral_value():
             raise ValueError("roll_count_must_be_integer")
@@ -366,7 +374,9 @@ def normalize_order_item_selection(product, quantity, quantity_unit, selection_d
                 "roll_weight_kg": str(coil_weight_kg),
                 "total_roll_weight_ton": str(total_weight_ton),
                 "total_roll_weight_kg": str(total_weight_kg),
-                "roll_weight_rule": "gte_3mm" if coil_weight_ton > Decimal("20") else "2mm_standard",
+                "roll_weight_rule": "configured"
+                if configured_roll_kg > 0
+                else ("gte_3mm" if coil_weight_ton > Decimal("20") else "2mm_standard"),
                 "client_quantity_ignored": str(quantity),
                 "client_quantity_unit_ignored": str(quantity_unit),
             }

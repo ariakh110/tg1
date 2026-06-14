@@ -267,6 +267,28 @@ class StoreOrderCheckoutTests(APITestCase):
         self.assertEqual(item["estimated_weight_kg"], "22500.000")
         self.assertEqual(item["selection_details"]["roll_weight_rule"], "gte_3mm")
 
+    def test_coil_uses_configured_weight_kg_per_unit_when_set(self):
+        product, _offer, _tier = self.make_product(
+            price=140000,
+            price_basis=PricingBasis.KG,
+            manufacturing_process="coil",
+            thickness_mm="3",
+            length_mm=None,
+        )
+        # وزنِ ثابتِ قابل‌تنظیم: «وزن واحد» = ۱۸ تن (۱۸۰۰۰ kg) به‌جای پیش‌فرض ۲۲٫۵ تن
+        spec = product.specifications
+        spec.weight_kg_per_unit = "18000"
+        spec.save(update_fields=["weight_kg_per_unit"])
+
+        res = self.create_order(product, quantity="1", quantity_unit="ton")
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        item = res.data["items"][0]
+        self.assertEqual(item["quantity"], "18.000")
+        self.assertEqual(item["estimated_weight_kg"], "18000.000")
+        self.assertEqual(item["selection_details"]["roll_weight_ton"], "18.000")
+        self.assertEqual(item["selection_details"]["roll_weight_rule"], "configured")
+
     def test_cut_sheet_lines_store_each_estimated_weight(self):
         product, _offer, _tier = self.make_product(price=1000, price_basis=PricingBasis.KG)
 
