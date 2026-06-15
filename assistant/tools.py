@@ -1,0 +1,255 @@
+"""ابزارهای دستیار فروش: جستجوی محصول، برآورد قیمت، و ثبت سرنخ.
+
+این ابزارها به مدل اجازه می‌دهند روی دادهٔ واقعیِ فروشگاه (کاتالوگ/قیمت) عمل کند.
+"""
+from decimal import Decimal
+
+from django.db.models import Q
+
+
+def _spec(product):
+    return getattr(product, "specifications", None)
+
+
+def _fmt_num(value):
+    try:
+        d = Decimal(str(value))
+    except Exception:
+        return ""
+    if d == d.to_integral_value():
+        return str(int(d))
+    return str(d.normalize())
+
+
+def _product_title(product):
+    spec = _spec(product)
+    if not spec:
+        return product.name
+    parts = []
+    surface = getattr(spec, "surface_finish", "")
+    if surface:
+        parts.append(surface)
+    if getattr(spec, "thickness_mm", None):
+        parts.append(f"{_fmt_num(spec.thickness_mm)} میل")
+    if getattr(spec, "width_mm", None) and getattr(spec, "length_mm", None):
+        parts.append(f"عرض {_fmt_num(spec.width_mm)}×{_fmt_num(spec.length_mm)}")
+    elif getattr(spec, "width_mm", None):
+        parts.append(f"عرض {_fmt_num(spec.width_mm)}")
+    if getattr(spec, "manufacturing_process", None):
+        parts.append(spec.manufacturing_process)
+    if getattr(spec, "steel_grade", None):
+        parts.append(spec.steel_grade)
+    if getattr(spec, "factory", None):
+        parts.append(spec.factory)
+    return " - ".join(p for p in parts if p) or product.name
+
+
+def _min_price(product):
+    prices = []
+    for offer in product.offers.all():
+        if getattr(offer, "is_active", True) is False:
+            continue
+        for tier in offer.pricing_tiers.all():
+            try:
+                price = Decimal(str(tier.unit_price))
+            except Exception:
+                continue
+            if price > 0:
+                prices.append(price)
+    return min(prices) if prices else None
+
+
+def _delivery(product):
+    for offer in product.offers.all():
+        options = list(offer.delivery_options.all())
+        if options:
+            d = options[0]
+            place = {"warehouse": "انبار", "factory": "کارخانه"}.get(d.address, d.address or "")
+            city = d.city or d.province or ""
+            return " - ".join(p for p in [city, place] if p) or "هماهنگی"
+    return "هماهنگی"
+
+
+def summarize_product(product):
+    spec = _spec(product)
+    price = _min_price(product)
+    return {
+        "id": product.id,
+        "title": _product_title(product),
+        "grade": getattr(spec, "steel_grade", "") if spec else "",
+        "factory": getattr(spec, "factory", "") if spec else "",
+        "category": product.category.name if product.category_id else "",
+        "thickness_mm": _fmt_num(getattr(spec, "thickness_mm", "")) if spec else "",
+        "width_mm": _fmt_num(getattr(spec, "width_mm", "")) if spec else "",
+        "length_mm": _fmt_num(getattr(spec, "length_mm", "")) if spec else "",
+        "price_toman": str(int(price)) if price is not None else None,
+        "price_status": "قیمت‌دار" if price is not None else "نیازمند استعلام",
+        "delivery": _delivery(product),
+        "availability": getattr(product, "availability_status", ""),
+        "url": f"/products/{product.id}",
+    }
+
+
+def search_products(query="", grade="", kind="", max_results=5):
+    from products.models import Product
+
+    qs = (
+        Product.objects.filter(is_active=True)
+        .select_related("specifications", "category")
+        .prefetch_related("offers__pricing_tiers", "offers__delivery_options")
+    )
+    if query:
+        qs = qs.filter(
+            Q(name__icontains=query)
+            | Q(short_description__icontains=query)
+            | Q(category__name__icontains=query)
+            | Q(specifications__steel_grade__icontains=query)
+            | Q(specifications__factory__icontains=query)
+        )
+    if grade:
+        qs = qs.filter(specifications__steel_grade__icontains=grade)
+    if kind:
+        qs = qs.filter(
+            Q(category__name__icontains=kind)
+            | Q(specifications__manufacturing_process__icontains=kind)
+            | Q(specifications__surface_finish__icontains=kind)
+        )
+    try:
+        limit = max(1, min(int(max_results), 10))
+    except Exception:
+        limit = 5
+    results = [summarize_product(p) for p in qs.distinct()[:limit]]
+    return {"count": len(results), "products": results}
+
+
+def get_price_quote(product_id, quantity=None, roll_count=None):
+    from products.models import Product
+
+    try:
+        product = (
+            Product.objects.select_related("specifications")
+            .prefetch_related("offers__pricing_tiers")
+            .get(id=product_id, is_active=True)
+        )
+    except Product.DoesNotExist:
+        return {"error": "محصول یافت نشد."}
+
+    price = _min_price(product)
+    spec = _spec(product)
+    is_coil = bool(spec and getattr(spec, "manufacturing_process", "") == "coil")
+    quote = {
+        "id": product.id,
+        "title": _product_title(product),
+        "unit_price_toman": str(int(price)) if price is not None else None,
+        "price_status": "قیمت‌دار" if price is not None else "نیازمند استعلام",
+        "delivery": _delivery(product),
+        "url": f"/products/{product.id}",
+        "note": "قیمت‌های نمایشی بدون ارزش افزوده هستند؛ ارزش افزوده هنگام نهایی‌سازی اعمال می‌شود.",
+    }
+    if is_coil:
+        try:
+            from sales.services import default_coil_weight_ton
+
+            ton = default_coil_weight_ton(product)
+            quote["roll_weight_ton"] = str(ton)
+            count = int(roll_count or quantity or 1)
+            if price is not None:
+                total = (Decimal(str(ton)) * Decimal("1000") * Decimal(count) * price)
+                quote["roll_count"] = count
+                quote["estimated_total_toman"] = str(int(total))
+        except Exception:
+            pass
+    return quote
+
+
+def capture_lead(conversation, name="", phone="", interest=""):
+    name = (name or "").strip()[:120]
+    phone = (phone or "").strip()[:30]
+    interest = (interest or "").strip()[:255]
+    if not phone:
+        return {"ok": False, "error": "شمارهٔ موبایل لازم است."}
+    conversation.lead_name = name or conversation.lead_name
+    conversation.lead_phone = phone
+    conversation.lead_interest = interest or conversation.lead_interest
+    conversation.status = conversation.STATUS_LEAD
+    conversation.save(update_fields=["lead_name", "lead_phone", "lead_interest", "status", "updated_at"])
+    return {"ok": True, "message": "سرنخ ثبت شد. کارشناس فروش تماس می‌گیرد."}
+
+
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_products",
+            "description": "جستجوی محصولات فروشگاه (ورق، رول، تیرآهن، میلگرد، لوله، پروفیل...) بر اساس کلیدواژه، گرید/آلیاژ یا نوع کالا. برای معرفی محصول و قیمت استفاده کن.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "کلیدواژهٔ آزاد مثل نام، ضخامت، کارخانه"},
+                    "grade": {"type": "string", "description": "گرید/آلیاژ مثل ST37 یا ST52 یا CK45"},
+                    "kind": {"type": "string", "description": "نوع کالا مثل ورق، رول، تیرآهن، میلگرد"},
+                    "max_results": {"type": "integer", "description": "حداکثر تعداد نتیجه (پیش‌فرض ۵)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_price_quote",
+            "description": "دریافت قیمت و برآورد فاکتور یک محصول مشخص بر اساس شناسهٔ آن (و برای رول، وزن هر رول).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "product_id": {"type": "integer", "description": "شناسهٔ محصول از نتایج جستجو"},
+                    "roll_count": {"type": "integer", "description": "تعداد رول برای محصولات رول"},
+                    "quantity": {"type": "number", "description": "مقدار درخواستی"},
+                },
+                "required": ["product_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_lead",
+            "description": "ثبت سرنخ فروش وقتی مشتری تمایل به خرید/استعلام دارد. نام و شمارهٔ موبایل را بگیر.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "نام مشتری"},
+                    "phone": {"type": "string", "description": "شمارهٔ موبایل مشتری"},
+                    "interest": {"type": "string", "description": "محصول/نیاز موردنظر مشتری"},
+                },
+                "required": ["phone"],
+            },
+        },
+    },
+]
+
+
+def execute_tool(name, args, conversation, *, lead_capture_enabled=True):
+    args = args or {}
+    if name == "search_products":
+        return search_products(
+            query=args.get("query", ""),
+            grade=args.get("grade", ""),
+            kind=args.get("kind", ""),
+            max_results=args.get("max_results", 5),
+        )
+    if name == "get_price_quote":
+        return get_price_quote(
+            product_id=args.get("product_id"),
+            quantity=args.get("quantity"),
+            roll_count=args.get("roll_count"),
+        )
+    if name == "capture_lead":
+        if not lead_capture_enabled:
+            return {"ok": False, "error": "ثبت سرنخ غیرفعال است."}
+        return capture_lead(
+            conversation,
+            name=args.get("name", ""),
+            phone=args.get("phone", ""),
+            interest=args.get("interest", ""),
+        )
+    return {"error": f"ابزار ناشناخته: {name}"}

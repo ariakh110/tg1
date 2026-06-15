@@ -60,7 +60,8 @@ INSTALLED_APPS = [
     'sales',
     'offline_payments',
     'blog',
-    
+    'assistant',
+
 ]
 # Optionally enable drf-spectacular if it's installed in the environment.
 # This avoids import-time failures when running management commands before
