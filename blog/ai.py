@@ -10,30 +10,6 @@ class AIContentSuggestionError(Exception):
     pass
 
 
-SUGGESTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "excerpt": {"type": "string"},
-        "focus_keyword": {"type": "string"},
-        "secondary_keywords": {
-            "type": "array",
-            "items": {"type": "string"},
-            "maxItems": 8,
-        },
-    },
-    "required": ["excerpt", "focus_keyword", "secondary_keywords"],
-    "additionalProperties": False,
-}
-
-
-def _response_text(payload):
-    for output in payload.get("output", []):
-        for content in output.get("content", []):
-            if content.get("type") == "output_text":
-                return content.get("text", "")
-    raise AIContentSuggestionError("پاسخ هوش مصنوعی قابل پردازش نبود.")
-
-
 def _clean_suggestions(value):
     if not isinstance(value, dict):
         raise AIContentSuggestionError("ساختار پیشنهاد هوش مصنوعی معتبر نبود.")
@@ -53,6 +29,7 @@ def _clean_suggestions(value):
 
 def generate_content_suggestions(title, content):
     from core.models import SiteSettings
+    from assistant.models import AssistantSettings
 
     site_settings = SiteSettings.load()
     api_key = (site_settings.openai_api_key or getattr(settings, "OPENAI_API_KEY", "")).strip()
@@ -63,26 +40,34 @@ def generate_content_suggestions(title, content):
     if not plain_content:
         raise AIContentSuggestionError("برای دریافت پیشنهاد، ابتدا متن اصلی مطلب را وارد کنید.")
 
-    prompt = (
-        "برای مطلب فارسی زیر، یک خلاصه دقیق و قابل ویرایش برای نویسنده، یک کلیدواژه اصلی "
-        "و حداکثر هشت کلیدواژه فرعی پیشنهاد بده. خلاصه حداکثر ۳۲۰ کاراکتر باشد و "
-        "اطلاعاتی خارج از متن اضافه نکن.\n\n"
-        f"عنوان: {title.strip()}\n\nمتن مطلب:\n{plain_content}"
+    # از همان نقطهٔ پایانیِ سازگار با OpenAI که برای دستیار تنظیم شده استفاده می‌کنیم
+    # (base_url قابل‌تنظیم؛ مثلاً گیت‌وی ایرانیِ AvalAI تا از ایران هم کار کند).
+    cfg = AssistantSettings.load()
+    base = (cfg.openai_base_url or "https://api.openai.com/v1").rstrip("/")
+    model = (
+        (site_settings.openai_content_model or "").strip()
+        or (cfg.chat_model or "").strip()
+        or "gpt-4o-mini"
     )
+
+    system_prompt = (
+        "تو دستیار سئوی فارسی هستی. خروجی را فقط به‌صورت یک شیء JSON بده با کلیدهای: "
+        "excerpt (رشته، خلاصهٔ دقیق و قابل ویرایش، حداکثر ۳۲۰ کاراکتر)، "
+        "focus_keyword (رشته)، و secondary_keywords (آرایه‌ای از رشته، حداکثر ۸). "
+        "اطلاعاتی خارج از متن اضافه نکن."
+    )
+    user_prompt = f"عنوان: {title.strip()}\n\nمتن مطلب:\n{plain_content}"
     body = {
-        "model": (site_settings.openai_content_model or getattr(settings, "OPENAI_CONTENT_MODEL", "gpt-5-mini")),
-        "input": prompt,
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "content_metadata_suggestions",
-                "strict": True,
-                "schema": SUGGESTION_SCHEMA,
-            }
-        },
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.3,
     }
     request = Request(
-        "https://api.openai.com/v1/responses",
+        f"{base}/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -104,6 +89,7 @@ def generate_content_suggestions(title, content):
         raise AIContentSuggestionError("پاسخ هوش مصنوعی قابل پردازش نبود.") from exc
 
     try:
-        return _clean_suggestions(json.loads(_response_text(payload)))
-    except json.JSONDecodeError as exc:
+        message = payload["choices"][0]["message"]["content"]
+        return _clean_suggestions(json.loads(message))
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise AIContentSuggestionError("پاسخ هوش مصنوعی قابل پردازش نبود.") from exc
