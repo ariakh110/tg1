@@ -27,6 +27,7 @@ urlpatterns += [
     path('api/site-settings/', core_views.SiteSettingsAPIView.as_view(), name='site-settings'),
     path('api/blog/', include('blog.urls')),
     path('api/assistant/', include('assistant.urls')),
+    path('api/seo-assistant/', include('seo_assistant.urls')),
     # include accounts URL patterns directly under /api/ so routes like
     # /api/auth/profile/ and /api/auth/register/ match frontend expectations
     path("api/", include("accounts.urls")),

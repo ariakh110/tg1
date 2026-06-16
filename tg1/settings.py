@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'offline_payments',
     'blog',
     'assistant',
+    'seo_assistant',
 
 ]
 # Optionally enable drf-spectacular if it's installed in the environment.
