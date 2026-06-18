@@ -162,6 +162,51 @@ def get_price_quote(product_id, quantity=None, roll_count=None):
     return quote
 
 
+def register_inquiry(conversation, product="", size="", grade="", factory="", quantity="", city="", note="", raw_text=""):
+    """ثبت استعلام/سرنخِ ساختاریافته + تلاش برای تطبیق با کاتالوگ."""
+    from .models import AssistantInquiry
+
+    product = (product or "").strip()[:120]
+    if not product:
+        return {"ok": False, "error": "نوع کالا لازم است."}
+
+    query = " ".join(p for p in [product, grade, size] if p).strip()
+    found = search_products(query=query, grade=grade, kind=product, max_results=1)
+    match = (found.get("products") or [None])[0]
+    matched_price = None
+    if match and match.get("price_toman"):
+        try:
+            matched_price = int(match["price_toman"])
+        except (TypeError, ValueError):
+            matched_price = None
+
+    inquiry = AssistantInquiry.objects.create(
+        conversation=conversation,
+        product=product,
+        size=(size or "").strip()[:60],
+        grade=(grade or "").strip()[:60],
+        factory=(factory or "").strip()[:80],
+        quantity=(quantity or "").strip()[:60],
+        city=(city or "").strip()[:80],
+        note=(note or "").strip()[:255],
+        raw_text=(raw_text or "").strip(),
+        matched_product_id=(match or {}).get("id"),
+        matched_price=matched_price,
+        contact_name=conversation.lead_name if conversation else "",
+        contact_phone=conversation.lead_phone if conversation else "",
+    )
+    if conversation and conversation.status == conversation.STATUS_OPEN:
+        conversation.status = conversation.STATUS_LEAD
+        conversation.save(update_fields=["status", "updated_at"])
+
+    return {
+        "ok": True,
+        "inquiry_id": inquiry.id,
+        "matched_product": match,
+        "message": "استعلام ثبت شد.",
+    }
+
+
 def capture_lead(conversation, name="", phone="", interest=""):
     name = (name or "").strip()[:120]
     phone = (phone or "").strip()[:30]
@@ -212,6 +257,27 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "register_inquiry",
+            "description": "وقتی مشتری یک نیازِ مشخص می‌گوید (مثل «۲۰ تن میلگرد ۱۴ اصفهان»)، آن را به‌صورت ساختاریافته ثبت کن. هر فیلدی که در متن آمده را پر کن.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "product": {"type": "string", "description": "نوع کالا مثل میلگرد، ورق، تیرآهن، لوله"},
+                    "size": {"type": "string", "description": "سایز یا ضخامت مثل 14 یا 3 میل"},
+                    "grade": {"type": "string", "description": "گرید/آلیاژ مثل ST37 یا A3"},
+                    "factory": {"type": "string", "description": "کارخانه یا مبدا مثل اصفهان، ذوب‌آهن"},
+                    "quantity": {"type": "string", "description": "مقدار مثل 20 تن"},
+                    "city": {"type": "string", "description": "شهر مشتری یا محل تحویل"},
+                    "note": {"type": "string", "description": "توضیح اضافه"},
+                    "raw_text": {"type": "string", "description": "عین جملهٔ مشتری"},
+                },
+                "required": ["product"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "capture_lead",
             "description": "ثبت سرنخ فروش وقتی مشتری تمایل به خرید/استعلام دارد. نام و شمارهٔ موبایل را بگیر.",
             "parameters": {
@@ -242,6 +308,18 @@ def execute_tool(name, args, conversation, *, lead_capture_enabled=True):
             product_id=args.get("product_id"),
             quantity=args.get("quantity"),
             roll_count=args.get("roll_count"),
+        )
+    if name == "register_inquiry":
+        return register_inquiry(
+            conversation,
+            product=args.get("product", ""),
+            size=args.get("size", ""),
+            grade=args.get("grade", ""),
+            factory=args.get("factory", ""),
+            quantity=args.get("quantity", ""),
+            city=args.get("city", ""),
+            note=args.get("note", ""),
+            raw_text=args.get("raw_text", ""),
         )
     if name == "capture_lead":
         if not lead_capture_enabled:

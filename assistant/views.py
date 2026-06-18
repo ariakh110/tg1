@@ -9,10 +9,11 @@ from rest_framework.views import APIView
 from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .ai import AssistantError, ensure_embeddings, run_chat
-from .models import AssistantConversation, AssistantKnowledge, AssistantSettings
+from .models import AssistantConversation, AssistantInquiry, AssistantKnowledge, AssistantSettings
 from .serializers import (
     AssistantConversationDetailSerializer,
     AssistantConversationSerializer,
+    AssistantInquirySerializer,
     AssistantKnowledgeSerializer,
     AssistantSettingsSerializer,
     PublicAssistantConfigSerializer,
@@ -103,3 +104,14 @@ class AdminConversationViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == "retrieve":
             return AssistantConversationDetailSerializer
         return AssistantConversationSerializer
+
+
+class AdminInquiryViewSet(viewsets.ModelViewSet):
+    """استعلام‌های ساختاریافته (فقط مشاهده + به‌روزرسانیِ وضعیت/تماس)."""
+
+    queryset = AssistantInquiry.objects.select_related("matched_product", "conversation").all()
+    serializer_class = AssistantInquirySerializer
+    permission_classes = [IsAdminOrActiveAdminRole]
+    http_method_names = ["get", "patch", "head", "options"]
+    filterset_fields = ["status"]
+    pagination_class = None

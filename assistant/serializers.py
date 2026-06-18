@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import AssistantConversation, AssistantKnowledge, AssistantMessage, AssistantSettings
+from .models import (
+    AssistantConversation,
+    AssistantInquiry,
+    AssistantKnowledge,
+    AssistantMessage,
+    AssistantSettings,
+)
 
 
 class AssistantKnowledgeSerializer(serializers.ModelSerializer):
@@ -66,3 +72,29 @@ class AssistantConversationDetailSerializer(AssistantConversationSerializer):
 
     class Meta(AssistantConversationSerializer.Meta):
         fields = AssistantConversationSerializer.Meta.fields + ("messages",)
+
+
+class AssistantInquirySerializer(serializers.ModelSerializer):
+    summary = serializers.CharField(read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    matched_product_title = serializers.SerializerMethodField()
+    matched_product_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AssistantInquiry
+        fields = (
+            "id", "product", "size", "grade", "factory", "quantity", "city", "note",
+            "raw_text", "matched_product", "matched_product_title", "matched_product_url",
+            "matched_price", "contact_name", "contact_phone", "status", "status_display",
+            "summary", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "product", "size", "grade", "factory", "quantity", "city", "note", "raw_text",
+            "matched_product", "matched_price", "created_at", "updated_at",
+        )
+
+    def get_matched_product_title(self, obj):
+        return obj.matched_product.name if obj.matched_product_id else ""
+
+    def get_matched_product_url(self, obj):
+        return f"/products/{obj.matched_product_id}" if obj.matched_product_id else ""

@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import AssistantConversation, AssistantKnowledge, AssistantMessage, AssistantSettings
+from .models import (
+    AssistantConversation,
+    AssistantInquiry,
+    AssistantKnowledge,
+    AssistantMessage,
+    AssistantSettings,
+)
 
 
 @admin.register(AssistantSettings)
@@ -27,3 +33,10 @@ class AssistantConversationAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("session_key", "lead_name", "lead_phone", "lead_interest")
     inlines = [AssistantMessageInline]
+
+
+@admin.register(AssistantInquiry)
+class AssistantInquiryAdmin(admin.ModelAdmin):
+    list_display = ("summary", "quantity", "matched_product", "matched_price", "contact_phone", "status", "created_at")
+    list_filter = ("status", "product")
+    search_fields = ("product", "grade", "factory", "city", "contact_name", "contact_phone", "raw_text")

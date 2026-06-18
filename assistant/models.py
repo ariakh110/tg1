@@ -209,3 +209,57 @@ class AssistantMessage(models.Model):
 
     def __str__(self):
         return f"{self.role}: {self.content[:40]}"
+
+
+class AssistantInquiry(models.Model):
+    """استعلام/سرنخِ ساختاریافته که از متن آزادِ مشتری استخراج شده است."""
+
+    STATUS_NEW = "new"
+    STATUS_QUOTED = "quoted"
+    STATUS_CONTACTED = "contacted"
+    STATUS_WON = "won"
+    STATUS_LOST = "lost"
+    STATUS_CHOICES = [
+        (STATUS_NEW, "جدید"),
+        (STATUS_QUOTED, "پیش‌فاکتور"),
+        (STATUS_CONTACTED, "پیگیری‌شده"),
+        (STATUS_WON, "موفق"),
+        (STATUS_LOST, "ازدست‌رفته"),
+    ]
+
+    conversation = models.ForeignKey(
+        AssistantConversation, null=True, blank=True, on_delete=models.SET_NULL, related_name="inquiries"
+    )
+    product = models.CharField(max_length=120, blank=True, default="")   # نوع کالا (میلگرد/ورق/...)
+    size = models.CharField(max_length=60, blank=True, default="")       # سایز/ضخامت
+    grade = models.CharField(max_length=60, blank=True, default="")      # گرید/آلیاژ
+    factory = models.CharField(max_length=80, blank=True, default="")    # کارخانه/مبدا
+    quantity = models.CharField(max_length=60, blank=True, default="")   # مقدار
+    city = models.CharField(max_length=80, blank=True, default="")       # شهر
+    note = models.CharField(max_length=255, blank=True, default="")
+    raw_text = models.TextField(blank=True, default="")                  # متنِ اصلیِ مشتری
+
+    matched_product = models.ForeignKey(
+        "products.Product", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    matched_price = models.DecimalField(max_digits=14, decimal_places=0, null=True, blank=True)  # تومان
+
+    contact_name = models.CharField(max_length=120, blank=True, default="")
+    contact_phone = models.CharField(max_length=30, blank=True, default="")
+
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_NEW)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "استعلام ساختاریافته"
+        verbose_name_plural = "استعلام‌های ساختاریافته"
+
+    def __str__(self):
+        return self.summary or "استعلام"
+
+    @property
+    def summary(self):
+        parts = [self.product, self.grade, self.size, self.factory, self.quantity, self.city]
+        return " - ".join(p for p in parts if p)
