@@ -1,30 +1,139 @@
+from datetime import timedelta
+
+from django.db.models import Count, F, Min, Q, Sum
+from django.db.models.functions import Coalesce
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .models import Customer, CustomerTransaction
+from .models import Customer, CustomerActivity, CustomerTransaction
 from .serializers import (
+    CustomerActivitySerializer,
     CustomerDetailSerializer,
     CustomerSerializer,
     CustomerTransactionSerializer,
 )
 
+# پیگیریِ باز = تاریخِ پیگیری دارد و هنوز انجام نشده.
+_OPEN_FOLLOW_UP = Q(activities__follow_up_at__isnull=False, activities__follow_up_done=False)
+
 
 class CustomerViewSet(viewsets.ModelViewSet):
     """مدیریتِ مشتریانِ CRM (فقط ادمین)."""
 
-    queryset = Customer.objects.all()
     permission_classes = [IsAdminOrActiveAdminRole]
     pagination_class = None
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["stage", "source", "is_active"]
     search_fields = ["name", "phone", "company", "city"]
-    ordering_fields = ["updated_at", "created_at", "name"]
+    ordering_fields = ["updated_at", "created_at", "name", "next_follow_up_at"]
     ordering = ["-updated_at"]
+
+    def get_queryset(self):
+        return Customer.objects.annotate(
+            next_follow_up_at=Min("activities__follow_up_at", filter=_OPEN_FOLLOW_UP),
+            open_follow_up_count=Count("activities", filter=_OPEN_FOLLOW_UP),
+        )
 
     def get_serializer_class(self):
         if self.action == "retrieve":
             return CustomerDetailSerializer
         return CustomerSerializer
+
+    def perform_update(self, serializer):
+        old_stage = serializer.instance.stage
+        instance = serializer.save()
+        if instance.stage != old_stage:
+            labels = dict(Customer.STAGE_CHOICES)
+            CustomerActivity.objects.create(
+                customer=instance,
+                kind=CustomerActivity.KIND_STAGE,
+                body=f"مرحله: {labels.get(old_stage, old_stage)} ← {labels.get(instance.stage, instance.stage)}",
+                stage_from=old_stage,
+                stage_to=instance.stage,
+                created_by=self.request.user if self.request.user.is_authenticated else None,
+            )
+
+    @action(detail=False, methods=["get"])
+    def funnel(self, request):
+        """خلاصهٔ قیفِ فروش + KPIها برای داشبورد (فقط ادمین)."""
+        now = timezone.localtime()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        customers = Customer.objects.all()
+        total = customers.count()
+        by_stage = {row["stage"]: row["count"] for row in customers.values("stage").annotate(count=Count("id"))}
+        stages = [
+            {"code": code, "label": label, "count": by_stage.get(code, 0)}
+            for code, label in Customer.STAGE_CHOICES
+        ]
+        won_count = sum(by_stage.get(code, 0) for code in Customer.STAGE_CLOSED_WON)
+        conversion_rate = round(won_count / total, 4) if total else None
+
+        # KPIهای دفترِ مانده
+        T = CustomerTransaction
+        total_sales = T.objects.filter(kind=T.KIND_PURCHASE).aggregate(s=Sum("amount"))["s"] or 0
+        balanced = customers.annotate(
+            _p=Coalesce(Sum("transactions__amount", filter=Q(transactions__kind=T.KIND_PURCHASE)), 0),
+            _pay=Coalesce(Sum("transactions__amount", filter=Q(transactions__kind=T.KIND_PAYMENT)), 0),
+            _adj=Coalesce(Sum("transactions__amount", filter=Q(transactions__kind=T.KIND_ADJUSTMENT)), 0),
+        ).annotate(_bal=F("_p") - F("_pay") + F("_adj"))
+        total_outstanding = balanced.filter(_bal__gt=0).aggregate(s=Sum("_bal"))["s"] or 0
+        clv = round(total_sales / won_count) if won_count else None
+
+        new_this_month = customers.filter(created_at__gte=month_start).count()
+        open_follow_ups = CustomerActivity.objects.filter(
+            follow_up_at__isnull=False, follow_up_done=False
+        ).count()
+
+        # KPIهای زمانی از تاریخچهٔ تغییرِ مرحله
+        won_rows = (
+            CustomerActivity.objects.filter(
+                kind=CustomerActivity.KIND_STAGE, stage_to=Customer.STAGE_WON
+            )
+            .values("customer", "customer__created_at")
+            .annotate(first_won=Min("occurred_at"))
+        )
+        deltas = [
+            (r["first_won"] - r["customer__created_at"]).total_seconds()
+            for r in won_rows
+            if r["first_won"] and r["customer__created_at"]
+        ]
+        avg_cycle_days = round((sum(deltas) / len(deltas)) / 86400, 1) if deltas else None
+
+        reached_proposal = (
+            CustomerActivity.objects.filter(kind=CustomerActivity.KIND_STAGE, stage_to=Customer.STAGE_PROPOSAL)
+            .values("customer")
+            .distinct()
+            .count()
+        )
+        reached_won = (
+            CustomerActivity.objects.filter(kind=CustomerActivity.KIND_STAGE, stage_to=Customer.STAGE_WON)
+            .values("customer")
+            .distinct()
+            .count()
+        )
+        quote_to_close = round(reached_won / reached_proposal, 4) if reached_proposal else None
+
+        return Response(
+            {
+                "stages": stages,
+                "total_customers": total,
+                "won_count": won_count,
+                "conversion_rate": conversion_rate,
+                "total_sales": total_sales,
+                "total_outstanding": total_outstanding,
+                "clv": clv,
+                "new_this_month": new_this_month,
+                "open_follow_ups": open_follow_ups,
+                "avg_cycle_days": avg_cycle_days,
+                "quote_to_close": quote_to_close,
+            }
+        )
 
 
 class CustomerTransactionViewSet(viewsets.ModelViewSet):
@@ -38,3 +147,61 @@ class CustomerTransactionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+
+class CustomerActivityViewSet(viewsets.ModelViewSet):
+    """تایم‌لاینِ تعامل‌ها و پیگیری‌های مشتری (تماس/پیام/جلسه/یادداشت) — فقط ادمین."""
+
+    queryset = CustomerActivity.objects.select_related("customer").all()
+    serializer_class = CustomerActivitySerializer
+    permission_classes = [IsAdminOrActiveAdminRole]
+    pagination_class = None
+    filterset_fields = ["customer", "kind", "follow_up_done"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+    @action(detail=False, methods=["get"])
+    def follow_ups(self, request):
+        """داشبوردِ پیگیری‌های باز در سه سطل: سررسیده / امروز / این هفته (۷ روزِ پیشِ‌رو)."""
+        now = timezone.localtime()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        week_end = today_start + timedelta(days=7)
+
+        base = (
+            CustomerActivity.objects.select_related("customer")
+            .filter(follow_up_at__isnull=False, follow_up_done=False)
+            .order_by("follow_up_at")
+        )
+        overdue = base.filter(follow_up_at__lt=today_start)
+        today = base.filter(follow_up_at__gte=today_start, follow_up_at__lt=today_end)
+        upcoming = base.filter(follow_up_at__gte=today_end, follow_up_at__lt=week_end)
+
+        return Response(
+            {
+                "overdue": self.get_serializer(overdue, many=True).data,
+                "today": self.get_serializer(today, many=True).data,
+                "upcoming": self.get_serializer(upcoming, many=True).data,
+                "counts": {
+                    "overdue": overdue.count(),
+                    "today": today.count(),
+                    "upcoming": upcoming.count(),
+                },
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        """پیگیریِ این فعالیت را «انجام‌شده» علامت می‌زند (از داشبورد حذف، ولی روی تایم‌لاین می‌ماند)."""
+        activity = self.get_object()
+        if not activity.follow_up_at:
+            return Response(
+                {"detail": "این فعالیت پیگیریِ زمان‌بندی‌شده‌ای ندارد."},
+                status=400,
+            )
+        if not activity.follow_up_done:
+            activity.follow_up_done = True
+            activity.follow_up_done_at = timezone.now()
+            activity.save(update_fields=["follow_up_done", "follow_up_done_at", "updated_at"])
+        return Response(self.get_serializer(activity).data)

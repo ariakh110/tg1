@@ -1,6 +1,44 @@
 from rest_framework import serializers
 
-from .models import Customer, CustomerTransaction
+from .models import Customer, CustomerActivity, CustomerTransaction
+
+
+class CustomerActivitySerializer(serializers.ModelSerializer):
+    kind_display = serializers.CharField(source="get_kind_display", read_only=True)
+    customer_name = serializers.CharField(source="customer.name", read_only=True)
+    customer_phone = serializers.CharField(source="customer.phone", read_only=True)
+
+    class Meta:
+        model = CustomerActivity
+        fields = [
+            "id",
+            "customer",
+            "customer_name",
+            "customer_phone",
+            "kind",
+            "kind_display",
+            "body",
+            "occurred_at",
+            "follow_up_at",
+            "follow_up_note",
+            "follow_up_done",
+            "follow_up_done_at",
+            "stage_from",
+            "stage_to",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "customer_name",
+            "customer_phone",
+            "kind_display",
+            "follow_up_done_at",
+            "stage_from",
+            "stage_to",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class CustomerTransactionSerializer(serializers.ModelSerializer):
@@ -35,6 +73,11 @@ class CustomerTransactionSerializer(serializers.ModelSerializer):
 class CustomerSerializer(serializers.ModelSerializer):
     balance = serializers.IntegerField(read_only=True)
     transaction_count = serializers.IntegerField(source="transactions.count", read_only=True)
+    stage_display = serializers.CharField(source="get_stage_display", read_only=True)
+    source_display = serializers.CharField(source="get_source_display", read_only=True)
+    # از annotate شدنِ کوئری در ویوست می‌آیند؛ روی نمونهٔ تکی ممکن است نباشند.
+    next_follow_up_at = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
+    open_follow_up_count = serializers.IntegerField(read_only=True, required=False)
 
     class Meta:
         model = Customer
@@ -49,16 +92,33 @@ class CustomerSerializer(serializers.ModelSerializer):
             "extra_phones",
             "user",
             "is_active",
+            "stage",
+            "stage_display",
+            "source",
+            "source_display",
             "balance",
             "transaction_count",
+            "next_follow_up_at",
+            "open_follow_up_count",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "balance", "transaction_count", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "balance",
+            "transaction_count",
+            "stage_display",
+            "source_display",
+            "next_follow_up_at",
+            "open_follow_up_count",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class CustomerDetailSerializer(CustomerSerializer):
     transactions = CustomerTransactionSerializer(many=True, read_only=True)
+    activities = CustomerActivitySerializer(many=True, read_only=True)
 
     class Meta(CustomerSerializer.Meta):
-        fields = CustomerSerializer.Meta.fields + ["transactions"]
+        fields = CustomerSerializer.Meta.fields + ["transactions", "activities"]
