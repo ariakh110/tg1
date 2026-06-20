@@ -28,6 +28,7 @@ urlpatterns += [
     path('api/blog/', include('blog.urls')),
     path('api/assistant/', include('assistant.urls')),
     path('api/seo-assistant/', include('seo_assistant.urls')),
+    path('api/crm/', include('customers.urls')),
     # include accounts URL patterns directly under /api/ so routes like
     # /api/auth/profile/ and /api/auth/register/ match frontend expectations
     path("api/", include("accounts.urls")),

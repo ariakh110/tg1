@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'blog',
     'assistant',
     'seo_assistant',
+    'customers',
 
 ]
 # Optionally enable drf-spectacular if it's installed in the environment.
