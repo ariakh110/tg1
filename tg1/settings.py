@@ -227,6 +227,15 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+# پشتِ Cloudflare/nginx: nginx هدرِ X-Forwarded-Proto را ست می‌کند؛ بدون این،
+# Django هر ریکوئست را غیرامن می‌بیند و کوکی‌های Secure را برنمی‌گرداند.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
 # Transactional email settings. Development prints messages unless explicitly overridden.
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
