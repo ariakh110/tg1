@@ -4,7 +4,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework import generics, permissions, status, viewsets
+from rest_framework import permissions, status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -12,6 +13,9 @@ from rest_framework.response import Response
 from .models import KYCDocument, KYCRequest, KYCStatus, RoleCode, UserRole
 from .permissions import IsAdminOrActiveAdminRole
 from .serializers import (
+    AdminSetActiveSerializer,
+    AdminSetPasswordSerializer,
+    AdminSetRoleSerializer,
     AdminUserSummarySerializer,
     KYCDocumentSerializer,
     KYCRequestSerializer,
@@ -38,7 +42,9 @@ class UserRoleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrActiveAdminRole]
 
 
-class AdminUserListAPIView(generics.ListAPIView):
+class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
+    """مدیریتِ کاربران توسط ادمین: نمایش + تأیید/تعلیق، ریست رمز، و مدیریت نقش‌ها."""
+
     serializer_class = AdminUserSummarySerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
 
@@ -51,6 +57,58 @@ class AdminUserListAPIView(generics.ListAPIView):
         if role_code:
             queryset = queryset.filter(roles__role=role_code).distinct()
         return queryset
+
+    def _guard_target(self, target):
+        """ادمینِ غیرسوپریوزر نمی‌تواند یک سوپریوزر را تغییر دهد."""
+        if target.is_superuser and not self.request.user.is_superuser:
+            raise PermissionDenied("نمی‌توانید حسابِ سوپریوزر را تغییر دهید.")
+
+    def _summary(self, user):
+        return Response(AdminUserSummarySerializer(user, context={"request": self.request}).data)
+
+    @action(detail=True, methods=["post"], url_path="set_active")
+    def set_active(self, request, pk=None):
+        target = self.get_object()
+        self._guard_target(target)
+        serializer = AdminSetActiveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        is_active = serializer.validated_data["is_active"]
+        if not is_active and target == request.user:
+            return Response(
+                {"detail": "نمی‌توانید حسابِ خودتان را غیرفعال کنید."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target.is_active != is_active:
+            target.is_active = is_active
+            target.save(update_fields=["is_active"])
+        return self._summary(target)
+
+    @action(detail=True, methods=["post"], url_path="set_password")
+    def set_password(self, request, pk=None):
+        target = self.get_object()
+        self._guard_target(target)
+        serializer = AdminSetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target.set_password(serializer.validated_data["password"])
+        target.save(update_fields=["password"])
+        return Response({"detail": "رمز عبور تغییر کرد."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="set_role")
+    def set_role(self, request, pk=None):
+        target = self.get_object()
+        self._guard_target(target)
+        serializer = AdminSetRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        role = serializer.validated_data["role"]
+        is_active = serializer.validated_data["is_active"]
+        # دادن/گرفتنِ نقشِ ادمین فقط برای سوپریوزر
+        if role == RoleCode.ADMIN and not request.user.is_superuser:
+            raise PermissionDenied("فقط سوپریوزر می‌تواند نقشِ ادمین را تغییر دهد.")
+        user_role, _created = UserRole.objects.get_or_create(user=target, role=role)
+        user_role.is_active = is_active
+        user_role.activated_at = timezone.now() if is_active else None
+        user_role.save(update_fields=["is_active", "activated_at"])
+        return self._summary(target)
 
 
 class KYCRequestViewSet(viewsets.ModelViewSet):

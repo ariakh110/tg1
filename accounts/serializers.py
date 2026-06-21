@@ -125,6 +125,8 @@ class AdminUserSummarySerializer(serializers.ModelSerializer):
             "id",
             "username",
             "email",
+            "first_name",
+            "last_name",
             "is_active",
             "is_staff",
             "is_superuser",
@@ -140,3 +142,16 @@ class AdminUserSummarySerializer(serializers.ModelSerializer):
 
     def get_pending_kyc_count(self, obj):
         return obj.kyc_requests.filter(status=KYCStatus.PENDING).count()
+
+
+class AdminSetPasswordSerializer(serializers.Serializer):
+    password = serializers.CharField(min_length=8, write_only=True, trim_whitespace=False)
+
+
+class AdminSetRoleSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=RoleCode.choices)
+    is_active = serializers.BooleanField(default=True)
+
+
+class AdminSetActiveSerializer(serializers.Serializer):
+    is_active = serializers.BooleanField()
