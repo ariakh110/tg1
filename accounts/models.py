@@ -53,6 +53,7 @@ class RoleCode(models.TextChoices):
     QC = "QC", _("Quality Control")
     STRUCTURAL_DESIGNER = "STRUCTURAL_DESIGNER", _("Structural Designer")
     ADMIN = "ADMIN", _("Admin")
+    MARKETER = "MARKETER", _("Marketer")
 
 
 class UserRole(models.Model):

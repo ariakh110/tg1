@@ -26,6 +26,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     """مدیریتِ مشتریانِ CRM (فقط ادمین)."""
 
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_sections = ("crm", "crm-funnel")
     pagination_class = None
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["stage", "source", "is_active"]
@@ -142,6 +143,7 @@ class CustomerTransactionViewSet(viewsets.ModelViewSet):
     queryset = CustomerTransaction.objects.select_related("customer").all()
     serializer_class = CustomerTransactionSerializer
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "crm"
     pagination_class = None
     filterset_fields = ["customer", "kind"]
 
@@ -155,6 +157,7 @@ class CustomerActivityViewSet(viewsets.ModelViewSet):
     queryset = CustomerActivity.objects.select_related("customer").all()
     serializer_class = CustomerActivitySerializer
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_sections = ("crm", "crm-followups")
     pagination_class = None
     filterset_fields = ["customer", "kind", "follow_up_done"]
 

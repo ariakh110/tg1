@@ -101,9 +101,9 @@ class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
         role = serializer.validated_data["role"]
         is_active = serializer.validated_data["is_active"]
-        # دادن/گرفتنِ نقشِ ادمین فقط برای سوپریوزر
-        if role == RoleCode.ADMIN and not request.user.is_superuser:
-            raise PermissionDenied("فقط سوپریوزر می‌تواند نقشِ ادمین را تغییر دهد.")
+        # دادن/گرفتنِ نقش‌های دارایِ دسترسیِ پنل ادمین (مدیر/بازاریاب) فقط برای سوپریوزر
+        if role in (RoleCode.ADMIN, RoleCode.MARKETER) and not request.user.is_superuser:
+            raise PermissionDenied("فقط سوپریوزر می‌تواند نقشِ مدیر یا بازاریاب را تغییر دهد.")
         user_role, _created = UserRole.objects.get_or_create(user=target, role=role)
         user_role.is_active = is_active
         user_role.activated_at = timezone.now() if is_active else None

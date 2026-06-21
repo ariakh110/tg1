@@ -96,6 +96,7 @@ class KYCRequestAdminUpdateSerializer(serializers.ModelSerializer):
 class UserMeSerializer(serializers.ModelSerializer):
     roles = UserRoleSerializer(many=True, read_only=True)
     kyc_status = serializers.SerializerMethodField()
+    admin_sections = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -107,11 +108,21 @@ class UserMeSerializer(serializers.ModelSerializer):
             "is_superuser",
             "roles",
             "kyc_status",
+            "admin_sections",
         )
 
     def get_kyc_status(self, obj):
         latest = obj.kyc_requests.order_by("-submitted_at").first()
         return latest.status if latest else None
+
+    def get_admin_sections(self, obj):
+        """بخش‌های مجازِ پنل ادمین: رشتهٔ "ALL" یا لیستِ مرتبِ id‌ها."""
+        from .admin_sections import ADMIN_SECTIONS, ALL, effective_admin_sections
+
+        sections = effective_admin_sections(obj)
+        if sections == ALL:
+            return "ALL"
+        return [s for s in ADMIN_SECTIONS if s in sections]
 
 
 class AdminUserSummarySerializer(serializers.ModelSerializer):

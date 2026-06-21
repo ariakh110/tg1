@@ -68,6 +68,7 @@ class AdminAssistantSettingsView(APIView):
     """خواندن/به‌روزرسانیِ تنظیمات دستیار (فقط ادمین)."""
 
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "assistant"
 
     def get(self, request):
         return Response(AssistantSettingsSerializer(AssistantSettings.load()).data)
@@ -84,6 +85,7 @@ class AdminKnowledgeViewSet(viewsets.ModelViewSet):
     queryset = AssistantKnowledge.objects.all()
     serializer_class = AssistantKnowledgeSerializer
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "assistant"
     pagination_class = None
 
     @action(detail=False, methods=["post"], url_path="reembed")
@@ -98,6 +100,7 @@ class AdminKnowledgeViewSet(viewsets.ModelViewSet):
 class AdminConversationViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AssistantConversation.objects.all().prefetch_related("messages")
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "assistant"
     filterset_fields = ["status"]
 
     def get_serializer_class(self):
@@ -112,6 +115,7 @@ class AdminInquiryViewSet(viewsets.ModelViewSet):
     queryset = AssistantInquiry.objects.select_related("matched_product", "conversation").all()
     serializer_class = AssistantInquirySerializer
     permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "assistant"
     http_method_names = ["get", "patch", "head", "options"]
     filterset_fields = ["status"]
     pagination_class = None

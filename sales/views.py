@@ -355,6 +355,7 @@ class DriverOperationalProfileAPIView(APIView):
 
 class AdminDriverOperationalProfileListAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_sections = ("direct-sales", "delivery-logistics")
 
     def get(self, request):
         for role in UserRole.objects.filter(role__in=[RoleCode.DRIVER, RoleCode.CARRIER], is_active=True).select_related("user"):
@@ -376,6 +377,7 @@ class AdminDriverOperationalProfileListAPIView(APIView):
 
 class AdminDriverOperationalProfileDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_sections = ("direct-sales", "delivery-logistics")
 
     def patch(self, request, user_id):
         role = (
@@ -401,6 +403,7 @@ class AdminDriverOperationalProfileDetailAPIView(APIView):
 
 class AdminDeliveryDriverMatchAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_sections = ("direct-sales", "delivery-logistics")
 
     def post(self, request):
         serializer = StoreDeliveryDriverMatchRequestSerializer(data=request.data, context={"request": request})
@@ -412,6 +415,7 @@ class AdminDeliveryDriverMatchAPIView(APIView):
 
 class AdminDeliveryRequestListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_sections = ("direct-sales", "delivery-logistics")
 
     def get(self, request):
         queryset = _delivery_request_queryset()
@@ -434,6 +438,7 @@ class AdminDeliveryRequestListCreateAPIView(APIView):
 
 class AdminDeliveryRequestReassignAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_sections = ("direct-sales", "delivery-logistics")
 
     def post(self, request, pk):
         delivery_request = get_object_or_404(_delivery_request_queryset(), pk=pk)
@@ -538,6 +543,7 @@ class DriverAssignmentDocumentAPIView(APIView):
 
 class AdminStoreOrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
     serializer_class = StoreOrderReadSerializer
     http_method_names = ["get", "patch", "post", "head", "options"]
 
@@ -661,6 +667,7 @@ class AdminStoreOrderViewSet(viewsets.ModelViewSet):
 
 class AdminStoreOrderLoadingVehicleListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def _get_order(self, pk):
         return get_object_or_404(StoreOrder, pk=pk)
@@ -689,6 +696,7 @@ class AdminStoreOrderLoadingVehicleListCreateAPIView(APIView):
 
 class AdminStoreOrderLoadingVehicleDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def _get_vehicle(self, order_pk, vehicle_pk):
         return get_object_or_404(StoreOrderLoadingVehicle, pk=vehicle_pk, order_id=order_pk)
@@ -714,6 +722,7 @@ class AdminStoreOrderLoadingVehicleDetailAPIView(APIView):
 
 class AdminStoreOrderWeighbridgeSlipListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
     parser_classes = [MultiPartParser, FormParser]
 
     def _get_order(self, pk):
@@ -749,6 +758,7 @@ class AdminStoreOrderWeighbridgeSlipListCreateAPIView(APIView):
 
 class AdminStoreOrderWeighbridgeSlipDestroyAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def delete(self, request, pk, slip_pk):
         slip = get_object_or_404(StoreOrderWeighbridgeSlip, pk=slip_pk, order_id=pk)
@@ -768,6 +778,7 @@ class AdminFreightRateSettingsAPIView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def get(self, request):
         settings_obj = get_freight_rate_settings()
@@ -789,6 +800,7 @@ class AdminFreightCostEstimateAPIView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def _decimal(self, raw):
         if raw in (None, ""):
@@ -833,6 +845,7 @@ class AdminFreightCostEstimateAPIView(APIView):
 class AdminFreightBidSessionAPIView(APIView):
     """Admin: start a bid session (POST) or view current session (GET) for an order."""
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
+    admin_section = "direct-sales"
 
     def _get_order(self, pk):
         return get_object_or_404(StoreOrder, pk=pk)
