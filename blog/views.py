@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -277,7 +278,14 @@ class RobotsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return HttpResponse(SiteSEOSettings.load().robots_txt, content_type='text/plain; charset=utf-8')
+        robots = SiteSEOSettings.load().robots_txt or ""
+        # خط Sitemap را خودکار اضافه کن تا موتورها آدرس sitemap را از robots پیدا کنند
+        # (فقط اگر دامنهٔ واقعی ست شده باشد؛ روی localhost/پیش‌فرض چیزی اضافه نمی‌شود)
+        if "sitemap:" not in robots.lower():
+            base = (getattr(settings, "FRONTEND_BASE", "") or "").rstrip("/")
+            if base and "localhost" not in base and "127.0.0.1" not in base:
+                robots = robots.rstrip() + f"\nSitemap: {base}/sitemap.xml\n"
+        return HttpResponse(robots, content_type='text/plain; charset=utf-8')
 
 
 class AdminRobotsView(APIView):
