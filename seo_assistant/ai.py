@@ -38,9 +38,28 @@ def _post_json(path, body, cfg):
         with urlopen(request, timeout=_timeout()) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        raise SeoAssistantError("سرویس هوش مصنوعی درخواست را نپذیرفت (کلید/مدل/اتصال را بررسی کنید).") from exc
+        # خطای واقعیِ AvalAI را به ادمین نشان بده (کلید نامعتبر، مدلِ پشتیبانی‌نشده، اعتبارِ تمام‌شده و ...).
+        # این دستیار فقط ادمین‌محور است، پس افشای جزئیاتِ بالادست بی‌خطر و برای دیباگ ضروری است.
+        try:
+            raw = exc.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            raw = ""
+        detail = raw[:400]
+        try:
+            err = json.loads(raw).get("error")
+            if isinstance(err, dict) and err.get("message"):
+                detail = err["message"]
+        except Exception:  # noqa: BLE001 — بدنه JSON نبود؛ همان متنِ خام را نگه می‌داریم
+            pass
+        raise SeoAssistantError(
+            f"سرویس هوش مصنوعی خطا داد (HTTP {exc.code}): {detail or 'بدون جزئیات'} "
+            f"— مدلِ «{body.get('model', '?')}» / کلید / اعتبارِ AvalAI را بررسی کنید."
+        ) from exc
     except (URLError, TimeoutError) as exc:
-        raise SeoAssistantError("ارتباط با سرویس هوش مصنوعی برقرار نشد.") from exc
+        reason = getattr(exc, "reason", None) or exc
+        raise SeoAssistantError(
+            f"ارتباط با سرویس هوش مصنوعی برقرار نشد: {reason} (base_url: {base})."
+        ) from exc
     except json.JSONDecodeError as exc:
         raise SeoAssistantError("پاسخ هوش مصنوعی قابل پردازش نبود.") from exc
 
