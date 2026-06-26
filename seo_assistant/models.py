@@ -41,7 +41,8 @@ class SeoAssistantSettings(models.Model):
     site_context = models.TextField(blank=True, default=DEFAULT_SITE_CONTEXT)  # زمینهٔ سایت هدف (تیرکسا)
 
     # اتصال به LLM سازگار با OpenAI؛ پیش‌فرض AvalAI (هم OpenAI هم Claude را سرو می‌کند).
-    # کلید از SiteSettings.openai_api_key خوانده می‌شود (همان کلید AvalAI).
+    # کلیدِ اختصاصیِ همین دستیار؛ خالی ⇒ از کلیدِ سراسری (تنظیمات سایت) استفاده می‌شود.
+    openai_api_key = models.CharField(max_length=255, blank=True, default="")
     openai_base_url = models.CharField(max_length=255, default="https://api.avalai.ir/v1")
     chat_model = models.CharField(max_length=80, default="gpt-4o-mini")  # مثلاً gpt-4o-mini یا claude-3-5-sonnet از AvalAI
     embedding_model = models.CharField(max_length=80, default="text-embedding-3-small")
@@ -71,6 +72,9 @@ class SeoAssistantSettings(models.Model):
     def api_key(self):
         from core.models import SiteSettings
 
+        own = (self.openai_api_key or "").strip()
+        if own:
+            return own
         return (SiteSettings.load().openai_api_key or getattr(settings, "OPENAI_API_KEY", "")).strip()
 
 

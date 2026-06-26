@@ -41,8 +41,10 @@ class AssistantSettings(models.Model):
     persona = models.TextField(blank=True, default=DEFAULT_PERSONA)  # پرسونا/دستور سیستم پایه
     sales_workflow = models.TextField(blank=True, default=DEFAULT_WORKFLOW)  # گردش‌کار فروش
 
-    # اتصال به LLM (سازگار با OpenAI). کلید از SiteSettings.openai_api_key خوانده می‌شود.
-    openai_base_url = models.CharField(max_length=255, default="https://api.openai.com/v1")
+    # اتصال به LLM (سازگار با OpenAI). پیش‌فرض AvalAI تا از داخل ایران هم کار کند.
+    # کلیدِ اختصاصیِ همین دستیار؛ خالی ⇒ از کلیدِ سراسری (تنظیمات سایت → OpenAI) استفاده می‌شود.
+    openai_api_key = models.CharField(max_length=255, blank=True, default="")
+    openai_base_url = models.CharField(max_length=255, default="https://api.avalai.ir/v1")
     chat_model = models.CharField(max_length=80, default="gpt-4o-mini")
     embedding_model = models.CharField(max_length=80, default="text-embedding-3-small")
     temperature = models.DecimalField(max_digits=3, decimal_places=2, default=0.30)
@@ -75,6 +77,9 @@ class AssistantSettings(models.Model):
     def api_key(self):
         from core.models import SiteSettings
 
+        own = (self.openai_api_key or "").strip()
+        if own:
+            return own
         return (SiteSettings.load().openai_api_key or getattr(settings, "OPENAI_API_KEY", "")).strip()
 
 

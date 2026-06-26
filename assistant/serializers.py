@@ -29,12 +29,16 @@ class AssistantKnowledgeSerializer(serializers.ModelSerializer):
 
 class AssistantSettingsSerializer(serializers.ModelSerializer):
     api_key_configured = serializers.SerializerMethodField()
+    # کلیدِ اختصاصیِ این دستیار — فقط نوشتنی (هرگز در پاسخِ GET برنمی‌گردد).
+    openai_api_key = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True
+    )
 
     class Meta:
         model = AssistantSettings
         fields = (
             "is_enabled", "assistant_name", "greeting", "persona", "sales_workflow",
-            "openai_base_url", "chat_model", "embedding_model", "temperature",
+            "openai_api_key", "openai_base_url", "chat_model", "embedding_model", "temperature",
             "max_context_chunks", "max_tool_iterations", "lead_capture_enabled",
             "handoff_phone", "handoff_note", "api_key_configured", "updated_at",
         )
@@ -42,6 +46,13 @@ class AssistantSettingsSerializer(serializers.ModelSerializer):
 
     def get_api_key_configured(self, obj):
         return bool(obj.api_key)
+
+    def update(self, instance, validated_data):
+        # کلیدِ خالی ⇒ کلیدِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
+        key = validated_data.pop("openai_api_key", None)
+        if key is not None and key.strip():
+            instance.openai_api_key = key.strip()
+        return super().update(instance, validated_data)
 
 
 class PublicAssistantConfigSerializer(serializers.ModelSerializer):
