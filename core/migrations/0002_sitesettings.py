@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
             name='SiteSettings',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('site_name', models.CharField(default='کاوه متال', max_length=120)),
+                ('site_name', models.CharField(default='کاوکس', max_length=120)),
                 ('marketplace_enabled', models.BooleanField(default=False)),
                 ('featured_loads_enabled', models.BooleanField(default=True)),
                 ('export_enabled', models.BooleanField(default=True)),

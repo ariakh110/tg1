@@ -44,7 +44,7 @@ def _send_alert_match_email(alert, load):
     lines = [
         f"سلام {alert.user.get_full_name() or alert.user.username}،",
         "",
-        f"باری مطابق با معیار هشدار شما («{alert.keyword}») در بارانداز ویژه‌ی کاوه متال اعلام شد:",
+        f"باری مطابق با معیار هشدار شما («{alert.keyword}») در بارانداز ویژه‌ی کاوکس اعلام شد:",
         "",
         f"عنوان: {load.title}",
     ]
