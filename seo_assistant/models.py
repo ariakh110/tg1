@@ -17,12 +17,16 @@ DEFAULT_PERSONA = (
 )
 
 DEFAULT_SITE_CONTEXT = (
-    "سایت هدف: تیرکسا (Tirexa).\n"
-    "استک: بک‌اند Django/DRF + فرانت‌اند Next.js؛ دیپلوی روی سرور اوبونتو با IP ایران (systemd: gunicorn + next + nginx).\n"
-    "🚨 بزرگ‌ترین بلاکر سئو (اولویت صفر): IP ایران باعث می‌شود بازدیدکنندهٔ خارجی صفحهٔ سفید بگیرد و احتمالاً Googlebot هم "
-    "نتواند سایت را crawl/index کند. تا حل نشدن این (دامنه + CDN جهانی با HTTPS لبه و rebuild فرانت با NEXT_PUBLIC_* مبتنی بر دامنه)، "
-    "هیچ تاکتیک سئوی دیگری اثر کامل ندارد. در هر آدیت، اول وضعیت crawlability/index و دامنه/CDN/HTTPS را چک کن.\n"
-    "نکات Next.js: رندر SSR/SSG (نه فقط CSR) تا محتوا برای ربات دیده شود؛ متادیتا با Metadata API؛ تولید sitemap.xml و robots.txt؛ canonical و در صورت چندزبانه‌بودن hreflang."
+    "سایت هدف: کاوکس (kavex.ir) — بازار آنلاین آهن و فولاد، پایگاه اصفهان، فروش عمدهٔ ورق و مقاطع.\n"
+    "استک: بک‌اند Django/DRF + فرانت‌اند Next.js (SSR/SSG)، سرور اوبونتو (systemd: gunicorn + next + nginx).\n"
+    "✅ دامنه + HTTPS + CDN حل شده: سایت روی دامنهٔ kavex.ir پشتِ Cloudflare با HTTPS لبه فعال است. پس بلاکرِ قدیمیِ "
+    "«IP ایران → صفحهٔ سفید / عدم crawl» دیگر برقرار نیست؛ آن را به‌عنوان بلاکر مطرح نکن مگر شواهدِ زندهٔ صفحه خلافش را نشان دهد.\n"
+    "زیرساختِ سئوی پیاده‌شده (قبل از پیشنهادِ افزودن، با schema_types ابزار تطبیق بده): sitemap.xml + robots.txt؛ "
+    "صفحاتِ محصول و لندینگ SSR با generateMetadata؛ و اسکیماهای خودکار: Organization (layout)، BreadcrumbList (همه‌جا)، "
+    "FAQPage (هر لندینگ که بخشِ «سوالات متداول» در بدنه داشته باشد)، Product/Offer فقط روی محصول/لندینگِ قیمت‌دار "
+    "(IRR + priceValidUntil). پس اگر صفحه‌ای قیمت ندارد، نبودِ Product schema عمدی است نه ایراد.\n"
+    "تمرکزِ فعلیِ آدیت‌ها: عمقِ محتوا، تازگیِ جدول قیمت روزانه، H1/title کلمه‌محور (ترکیبِ «خرید» + «قیمت»)، "
+    "لینک‌سازیِ داخلیِ سیلو (لندینگ‌های خواهر)، و بهینه‌سازی برای AI Overviews/GEO."
 )
 
 DEFAULT_GREETING = (

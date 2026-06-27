@@ -28,13 +28,18 @@ class _SeoHTMLParser(HTMLParser):
         self.h1 = []
         self.h2 = []
         self.link_count = 0
+        self.jsonld = []  # متنِ خامِ اسکریپت‌های application/ld+json
         self._capture = None  # "title" | "h1" | "h2"
         self._buf = []
+        self._in_jsonld = False
+        self._jsonld_buf = []
 
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
         if tag == "title":
             self._capture, self._buf = "title", []
+        elif tag == "script" and "ld+json" in a.get("type", "").lower():
+            self._in_jsonld, self._jsonld_buf = True, []
         elif tag in ("h1", "h2"):
             self._capture, self._buf = tag, []
         elif tag == "a" and a.get("href"):
@@ -49,6 +54,10 @@ class _SeoHTMLParser(HTMLParser):
             self.canonical = a.get("href", "").strip()
 
     def handle_endtag(self, tag):
+        if self._in_jsonld and tag == "script":
+            self.jsonld.append("".join(self._jsonld_buf))
+            self._in_jsonld, self._jsonld_buf = False, []
+            return
         if self._capture and tag == self._capture:
             text = "".join(self._buf).strip()
             if tag == "title":
@@ -60,7 +69,9 @@ class _SeoHTMLParser(HTMLParser):
             self._capture, self._buf = None, []
 
     def handle_data(self, data):
-        if self._capture:
+        if self._in_jsonld:
+            self._jsonld_buf.append(data)
+        elif self._capture:
             self._buf.append(data)
 
 
@@ -115,6 +126,8 @@ def fetch_page_seo(url):
 
     title_len = len(parser.title)
     desc_len = len(parser.meta_description)
+    # اسکیماهای JSON-LD موجود روی صفحه (تا دستیار اسکیمایی که از قبل هست را دوباره پیشنهاد نکند).
+    schema_types = sorted(set(re.findall(r'"@type"\s*:\s*"([^"]+)"', " ".join(parser.jsonld))))
     return {
         "url": final_url,
         "status_code": status_code,
@@ -126,6 +139,7 @@ def fetch_page_seo(url):
         "meta_description_ok": 120 <= desc_len <= 160,
         "canonical": parser.canonical,
         "meta_robots": parser.meta_robots,
+        "schema_types": schema_types,
         "h1": parser.h1[:10],
         "h1_count": len(parser.h1),
         "h2": parser.h2[:15],
@@ -154,7 +168,8 @@ TOOL_SCHEMAS = [
             "description": (
                 "واکشی یک صفحهٔ وب زنده و استخراج سیگنال‌های on-page سئو: عنوان (title) و طولش، "
                 "meta description و طولش، canonical، meta robots (noindex؟)، H1 و H2ها، کد وضعیت HTTP، "
-                "تعداد کلمات و لینک‌ها. وقتی کاربر می‌خواهد یک URL مشخص را آدیت کنی از این ابزار استفاده کن."
+                "تعداد کلمات و لینک‌ها، و اسکیماهای JSON-LD موجود (schema_types). وقتی کاربر می‌خواهد یک URL "
+                "مشخص را آدیت کنی از این ابزار استفاده کن و اسکیمایی را که در schema_types هست دوباره پیشنهاد نده."
             ),
             "parameters": {
                 "type": "object",
