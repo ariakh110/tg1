@@ -196,7 +196,12 @@ def run_chat(conversation, user_text, cfg=None):
 
     for _ in range(max(1, cfg.max_tool_iterations)):
         message = _chat_completion(messages, cfg)
-        tool_calls = message.get("tool_calls") or []
+        # فقط tool_callهای معتبر؛ بعضی مدل‌ها/پراکسی‌ها (AvalAI) گاهی tool_call با name=null
+        # و arguments خالی می‌فرستند — این‌ها را نادیده می‌گیریم تا نه کرش شود نه content=null ذخیره گردد.
+        tool_calls = [
+            c for c in (message.get("tool_calls") or [])
+            if isinstance(c, dict) and ((c.get("function") or {}).get("name") or "").strip()
+        ]
         if not tool_calls:
             reply = (message.get("content") or "").strip() or "متوجه نشدم، می‌شود واضح‌تر بفرمایید؟"
             SeoMessage.objects.create(conversation=conversation, role=SeoMessage.ROLE_ASSISTANT, content=reply)
@@ -205,7 +210,7 @@ def run_chat(conversation, user_text, cfg=None):
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
         for call in tool_calls:
             fn = call.get("function", {})
-            name = fn.get("name", "")
+            name = (fn.get("name") or "").strip()
             try:
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
@@ -214,7 +219,7 @@ def run_chat(conversation, user_text, cfg=None):
             SeoMessage.objects.create(
                 conversation=conversation,
                 role=SeoMessage.ROLE_TOOL,
-                content=name,
+                content=name or "tool",  # هرگز null نشود (ستون NOT NULL است)
                 tool_name=name,
                 tool_payload={"args": args, "result": result},
             )
