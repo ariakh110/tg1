@@ -18,7 +18,7 @@
 - [x] 3.4 Marketplace hidden by default
 
 ## 4. Dynamic site name
-- [x] 4.1 `brandify` helper + dynamic `siteName` across chrome (Header/Footer) and all primary public pages (home, terms, privacy, sale-hall, export, about, contact, barandaz, categories, blog slider) — verified rendering 0 "کاوه متال"
+- [x] 4.1 `brandify` helper + dynamic `siteName` across chrome (Header/Footer) and all primary public pages (home, terms, privacy, sale-hall, export, about, contact, barandaz, categories, blog slider) — verified rendering 0 "کاوکس"
 - [ ] 4.2 Remaining internal/lower-traffic surfaces (same pattern): account area (layout/dashboard/payments/purchases), blog content pages (BlogArchive/[categories]/[slug]), admin dashboard internal labels, products/[id]/buy, blog page metadata title
 
 ## 5. Admin Settings panel

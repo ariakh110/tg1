@@ -463,7 +463,7 @@ class AdminProductImportTests(APITestCase):
         self.seller_user = User.objects.create_user(username="price_seller", password="pass1234")
         self.seller = Seller.objects.create(
             user=self.seller_user,
-            company_name="کاوه متال",
+            company_name="کاوکس",
             business_type="Trading",
             location="تهران",
             is_verified=True,

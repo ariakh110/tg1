@@ -89,7 +89,7 @@ def build_article_schema(post):
         "datePublished": post.published_at.isoformat() if post.published_at else None,
         "dateModified": post.updated_at.isoformat() if post.updated_at else None,
         "author": {"@type": "Person", "name": author_name},
-        "publisher": {"@type": "Organization", "name": "کاوه متال"},
+        "publisher": {"@type": "Organization", "name": "کاوکس"},
     }
     if image:
         schema["image"] = urljoin(f"{settings.FRONTEND_BASE.rstrip('/')}/", image.url.lstrip("/"))

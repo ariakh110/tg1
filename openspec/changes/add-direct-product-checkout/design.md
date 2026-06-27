@@ -121,7 +121,7 @@ API:
 - Risk: inventory reservation semantics are unclear.
   - Mitigation: do not decrement inventory until the inventory model exists; show status only.
 - Risk: direct sales and marketplace requests confuse users.
-  - Mitigation: rename UI surfaces clearly: "خرید از کاوه متال" versus "تالار اعلام بار".
+  - Mitigation: rename UI surfaces clearly: "خرید از کاوکس" versus "تالار اعلام بار".
 
 ## Migration Plan
 
