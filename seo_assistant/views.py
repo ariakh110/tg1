@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from django.core.management import call_command
@@ -16,6 +17,8 @@ from .serializers import (
     SeoConversationSerializer,
     SeoKnowledgeSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LEN = 4000
 
@@ -47,6 +50,16 @@ class SeoChatView(APIView):
         except SeoAssistantError as exc:
             return Response(
                 {"session_key": session_key, "reply": str(exc), "error": True},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as exc:  # noqa: BLE001 — ادمین‌محور؛ خطای واقعی را به‌جای ۵۰۰ مبهم («{}») نشان بده
+            logger.exception("run_chat failed for session %s", session_key)
+            return Response(
+                {
+                    "session_key": session_key,
+                    "reply": f"خطای داخلی هنگام پردازش: {type(exc).__name__}: {exc}",
+                    "error": True,
+                },
                 status=status.HTTP_200_OK,
             )
         return Response({"session_key": session_key, "reply": reply})

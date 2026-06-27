@@ -91,6 +91,8 @@ def fetch_page_seo(url):
         return {"url": url, "status_code": exc.code, "error": f"صفحه با خطای HTTP {exc.code} پاسخ داد."}
     except (URLError, TimeoutError) as exc:
         return {"url": url, "error": f"ارتباط با صفحه برقرار نشد: {getattr(exc, 'reason', exc)}"}
+    except Exception as exc:  # noqa: BLE001 — هر خطای غیرمنتظره (قطع اتصال/SSL هنگام read، …) نباید کلِ گفتگو را ۵۰۰ کند
+        return {"url": url, "error": f"واکشی صفحه ناموفق بود: {type(exc).__name__}: {exc}"}
 
     if "html" not in (ctype or "").lower():
         return {"url": final_url, "status_code": status_code, "content_type": ctype,
