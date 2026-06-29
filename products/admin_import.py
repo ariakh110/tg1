@@ -405,7 +405,9 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
     category = resolve_category(row)
     product = find_product(row, category)
     created_product = False
-    generated_name = row.get("name") or build_product_name(row, category)
+    explicit_name = (row.get("name") or "").strip()
+    # نامِ خودکار فقط برای ساختِ محصولِ جدید است، نه برای بازنویسیِ محصولِ موجود.
+    generated_name = explicit_name or build_product_name(row, category)
 
     if product is None:
         if not create_missing:
@@ -424,8 +426,10 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
         created_product = True
     else:
         changed_fields = []
-        if generated_name and product.name != generated_name:
-            product.name = generated_name
+        # نامِ محصولِ موجود فقط وقتی عوض شود که فایل صریحاً ستونِ «نام» داشته باشد؛
+        # وگرنه آپلودِ قیمت (که نام/مشخصات ندارد) نام را با «محصول فولادی» خراب می‌کند.
+        if explicit_name and product.name != explicit_name:
+            product.name = explicit_name
             changed_fields.append("name")
         if category and product.category_id != category.id:
             product.category = category

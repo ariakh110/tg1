@@ -784,6 +784,42 @@ class AdminProductImportTests(APITestCase):
         tier.refresh_from_db()
         self.assertEqual(str(tier.unit_price), "47000.00")
         self.assertEqual(offer.delivery_options.get().province, "اصفهان")
+        # رگرسیون: آپلودِ قیمت (بدونِ ستونِ نام) نباید نامِ محصول را خراب کند.
+        product.refresh_from_db()
+        self.assertEqual(product.name, "ورق سیاه فایل اکسل")
+        self.assertNotEqual(product.name, "محصول فولادی")
+
+    def test_admin_bulk_price_update_preserves_name_without_name_column(self):
+        from openpyxl import Workbook
+
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        product = Product.objects.create(
+            category=category,
+            name="ورق ST37 ویژهٔ من",
+            short_description="x",
+            description="x",
+        )
+        offer = Offer.objects.create(product=product, seller=self.seller)
+        PricingTier.objects.create(offer=offer, tier_name="قیمت روز", unit_price="100000", minimum_quantity=1)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["شناسه محصول", "شناسه فروشنده", "قیمت جدید"])
+        sheet.append([product.id, self.seller.id, 123000])
+        payload = BytesIO()
+        workbook.save(payload)
+        payload.seek(0)
+        upload = SimpleUploadedFile(
+            "prices.xlsx", payload.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.client.force_authenticate(self.admin)
+        res = self.client.post("/api/products/admin-bulk-upsert/", {"file": upload}, format="multipart")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product.refresh_from_db()
+        self.assertEqual(product.name, "ورق ST37 ویژهٔ من")  # دست‌نخورده
 
     def test_admin_can_download_product_import_template(self):
         self.client.force_authenticate(self.admin)
