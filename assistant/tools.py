@@ -199,12 +199,12 @@ def register_inquiry(conversation, product="", size="", grade="", factory="", qu
         conversation.status = conversation.STATUS_LEAD
         conversation.save(update_fields=["status", "updated_at"])
 
-    # اگر شمارهٔ تماس داریم، سرنخ را به CRM ببر و به ادمین خبر بده (امن).
-    if conversation and (conversation.lead_phone or "").strip():
+    # هر درخواستِ جدید را به گروه/ادمین خبر بده (و اگر شماره داریم، سرنخ را هم به CRM ببر).
+    if conversation:
         try:
-            from messaging.events import on_chat_lead
+            from messaging.events import on_chat_inquiry
 
-            on_chat_lead(conversation, interest=inquiry.summary or product)
+            on_chat_inquiry(conversation, inquiry)
         except Exception:  # noqa: BLE001
             pass
 

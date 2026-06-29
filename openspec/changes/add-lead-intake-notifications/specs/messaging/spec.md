@@ -26,6 +26,14 @@ The system SHALL provide a single admin-notification entry point that fans a tit
 - **WHEN** Telegram is enabled and configured with two chat ids and an event notification is sent
 - **THEN** two outbound messages (channel `telegram`, purpose `admin_alert`) are recorded with the provider result
 
+#### Scenario: Group destination
+- **WHEN** the destination chat id is a group chat id (the bot is a member of the group)
+- **THEN** the event notification is posted to that group, the same as any other chat id
+
+#### Scenario: Chat inquiry notifies even without a phone
+- **WHEN** a sales-chat inquiry (a product need) is registered before the visitor has given a phone number
+- **THEN** the admin/group is notified of the request, and no CRM customer is created until a phone is provided
+
 ### Requirement: Admin Test Alert
 The system SHALL expose an admin-only endpoint that sends a test notification through the configured admin channels and returns a per-channel summary, so the admin can verify the bot token / chat id / phone wiring after entering them.
 

@@ -214,3 +214,29 @@ class LeadIntakeAndAdminAlertTests(APITestCase):
         self.assertTrue(
             Customer.objects.filter(phone="09120000002", source=Customer.SOURCE_STORE_PURCHASE).exists()
         )
+
+    def test_chat_inquiry_notifies_even_without_phone(self):
+        from types import SimpleNamespace
+
+        from messaging import events
+
+        conv = SimpleNamespace(lead_phone="", lead_name="", user=None)
+        inquiry = SimpleNamespace(summary="۲۰ تن میلگرد ۱۴", contact_phone="", contact_name="")
+        before = Customer.objects.count()
+        with patch("messaging.service.notify_admin") as mock_notify:
+            events.on_chat_inquiry(conv, inquiry)
+        mock_notify.assert_called_once()
+        self.assertEqual(Customer.objects.count(), before)  # بدون شماره ⇒ مشتری ساخته نمی‌شود
+
+    def test_chat_inquiry_with_phone_creates_chat_lead(self):
+        from types import SimpleNamespace
+
+        from messaging import events
+
+        conv = SimpleNamespace(lead_phone="09120000003", lead_name="علی", user=None)
+        inquiry = SimpleNamespace(summary="ورق سیاه ۳ میل", contact_phone="09120000003", contact_name="علی")
+        with patch("messaging.service.notify_admin"):
+            events.on_chat_inquiry(conv, inquiry)
+        self.assertTrue(
+            Customer.objects.filter(phone="09120000003", source=Customer.SOURCE_CHAT).exists()
+        )

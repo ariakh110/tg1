@@ -93,6 +93,42 @@ def on_order_submitted(order):
         return None
 
 
+def on_chat_inquiry(conversation, inquiry):
+    """درخواستِ جدید در چتِ فروش (نیازِ مشتری) → خبر به گروه/ادمین، حتی اگر هنوز شماره نداده.
+
+    اگر شماره موجود باشد، علاوه بر خبر، مشتری را هم در CRM upsert می‌کند.
+    """
+    try:
+        from . import service
+        from .models import MessagingSettings
+
+        cfg = MessagingSettings.load()
+        summary = (getattr(inquiry, "summary", "") or "").strip()
+        phone = (getattr(inquiry, "contact_phone", "") or getattr(conversation, "lead_phone", "") or "").strip()
+        name = (getattr(inquiry, "contact_name", "") or getattr(conversation, "lead_name", "") or "").strip()
+
+        customer = None
+        if phone:
+            customer, _created = upsert_lead(
+                phone, name=name, source=Customer.SOURCE_CHAT,
+                user=getattr(conversation, "user", None),
+                note=summary,
+                activity_body="درخواست در چتِ فروش" + (f": {summary}" if summary else "") + ".",
+            )
+        if cfg.notify_on_chat_lead:
+            lines = []
+            if summary:
+                lines.append(f"درخواست: {summary}")
+            if name:
+                lines.append(f"نام: {name}")
+            lines.append(f"موبایل: {phone or '— هنوز نگرفته —'}")
+            service.notify_admin("🆕 درخواستِ جدید در چتِ فروش", lines, customer=customer)
+        return customer
+    except Exception:  # noqa: BLE001
+        logger.exception("on_chat_inquiry failed")
+        return None
+
+
 def on_chat_lead(conversation, *, interest=""):
     """سرنخِ ثبت‌شده در چتِ فروش → مشتریِ CRM + خبر به ادمین (فقط اگر شماره باشد)."""
     try:
