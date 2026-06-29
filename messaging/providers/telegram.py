@@ -3,6 +3,10 @@
 برای اطلاع‌رسانیِ آنیِ ادمین استفاده می‌شود (sendMessage). توکنِ ربات از BotFather گرفته
 می‌شود و chat_id مقصدِ پیام است. خطاها به‌جای raise در `SendResult.error` می‌نشینند تا
 هیچ‌وقت جریانِ اصلیِ سایت (ثبت‌نام/خرید/چت) را نشکنند.
+
+با تغییرِ `base_url` با هر API هم‌شکلِ تلگرام کار می‌کند — مثلِ «بله» (`https://tapi.bale.ai`)
+که بومیِ ایران است و از سرورِ داخلِ ایران مستقیم در دسترس است. `parse_mode` پیش‌فرض
+خالی است (متنِ ساده) تا روی همهٔ این APIها یکسان و تمیز نمایش داده شود.
 """
 import json
 from dataclasses import dataclass, field
@@ -36,11 +40,12 @@ def _result_from_payload(payload):
     return SendResult(ok=False, status="failed", error=f"تلگرام: {desc}", raw=payload or {})
 
 
-def send_message(token, chat_id, text, *, parse_mode="HTML", disable_web_page_preview=True, base_url=""):
+def send_message(token, chat_id, text, *, parse_mode="", base_url=""):
     """ارسالِ یک پیام به یک chat_id با sendMessage. خروجی `SendResult`.
 
-    `base_url` می‌تواند به یک واسطِ بازفرست (Cloudflare Worker/پروکسی) اشاره کند تا از
-    سرورِ داخلِ ایران که api.telegram.org فیلتر است هم کار کند. خالی ⇒ ریشهٔ پیش‌فرض.
+    `base_url` می‌تواند به یک واسطِ بازفرست (Cloudflare Worker/پروکسی) یا یک API هم‌شکل
+    مثلِ «بله» اشاره کند تا از سرورِ داخلِ ایران هم کار کند. خالی ⇒ ریشهٔ پیش‌فرضِ تلگرام.
+    `parse_mode` فقط اگر مقدار داشته باشد فرستاده می‌شود (خالی ⇒ متنِ ساده، سازگار با همه).
     """
     token = (token or "").strip()
     chat_id = str(chat_id or "").strip()
@@ -49,12 +54,9 @@ def send_message(token, chat_id, text, *, parse_mode="HTML", disable_web_page_pr
 
     root = (base_url or "").strip().rstrip("/") or BASE_URL
     url = f"{root}/bot{token}/sendMessage"
-    params = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode,
-        "disable_web_page_preview": "true" if disable_web_page_preview else "false",
-    }
+    params = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        params["parse_mode"] = parse_mode
     data = urlencode(params).encode("utf-8")
     request = Request(url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
     try:

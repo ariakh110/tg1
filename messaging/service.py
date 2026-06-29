@@ -5,7 +5,6 @@
 اگر `sms_enabled` خاموش یا کلید نباشد، ارسال «خشک» (skipped) ثبت می‌شود — بدونِ تماس با
 سرویس و بدونِ خطا — تا کلِ جریان پیش از وجودِ اعتبار قابلِ آزمایش باشد.
 """
-import html
 import re
 
 from django.utils import timezone
@@ -187,14 +186,11 @@ def notify_admin(title, lines=None, *, customer=None, cfg=None):
     plain = "\n".join([str(title)] + lines).strip()
     messages = []
 
-    # --- تلگرام (HTML) ---
+    # --- تلگرام/بله (متنِ ساده تا روی هر دو تمیز نمایش یابد) ---
     if cfg.telegram_configured:
-        body_html = "\n".join(
-            ["<b>" + html.escape(str(title)) + "</b>"] + [html.escape(l) for l in lines]
-        )
         for chat_id in cfg.telegram_chat_ids:
             result = telegram.send_message(
-                cfg.telegram_bot_token, chat_id, body_html, base_url=cfg.telegram_api_base,
+                cfg.telegram_bot_token, chat_id, plain, base_url=cfg.telegram_api_base,
             )
             messages.append(
                 OutboundMessage.objects.create(
