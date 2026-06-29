@@ -1,0 +1,28 @@
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import (
+    KavenegarIncomingWebhook,
+    KavenegarStatusWebhook,
+    MessagingBulkSendView,
+    MessagingNotifyStepView,
+    MessagingSendView,
+    MessagingSettingsView,
+    OutboundMessageViewSet,
+)
+
+router = DefaultRouter()
+router.register(r"messages", OutboundMessageViewSet, basename="outbound-message")
+
+app_name = "messaging"
+
+urlpatterns = [
+    path("settings/", MessagingSettingsView.as_view(), name="settings"),
+    path("send/", MessagingSendView.as_view(), name="send"),
+    path("send-bulk/", MessagingBulkSendView.as_view(), name="send-bulk"),
+    path("notify-step/", MessagingNotifyStepView.as_view(), name="notify-step"),
+    # وب‌هوک‌های ورودیِ کاوه‌نگار (عمومی؛ کلیدِ مخفی در مسیر).
+    path("kavenegar/status/<str:secret>/", KavenegarStatusWebhook.as_view(), name="kavenegar-status"),
+    path("kavenegar/incoming/<str:secret>/", KavenegarIncomingWebhook.as_view(), name="kavenegar-incoming"),
+    path("", include(router.urls)),
+]
