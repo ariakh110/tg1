@@ -21,7 +21,7 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "sms_enabled", "provider", "kavenegar_api_key", "sender",
             "default_template", "purchase_template", "daily_send_cap",
-            "telegram_enabled", "telegram_bot_token", "telegram_admin_chat_id",
+            "telegram_enabled", "telegram_bot_token", "telegram_admin_chat_id", "telegram_api_base",
             "admin_alert_phone", "notify_on_signup", "notify_on_order", "notify_on_chat_lead",
             "api_key_configured", "is_configured",
             "telegram_configured", "telegram_token_configured",

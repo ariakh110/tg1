@@ -193,7 +193,9 @@ def notify_admin(title, lines=None, *, customer=None, cfg=None):
             ["<b>" + html.escape(str(title)) + "</b>"] + [html.escape(l) for l in lines]
         )
         for chat_id in cfg.telegram_chat_ids:
-            result = telegram.send_message(cfg.telegram_bot_token, chat_id, body_html)
+            result = telegram.send_message(
+                cfg.telegram_bot_token, chat_id, body_html, base_url=cfg.telegram_api_base,
+            )
             messages.append(
                 OutboundMessage.objects.create(
                     channel=OutboundMessage.CHANNEL_TELEGRAM,

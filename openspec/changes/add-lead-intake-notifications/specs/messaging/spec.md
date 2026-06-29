@@ -11,6 +11,10 @@ The system SHALL let an admin configure where event notifications are delivered:
 - **WHEN** the admin sets the destination chat id field to two comma-separated ids and an event fires
 - **THEN** the notification is sent once to each chat id
 
+#### Scenario: Configurable Telegram API base for filtered networks
+- **WHEN** the admin sets the Telegram API base to a reachable relay (e.g. a Cloudflare Worker on their own domain) because the server cannot reach `api.telegram.org` directly
+- **THEN** Telegram requests are sent through that relay base instead of the default host
+
 ### Requirement: Event Notifications to the Admin
 The system SHALL provide a single admin-notification entry point that fans a titled, multi-line event out to every configured admin channel — Telegram to each destination chat id and SMS to the admin phone — recording each attempt as an outbound message with purpose `admin_alert`. When no admin channel is configured, the notification SHALL be recorded once as `skipped` (dry-run) and SHALL contact no provider. Notifying the admin SHALL never raise into the originating request: a channel failure SHALL be captured as a failed message, not propagated.
 

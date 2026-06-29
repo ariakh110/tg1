@@ -36,14 +36,19 @@ def _result_from_payload(payload):
     return SendResult(ok=False, status="failed", error=f"تلگرام: {desc}", raw=payload or {})
 
 
-def send_message(token, chat_id, text, *, parse_mode="HTML", disable_web_page_preview=True):
-    """ارسالِ یک پیام به یک chat_id با sendMessage. خروجی `SendResult`."""
+def send_message(token, chat_id, text, *, parse_mode="HTML", disable_web_page_preview=True, base_url=""):
+    """ارسالِ یک پیام به یک chat_id با sendMessage. خروجی `SendResult`.
+
+    `base_url` می‌تواند به یک واسطِ بازفرست (Cloudflare Worker/پروکسی) اشاره کند تا از
+    سرورِ داخلِ ایران که api.telegram.org فیلتر است هم کار کند. خالی ⇒ ریشهٔ پیش‌فرض.
+    """
     token = (token or "").strip()
     chat_id = str(chat_id or "").strip()
     if not token or not chat_id:
         return SendResult(ok=False, status="failed", error="توکن یا chat_id خالی است.")
 
-    url = f"{BASE_URL}/bot{token}/sendMessage"
+    root = (base_url or "").strip().rstrip("/") or BASE_URL
+    url = f"{root}/bot{token}/sendMessage"
     params = {
         "chat_id": chat_id,
         "text": text,

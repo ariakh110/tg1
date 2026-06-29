@@ -49,6 +49,13 @@ class MessagingSettings(models.Model):
         max_length=120, blank=True, default="", verbose_name="آیدیِ چتِ ادمین",
         help_text="chat_id مقصدِ اطلاع‌رسانی؛ چند مقصد را با کاما جدا کن.",
     )
+    # ریشهٔ API تلگرام؛ برای سرورِ داخلِ ایران (که api.telegram.org فیلتر است) یک واسطِ
+    # قابل‌دسترس بگذار: Cloudflare Worker یا nginx reverse-proxy روی دامنه/سرورِ خارج.
+    telegram_api_base = models.CharField(
+        max_length=200, blank=True, default="https://api.telegram.org",
+        verbose_name="ریشهٔ API تلگرام",
+        help_text="پیش‌فرض api.telegram.org؛ از داخلِ ایران یک واسط (Cloudflare Worker/پروکسی) بگذار.",
+    )
 
     # --- اطلاع‌رسانیِ رویدادهای سایت به ادمین ---
     # شمارهٔ موبایلِ ادمین برای دریافتِ پیامکِ هشدار (در صورتِ فعال‌بودنِ پیامک). خالی ⇒ پیامکِ ادمین نمی‌رود.

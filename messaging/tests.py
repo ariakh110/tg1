@@ -175,6 +175,7 @@ class LeadIntakeAndAdminAlertTests(APITestCase):
         cfg.telegram_enabled = True
         cfg.telegram_bot_token = "TOKEN"
         cfg.telegram_admin_chat_id = "111, 222"
+        cfg.telegram_api_base = "https://tg.example.com"
         cfg.save()
         with patch(
             "messaging.service.telegram.send_message",
@@ -185,6 +186,8 @@ class LeadIntakeAndAdminAlertTests(APITestCase):
         self.assertEqual(len(msgs), 2)
         self.assertTrue(all(m.channel == OutboundMessage.CHANNEL_TELEGRAM for m in msgs))
         self.assertTrue(all(m.status == OutboundMessage.STATUS_SENT for m in msgs))
+        # واسطِ قابل‌تنظیم (برای سرورِ ایران) باید به provider منتقل شود.
+        self.assertEqual(mock_tg.call_args.kwargs.get("base_url"), "https://tg.example.com")
 
     def test_signup_event_creates_website_lead_and_notifies(self):
         from messaging import events
