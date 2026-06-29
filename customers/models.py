@@ -35,6 +35,8 @@ class Customer(models.Model):
     SOURCE_INCOMING_CALL = "incoming_call"
     SOURCE_REFERRAL = "referral"
     SOURCE_WEBSITE = "website"
+    SOURCE_STORE_PURCHASE = "store_purchase"
+    SOURCE_CHAT = "chat"
     SOURCE_INSTAGRAM = "instagram"
     SOURCE_WALK_IN = "walk_in"
     SOURCE_ASSISTANT = "assistant"
@@ -48,7 +50,9 @@ class Customer(models.Model):
     SOURCE_CHOICES = [
         (SOURCE_INCOMING_CALL, "تماس ورودی"),
         (SOURCE_REFERRAL, "معرفی"),
-        (SOURCE_WEBSITE, "سایت"),
+        (SOURCE_WEBSITE, "ثبت‌نام سایت"),
+        (SOURCE_STORE_PURCHASE, "خرید از سایت"),
+        (SOURCE_CHAT, "چت فروش"),
         (SOURCE_INSTAGRAM, "اینستاگرام"),
         (SOURCE_WALK_IN, "مراجعه حضوری"),
         (SOURCE_ASSISTANT, "دستیار"),
@@ -90,6 +94,15 @@ class Customer(models.Model):
         on_delete=models.SET_NULL,
         related_name="crm_customer",
         verbose_name="کاربر سایت (اختیاری)",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        verbose_name="ثبت‌کننده",
+        help_text="کاربری که این مشتری را ثبت کرده؛ خالی یعنی به‌صورتِ خودکار (سیستم) ساخته شده.",
     )
     is_active = models.BooleanField(default=True, db_index=True, verbose_name="فعال")
     created_at = models.DateTimeField(auto_now_add=True)

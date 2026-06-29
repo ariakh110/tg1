@@ -199,6 +199,15 @@ def register_inquiry(conversation, product="", size="", grade="", factory="", qu
         conversation.status = conversation.STATUS_LEAD
         conversation.save(update_fields=["status", "updated_at"])
 
+    # اگر شمارهٔ تماس داریم، سرنخ را به CRM ببر و به ادمین خبر بده (امن).
+    if conversation and (conversation.lead_phone or "").strip():
+        try:
+            from messaging.events import on_chat_lead
+
+            on_chat_lead(conversation, interest=inquiry.summary or product)
+        except Exception:  # noqa: BLE001
+            pass
+
     return {
         "ok": True,
         "inquiry_id": inquiry.id,
@@ -218,6 +227,15 @@ def capture_lead(conversation, name="", phone="", interest=""):
     conversation.lead_interest = interest or conversation.lead_interest
     conversation.status = conversation.STATUS_LEAD
     conversation.save(update_fields=["lead_name", "lead_phone", "lead_interest", "status", "updated_at"])
+
+    # سرنخ را به CRM ببر و به ادمین خبر بده (امن: هیچ خطایی پاسخِ چت را نمی‌شکند).
+    try:
+        from messaging.events import on_chat_lead
+
+        on_chat_lead(conversation)
+    except Exception:  # noqa: BLE001
+        pass
+
     return {"ok": True, "message": "سرنخ ثبت شد. کارشناس فروش تماس می‌گیرد."}
 
 

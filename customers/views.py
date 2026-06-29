@@ -45,6 +45,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
             return CustomerDetailSerializer
         return CustomerSerializer
 
+    def perform_create(self, serializer):
+        user = self.request.user
+        serializer.save(created_by=user if getattr(user, "is_authenticated", False) else None)
+
     def perform_update(self, serializer):
         old_stage = serializer.instance.stage
         instance = serializer.save()

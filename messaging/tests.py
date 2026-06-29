@@ -138,3 +138,76 @@ class WebhookTests(APITestCase):
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(CustomerActivity.objects.count(), 0)
+
+
+class LeadIntakeAndAdminAlertTests(APITestCase):
+    """ورودِ خودکارِ سرنخ (ثبت‌نام/خرید/چت) + اطلاع‌رسانیِ ادمین (تلگرام/پیامک)."""
+
+    def test_upsert_lead_is_idempotent_by_phone_and_keeps_source(self):
+        from customers.services import upsert_lead
+
+        c1, created1 = upsert_lead("0912 000 0000", name="حسن", source=Customer.SOURCE_CHAT)
+        self.assertTrue(created1)
+        self.assertEqual(c1.phone, "09120000000")
+        # همان شماره با شکلِ دیگر ⇒ همان مشتری؛ منبعِ قبلی بازنویسی نمی‌شود.
+        c2, created2 = upsert_lead("989120000000", name="حسن رضایی", source=Customer.SOURCE_OTHER)
+        self.assertFalse(created2)
+        self.assertEqual(c1.pk, c2.pk)
+        self.assertEqual(c2.source, Customer.SOURCE_CHAT)
+
+    def test_upsert_lead_rejects_blank_phone(self):
+        from customers.services import upsert_lead
+
+        customer, created = upsert_lead("", name="x")
+        self.assertIsNone(customer)
+        self.assertFalse(created)
+
+    def test_notify_admin_dry_run_logs_skipped(self):
+        msgs = service.notify_admin("تست", ["خط ۱"])
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0].status, OutboundMessage.STATUS_SKIPPED)
+        self.assertEqual(msgs[0].purpose, OutboundMessage.PURPOSE_ADMIN_ALERT)
+
+    def test_notify_admin_sends_to_each_telegram_chat(self):
+        from messaging.providers.telegram import SendResult as TgResult
+
+        cfg = MessagingSettings.load()
+        cfg.telegram_enabled = True
+        cfg.telegram_bot_token = "TOKEN"
+        cfg.telegram_admin_chat_id = "111, 222"
+        cfg.save()
+        with patch(
+            "messaging.service.telegram.send_message",
+            return_value=TgResult(ok=True, status="sent", message_id="9"),
+        ) as mock_tg:
+            msgs = service.notify_admin("تست", ["x"])
+        self.assertEqual(mock_tg.call_count, 2)
+        self.assertEqual(len(msgs), 2)
+        self.assertTrue(all(m.channel == OutboundMessage.CHANNEL_TELEGRAM for m in msgs))
+        self.assertTrue(all(m.status == OutboundMessage.STATUS_SENT for m in msgs))
+
+    def test_signup_event_creates_website_lead_and_notifies(self):
+        from messaging import events
+
+        user = User.objects.create_user(username="buyer1", password="x")
+        with patch("messaging.service.notify_admin") as mock_notify:
+            events.on_user_signup(user, phone="09120000001")
+        self.assertTrue(
+            Customer.objects.filter(phone="09120000001", source=Customer.SOURCE_WEBSITE).exists()
+        )
+        mock_notify.assert_called_once()
+
+    def test_order_event_creates_store_purchase_lead(self):
+        from types import SimpleNamespace
+
+        from messaging import events
+
+        order = SimpleNamespace(
+            pk="abcd1234", buyer=None, contact_phone="09120000002",
+            contact_name="کارخانهٔ فولاد", total_amount=50000000, items=None,
+        )
+        with patch("messaging.service.notify_admin"):
+            events.on_order_submitted(order)
+        self.assertTrue(
+            Customer.objects.filter(phone="09120000002", source=Customer.SOURCE_STORE_PURCHASE).exists()
+        )

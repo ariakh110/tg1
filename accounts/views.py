@@ -92,6 +92,14 @@ class RegisterAPIView(APIView):
         if phone:
             Profile.objects.update_or_create(user=user, defaults={"phone": phone})
 
+        # سرنخ در CRM + خبر به ادمین (امن: هیچ خطایی ثبت‌نام را نمی‌شکند).
+        try:
+            from messaging.events import on_user_signup
+
+            on_user_signup(user, phone=phone)
+        except Exception:  # noqa: BLE001
+            pass
+
         sent = 0
         if has_email:
             verify_url = _build_verification_url(request, user.pk)
@@ -164,6 +172,13 @@ class GoogleAuthAPIView(APIView):
                 username = f"{base}_{suffix}"
             user = User.objects.create_user(username=username, email=email, is_active=True)
             Profile.objects.get_or_create(user=user)
+            # سرنخ در CRM + خبر به ادمین برای ثبت‌نامِ تازه با گوگل (امن).
+            try:
+                from messaging.events import on_user_signup
+
+                on_user_signup(user)
+            except Exception:  # noqa: BLE001
+                pass
         elif not user.is_active:
             user.is_active = True
             user.save(update_fields=["is_active"])

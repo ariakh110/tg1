@@ -75,6 +75,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     transaction_count = serializers.IntegerField(source="transactions.count", read_only=True)
     stage_display = serializers.CharField(source="get_stage_display", read_only=True)
     source_display = serializers.CharField(source="get_source_display", read_only=True)
+    created_by_name = serializers.SerializerMethodField()
     # از annotate شدنِ کوئری در ویوست می‌آیند؛ روی نمونهٔ تکی ممکن است نباشند.
     next_follow_up_at = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     open_follow_up_count = serializers.IntegerField(read_only=True, required=False)
@@ -100,6 +101,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             "transaction_count",
             "next_follow_up_at",
             "open_follow_up_count",
+            "created_by_name",
             "created_at",
             "updated_at",
         ]
@@ -111,9 +113,17 @@ class CustomerSerializer(serializers.ModelSerializer):
             "source_display",
             "next_follow_up_at",
             "open_follow_up_count",
+            "created_by_name",
             "created_at",
             "updated_at",
         ]
+
+    def get_created_by_name(self, obj):
+        user = obj.created_by
+        if not user:
+            return ""
+        full = (user.get_full_name() or "").strip()
+        return full or user.get_username()
 
 
 class CustomerDetailSerializer(CustomerSerializer):

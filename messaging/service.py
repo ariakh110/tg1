@@ -5,13 +5,14 @@
 اگر `sms_enabled` خاموش یا کلید نباشد، ارسال «خشک» (skipped) ثبت می‌شود — بدونِ تماس با
 سرویس و بدونِ خطا — تا کلِ جریان پیش از وجودِ اعتبار قابلِ آزمایش باشد.
 """
+import html
 import re
 
 from django.utils import timezone
 
 from customers.models import Customer, CustomerActivity
 from .models import MessagingSettings, OutboundMessage
-from .providers import kavenegar
+from .providers import kavenegar, telegram
 
 # متنِ مراحلِ خرید (پیامکِ فروشِ مستقیم). {order}/{amount} در صورتِ وجود جایگزین می‌شوند.
 PURCHASE_STEPS = {
@@ -172,6 +173,66 @@ def notify_purchase_step(customer, step, *, order_no="", amount=None, created_by
         purpose=OutboundMessage.PURPOSE_ORDER_STATUS, created_by=created_by, cfg=cfg,
         meta={"step": step, "order_no": order_no},
     )
+
+
+def notify_admin(title, lines=None, *, customer=None, cfg=None):
+    """اطلاع‌رسانیِ یک رویداد به ادمین از کانال‌های فعال (تلگرام + پیامک).
+
+    `title` تیترِ پیام و `lines` فهرستِ سطرهای جزئیات است. اگر هیچ کانالی پیکربندی نشده باشد،
+    یک ردیفِ «خشک» (skipped) ثبت می‌شود تا در گزارش دیده شود ولی چیزی ارسال نمی‌گردد.
+    خروجی: فهرستِ `OutboundMessage`های ثبت‌شده. هیچ خطایی بیرون نمی‌دهد (caller امن است).
+    """
+    cfg = cfg or MessagingSettings.load()
+    lines = [str(x) for x in (lines or []) if str(x).strip()]
+    plain = "\n".join([str(title)] + lines).strip()
+    messages = []
+
+    # --- تلگرام (HTML) ---
+    if cfg.telegram_configured:
+        body_html = "\n".join(
+            ["<b>" + html.escape(str(title)) + "</b>"] + [html.escape(l) for l in lines]
+        )
+        for chat_id in cfg.telegram_chat_ids:
+            result = telegram.send_message(cfg.telegram_bot_token, chat_id, body_html)
+            messages.append(
+                OutboundMessage.objects.create(
+                    channel=OutboundMessage.CHANNEL_TELEGRAM,
+                    provider="telegram",
+                    customer=customer,
+                    recipient=str(chat_id),
+                    purpose=OutboundMessage.PURPOSE_ADMIN_ALERT,
+                    body=plain,
+                    status=result.status or (OutboundMessage.STATUS_SENT if result.ok else OutboundMessage.STATUS_FAILED),
+                    provider_message_id=result.message_id,
+                    error=(result.error or "")[:400],
+                )
+            )
+
+    # --- پیامک به ادمین ---
+    admin_phone = (cfg.admin_alert_phone or "").strip()
+    if admin_phone:
+        messages.append(
+            send_sms(
+                admin_phone, plain, purpose=OutboundMessage.PURPOSE_ADMIN_ALERT,
+                cfg=cfg, log_activity=False,
+            )
+        )
+
+    # --- حالتِ خشک: هیچ کانالی پیکربندی نشده ---
+    if not messages:
+        messages.append(
+            OutboundMessage.objects.create(
+                channel=OutboundMessage.CHANNEL_TELEGRAM,
+                provider="",
+                customer=customer,
+                recipient="",
+                purpose=OutboundMessage.PURPOSE_ADMIN_ALERT,
+                body=plain,
+                status=OutboundMessage.STATUS_SKIPPED,
+                error="هیچ کانالِ اطلاع‌رسانیِ ادمین پیکربندی نشده است.",
+            )
+        )
+    return messages
 
 
 def log_incoming_sms(sender, text, raw=None):

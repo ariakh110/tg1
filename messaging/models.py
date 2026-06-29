@@ -41,6 +41,22 @@ class MessagingSettings(models.Model):
     # کلیدِ مخفیِ داخلِ مسیرِ وب‌هوک تا فقط کاوه‌نگار بتواند وضعیت/پیامکِ دریافتی را بفرستد.
     webhook_secret = models.CharField(max_length=64, blank=True, default="", verbose_name="کلید مخفیِ وب‌هوک")
 
+    # --- ربات تلگرام (برای اطلاع‌رسانیِ آنیِ ادمین؛ رایگان) ---
+    telegram_enabled = models.BooleanField(default=False, verbose_name="اطلاع‌رسانیِ تلگرام فعال است")
+    # توکنِ ربات (از BotFather)؛ محرمانه — در API برنمی‌گردد (write-only در سریالایزر).
+    telegram_bot_token = models.CharField(max_length=120, blank=True, default="", verbose_name="توکنِ ربات تلگرام")
+    telegram_admin_chat_id = models.CharField(
+        max_length=120, blank=True, default="", verbose_name="آیدیِ چتِ ادمین",
+        help_text="chat_id مقصدِ اطلاع‌رسانی؛ چند مقصد را با کاما جدا کن.",
+    )
+
+    # --- اطلاع‌رسانیِ رویدادهای سایت به ادمین ---
+    # شمارهٔ موبایلِ ادمین برای دریافتِ پیامکِ هشدار (در صورتِ فعال‌بودنِ پیامک). خالی ⇒ پیامکِ ادمین نمی‌رود.
+    admin_alert_phone = models.CharField(max_length=32, blank=True, default="", verbose_name="موبایلِ ادمین برای هشدارِ پیامکی")
+    notify_on_signup = models.BooleanField(default=True, verbose_name="خبر هنگام ثبت‌نامِ کاربر")
+    notify_on_order = models.BooleanField(default=True, verbose_name="خبر هنگام ثبتِ سفارش")
+    notify_on_chat_lead = models.BooleanField(default=True, verbose_name="خبر هنگام سرنخِ چت")
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -67,6 +83,21 @@ class MessagingSettings(models.Model):
         """آماده برای ارسالِ واقعی: سوییچ روشن و کلید موجود."""
         return bool(self.sms_enabled and (self.kavenegar_api_key or "").strip())
 
+    @property
+    def telegram_configured(self):
+        """آماده برای ارسالِ تلگرام: سوییچ روشن، توکن و مقصد موجود."""
+        return bool(
+            self.telegram_enabled
+            and (self.telegram_bot_token or "").strip()
+            and (self.telegram_admin_chat_id or "").strip()
+        )
+
+    @property
+    def telegram_chat_ids(self):
+        """فهرستِ مقصدهای تلگرام (جداشده با کاما)."""
+        raw = (self.telegram_admin_chat_id or "").replace("،", ",")
+        return [c.strip() for c in raw.split(",") if c.strip()]
+
 
 class OutboundMessage(models.Model):
     """لاگِ هر تلاشِ ارسالِ پیام (ممیزی + پیگیریِ وضعیت). کانال‌پذیر تا تلگرام/واتساپ بعداً اضافه شوند."""
@@ -84,11 +115,13 @@ class OutboundMessage(models.Model):
     PURPOSE_BULK = "bulk"
     PURPOSE_ORDER_STATUS = "order_status"
     PURPOSE_OTP = "otp"
+    PURPOSE_ADMIN_ALERT = "admin_alert"
     PURPOSE_CHOICES = [
         (PURPOSE_MANUAL, "دستی"),
         (PURPOSE_BULK, "گروهی"),
         (PURPOSE_ORDER_STATUS, "مراحل خرید"),
         (PURPOSE_OTP, "کد یک‌بارمصرف"),
+        (PURPOSE_ADMIN_ALERT, "هشدار ادمین"),
     ]
 
     STATUS_QUEUED = "queued"

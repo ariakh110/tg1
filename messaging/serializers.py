@@ -6,8 +6,13 @@ from .models import MessagingSettings, OutboundMessage
 class MessagingSettingsSerializer(serializers.ModelSerializer):
     api_key_configured = serializers.SerializerMethodField()
     is_configured = serializers.BooleanField(read_only=True)
-    # کلیدِ کاوه‌نگار — فقط نوشتنی (هرگز در پاسخِ GET برنمی‌گردد).
+    telegram_configured = serializers.BooleanField(read_only=True)
+    telegram_token_configured = serializers.SerializerMethodField()
+    # کلیدها — فقط نوشتنی (هرگز در پاسخِ GET برنمی‌گردند).
     kavenegar_api_key = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True
+    )
+    telegram_bot_token = serializers.CharField(
         write_only=True, required=False, allow_blank=True, trim_whitespace=True
     )
 
@@ -16,18 +21,26 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "sms_enabled", "provider", "kavenegar_api_key", "sender",
             "default_template", "purchase_template", "daily_send_cap",
-            "api_key_configured", "is_configured", "webhook_secret", "updated_at",
+            "telegram_enabled", "telegram_bot_token", "telegram_admin_chat_id",
+            "admin_alert_phone", "notify_on_signup", "notify_on_order", "notify_on_chat_lead",
+            "api_key_configured", "is_configured",
+            "telegram_configured", "telegram_token_configured",
+            "webhook_secret", "updated_at",
         )
         read_only_fields = ("webhook_secret", "updated_at")
 
     def get_api_key_configured(self, obj):
         return bool((obj.kavenegar_api_key or "").strip())
 
+    def get_telegram_token_configured(self, obj):
+        return bool((obj.telegram_bot_token or "").strip())
+
     def update(self, instance, validated_data):
-        # کلیدِ خالی ⇒ کلیدِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
-        key = validated_data.pop("kavenegar_api_key", None)
-        if key is not None and key.strip():
-            instance.kavenegar_api_key = key.strip()
+        # کلیدهای خالی ⇒ مقدارِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
+        for secret_field in ("kavenegar_api_key", "telegram_bot_token"):
+            value = validated_data.pop(secret_field, None)
+            if value is not None and value.strip():
+                setattr(instance, secret_field, value.strip())
         return super().update(instance, validated_data)
 
 

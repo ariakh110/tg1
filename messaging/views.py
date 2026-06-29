@@ -127,6 +127,29 @@ class MessagingNotifyStepView(APIView):
         return Response(OutboundMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
 
 
+class MessagingTestAlertView(APIView):
+    """ارسالِ یک پیامِ آزمایشی به کانال‌های اطلاع‌رسانیِ ادمین (تلگرام/پیامک) — فقط ادمین.
+
+    برای راستی‌آزماییِ اتصالِ ربات/شماره پس از وارد‌کردنِ توکن و آیدی.
+    """
+
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "messaging"
+
+    def post(self, request):
+        messages = service.notify_admin(
+            "🔔 پیامِ آزمایشی",
+            ["این یک پیامِ آزمایشی از پنلِ کاوکس است.", "اگر این را می‌بینی، اطلاع‌رسانی فعال است."],
+        )
+        return Response(
+            {
+                "sent": [OutboundMessageSerializer(m).data for m in messages],
+                "summary": [f"{m.get_channel_display()} → {m.recipient or '—'}: {m.get_status_display()}" for m in messages],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class _KavenegarWebhook(APIView):
     """پایهٔ وب‌هوک‌های ورودیِ کاوه‌نگار: عمومی (بدونِ لاگین/CSRF)، با کلیدِ مخفی در مسیر."""
 
