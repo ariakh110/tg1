@@ -217,11 +217,16 @@ def register_inquiry(conversation, product="", size="", grade="", factory="", qu
 
 
 def capture_lead(conversation, name="", phone="", interest=""):
+    from customers.services import normalize_phone
+
     name = (name or "").strip()[:120]
-    phone = (phone or "").strip()[:30]
     interest = (interest or "").strip()[:255]
-    if not phone:
-        return {"ok": False, "error": "شمارهٔ موبایل لازم است."}
+    norm = normalize_phone(phone)
+    if not (len(norm) == 11 and norm.startswith("09")):
+        return {"ok": False, "error": "شمارهٔ موبایلِ معتبر (با ۰۹ و ۱۱ رقم) لازم است؛ از مشتری بخواه کامل بدهد."}
+    if not name:
+        return {"ok": False, "error": "نام و نام‌خانوادگی لازم است؛ از مشتری بپرس."}
+    phone = norm
     conversation.lead_name = name or conversation.lead_name
     conversation.lead_phone = phone
     conversation.lead_interest = interest or conversation.lead_interest
@@ -297,22 +302,22 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "capture_lead",
-            "description": "ثبت سرنخ فروش وقتی مشتری تمایل به خرید/استعلام دارد. نام و شمارهٔ موبایل را بگیر.",
+            "description": "ثبت سرنخ فروش. نام و نام‌خانوادگیِ کامل و شمارهٔ موبایلِ مشتری را بگیر و این ابزار را صدا بزن.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "نام مشتری"},
-                    "phone": {"type": "string", "description": "شمارهٔ موبایل مشتری"},
+                    "name": {"type": "string", "description": "نام و نام‌خانوادگیِ کاملِ مشتری"},
+                    "phone": {"type": "string", "description": "شمارهٔ موبایلِ مشتری (۰۹ و ۱۱ رقم)"},
                     "interest": {"type": "string", "description": "محصول/نیاز موردنظر مشتری"},
                 },
-                "required": ["phone"],
+                "required": ["name", "phone"],
             },
         },
     },
 ]
 
 
-def execute_tool(name, args, conversation, *, lead_capture_enabled=True):
+def execute_tool(name, args, conversation, *, lead_capture_enabled=True, lead_gate="off"):
     args = args or {}
     if name == "search_products":
         return search_products(
@@ -322,6 +327,12 @@ def execute_tool(name, args, conversation, *, lead_capture_enabled=True):
             max_results=args.get("max_results", 5),
         )
     if name == "get_price_quote":
+        # حالتِ «اجباری»: قیمتِ دقیق تا قبل از گرفتنِ نام و موبایل داده نمی‌شود.
+        if lead_gate == "strict" and conversation and not (conversation.lead_phone or "").strip():
+            return {
+                "gated": True,
+                "message": "قبل از اعلامِ قیمت، نام و نام‌خانوادگی و شمارهٔ موبایلِ مشتری را بگیر و با ابزار capture_lead ثبت کن، سپس دوباره قیمت را بخواه.",
+            }
         return get_price_quote(
             product_id=args.get("product_id"),
             quantity=args.get("quantity"),

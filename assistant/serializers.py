@@ -39,7 +39,7 @@ class AssistantSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "is_enabled", "assistant_name", "greeting", "persona", "sales_workflow",
             "openai_api_key", "openai_base_url", "chat_model", "embedding_model", "temperature",
-            "max_context_chunks", "max_tool_iterations", "lead_capture_enabled",
+            "max_context_chunks", "max_tool_iterations", "lead_capture_enabled", "lead_capture_mode",
             "handoff_phone", "handoff_note", "api_key_configured", "updated_at",
         )
         read_only_fields = ("updated_at",)

@@ -126,16 +126,49 @@ def retrieve(query, cfg=None, k=None):
 
 # ---------- Chat orchestration ----------
 
-def _build_system_prompt(cfg, knowledge_chunks):
+def _lead_capture_block(cfg, conversation):
+    """دستورِ «گرفتنِ نام/نام‌خانوادگی + موبایل» بر اساسِ حالتِ تنظیم‌شده."""
+    mode = getattr(cfg, "lead_capture_mode", AssistantSettings.LEAD_SOFT)
+    if mode == AssistantSettings.LEAD_OFF:
+        return ""
+
+    already = bool(conversation and (conversation.lead_phone or "").strip())
+    if already:
+        return (
+            "## مشخصاتِ مشتری\n"
+            "نام و شمارهٔ این مشتری قبلاً ثبت شده — دیگر نپرس و عادی و کمک‌کننده ادامه بده.\n"
+        )
+
+    common = (
+        "## گرفتنِ مشخصاتِ مشتری (اولویتِ بالا)\n"
+        "یکی از مهم‌ترین هدف‌های تو در هر گفتگو، گرفتنِ «نام و نام‌خانوادگی» و «شمارهٔ موبایل»ِ مشتری است.\n"
+        "- زود و طبیعی، با قابِ منفعت بپرس: «برای اینکه دقیق‌ترین قیمت، موجودی و تخفیف را برایتان بفرستم و کارشناس پیگیری کند، لطفاً نام و نام‌خانوادگی و شمارهٔ موبایلتان را بفرمایید.»\n"
+        "- اگر طفره رفت، با قابِ متفاوت دوباره و مودبانه بپرس (قیمت لحظه‌ای تغییر می‌کند؛ برای ارسالِ پیش‌فاکتور لازم است؛ کارشناس فقط با شماره می‌تواند تماس بگیرد). پیگیر باش، ولی نه پرخاشگر و نه تکراریِ آزاردهنده.\n"
+        "- شمارهٔ موبایلِ ایران ۱۱ رقم و با ۰۹ است؛ اگر ناقص داد، اصلاحش را بخواه.\n"
+        "- تا نام و شماره را گرفتی، فوراً ابزار capture_lead را با «نام و نام‌خانوادگیِ کامل» و شماره صدا بزن.\n"
+    )
+    if mode == AssistantSettings.LEAD_STRICT:
+        common += (
+            "- قانونِ اجباری: «قیمتِ عددیِ دقیق» یا «پیش‌فاکتور» را پیش از ثبتِ نام و موبایل (با capture_lead) نده. "
+            "ابتدا محصول را معرفی و علاقه بساز، ولی برای عددِ قیمت بگو: «قیمتِ دقیق و موجودیِ امروز را همین‌جا، بلافاصله بعد از ثبتِ نام و شماره برایتان می‌فرستم.» "
+            "به‌محضِ ثبتِ سرنخ، قیمت را کامل بده.\n"
+        )
+    return common
+
+
+def _build_system_prompt(cfg, knowledge_chunks, conversation=None):
     today = timezone.localdate().isoformat()
     knowledge_block = "\n\n---\n\n".join(knowledge_chunks) if knowledge_chunks else "(دانشی ثبت نشده است)"
     handoff = ""
     if cfg.handoff_phone:
         handoff = f"\nشمارهٔ تماس کارشناس: {cfg.handoff_phone} — {cfg.handoff_note}"
+    lead_block = _lead_capture_block(cfg, conversation)
+    lead_section = f"{lead_block}\n" if lead_block else ""
     return (
         f"نام تو: {cfg.assistant_name}\n\n"
         f"{cfg.persona}\n\n"
         f"## گردش‌کار فروش\n{cfg.sales_workflow}\n\n"
+        f"{lead_section}"
         f"## دانش فروشگاه (فقط از این‌ها و ابزارها استفاده کن)\n{knowledge_block}\n\n"
         f"## ابزارها\nبرای معرفی محصول و قیمت حتماً از ابزار جستجو/قیمت استفاده کن و قیمت را از خودت نگو. "
         f"هر وقت مشتری نیازِ مشخصی گفت (نوع کالا + سایز/ضخامت/گرید/مبدا/مقدار)، حتماً ابزار register_inquiry را صدا بزن و "
@@ -178,7 +211,7 @@ def run_chat(conversation, user_text, cfg=None):
     AssistantMessage.objects.create(conversation=conversation, role=AssistantMessage.ROLE_USER, content=user_text)
 
     knowledge_chunks = retrieve(user_text, cfg)
-    system_prompt = _build_system_prompt(cfg, knowledge_chunks)
+    system_prompt = _build_system_prompt(cfg, knowledge_chunks, conversation)
     history = _history_messages(conversation)
     messages = [{"role": "system", "content": system_prompt}] + history
 
@@ -201,7 +234,11 @@ def run_chat(conversation, user_text, cfg=None):
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = execute_tool(name, args, conversation, lead_capture_enabled=cfg.lead_capture_enabled)
+            result = execute_tool(
+                name, args, conversation,
+                lead_capture_enabled=cfg.lead_capture_enabled,
+                lead_gate=cfg.lead_capture_mode,
+            )
             AssistantMessage.objects.create(
                 conversation=conversation,
                 role=AssistantMessage.ROLE_TOOL,

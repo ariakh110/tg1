@@ -52,6 +52,22 @@ class AssistantSettings(models.Model):
     max_tool_iterations = models.PositiveSmallIntegerField(default=4)
 
     lead_capture_enabled = models.BooleanField(default=True)
+
+    # شدتِ گرفتنِ «نام/نام‌خانوادگی + موبایل» در چت
+    LEAD_OFF = "off"
+    LEAD_SOFT = "soft"
+    LEAD_STRICT = "strict"
+    LEAD_MODE_CHOICES = [
+        (LEAD_OFF, "خاموش (فقط در صورتِ تمایلِ مشتری)"),
+        (LEAD_SOFT, "ترغیبی (اصرارِ مودبانه و پیگیر)"),
+        (LEAD_STRICT, "اجباری (قیمت فقط بعد از گرفتنِ نام و موبایل)"),
+    ]
+    lead_capture_mode = models.CharField(
+        max_length=8, choices=LEAD_MODE_CHOICES, default=LEAD_SOFT,
+        verbose_name="حالتِ گرفتنِ مشخصات",
+        help_text="ترغیبی: با تاکتیکِ منفعت اصرار می‌کند. اجباری: قیمتِ دقیق را تا ثبتِ نام و موبایل نمی‌دهد.",
+    )
+
     handoff_phone = models.CharField(max_length=30, blank=True, default="")
     handoff_note = models.CharField(max_length=255, blank=True, default="برای مشاورهٔ تخصصی با کارشناس تماس بگیرید.")
 
