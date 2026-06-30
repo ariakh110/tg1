@@ -2068,6 +2068,17 @@ def create_store_order(user, validated_data):
         user,
         meta={"item_count": len(created_items), "needs_quote": needs_quote},
     )
+
+    # خبر به ادمین/گروه پس از ثبتِ موفق (بعد از commit تا داخلِ تراکنش شبکه نزنیم؛ امن).
+    def _notify_admin_new_order():
+        try:
+            from messaging.events import on_order_submitted
+
+            on_order_submitted(order, needs_quote=needs_quote)
+        except Exception:  # noqa: BLE001
+            pass
+
+    transaction.on_commit(_notify_admin_new_order)
     return order
 
 

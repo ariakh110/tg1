@@ -14,7 +14,7 @@
 
 ## 3. Event orchestration + wiring
 - [x] 3.1 `messaging/events.py`: `on_user_signup`, `on_order_submitted`, `on_chat_lead`, `on_chat_inquiry` (safe, upsert + notify; inquiry notifies even without a phone; destination chat id may be a group)
-- [x] 3.2 `messaging/signals.py` + `apps.ready` — `StoreOrder` transition into `SUBMITTED` → `on_order_submitted`
+- [x] 3.2 `sales.services.create_store_order` → `transaction.on_commit(on_order_submitted(order, needs_quote=…))` — covers both a priced order and a quote/استعلام request, with item list + amount
 - [x] 3.3 `accounts/views.py` RegisterAPIView + Google auth → `on_user_signup` (safe)
 - [x] 3.4 `assistant/tools.py` `capture_lead` + `register_inquiry` → `on_chat_lead` (safe)
 

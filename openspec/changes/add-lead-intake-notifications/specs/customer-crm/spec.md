@@ -9,7 +9,7 @@ The system SHALL create or update a CRM customer automatically when a lead arriv
 
 #### Scenario: Order submission creates a purchase lead
 - **WHEN** a buyer submits a direct-sales order with contact phone `09120000002`
-- **THEN** a CRM customer with that phone and source «خرید از سایت» exists
+- **THEN** a CRM customer with that phone and source «خرید از سایت» exists, and the admin notification distinguishes a priced order from a quote/استعلام request
 
 #### Scenario: Existing customer keeps its admin-set stage and source
 - **WHEN** an event arrives for a phone that already belongs to a customer the admin moved to stage `proposal` with source `referral`

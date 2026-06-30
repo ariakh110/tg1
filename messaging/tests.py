@@ -215,6 +215,22 @@ class LeadIntakeAndAdminAlertTests(APITestCase):
             Customer.objects.filter(phone="09120000002", source=Customer.SOURCE_STORE_PURCHASE).exists()
         )
 
+    def test_quote_request_uses_quote_title(self):
+        from types import SimpleNamespace
+
+        from messaging import events
+
+        order = SimpleNamespace(
+            pk="q1234", buyer=None, contact_phone="09120000004",
+            contact_name="کارخانه", total_amount=0, items=None,
+        )
+        with patch("messaging.service.notify_admin") as mock_notify:
+            events.on_order_submitted(order, needs_quote=True)
+        self.assertTrue(
+            Customer.objects.filter(phone="09120000004", source=Customer.SOURCE_STORE_PURCHASE).exists()
+        )
+        self.assertIn("استعلام", mock_notify.call_args.args[0])
+
     def test_chat_inquiry_notifies_even_without_phone(self):
         from types import SimpleNamespace
 

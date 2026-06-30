@@ -55,8 +55,25 @@ def on_user_signup(user, phone="", *, source=Customer.SOURCE_WEBSITE):
         return None
 
 
-def on_order_submitted(order):
-    """سفارشِ ثبت‌شده توسطِ کاربر → سرنخ/مشتریِ CRM + خبر به ادمین."""
+_UNIT_LABEL = {"ton": "تن", "kg": "کیلوگرم", "sheet": "برگ"}
+
+
+def _fmt_qty(value):
+    try:
+        from decimal import Decimal
+
+        d = Decimal(str(value))
+        return str(int(d)) if d == d.to_integral_value() else str(d.normalize())
+    except Exception:  # noqa: BLE001
+        return str(value or "")
+
+
+def on_order_submitted(order, *, needs_quote=False):
+    """سفارش/استعلامِ ثبت‌شده توسطِ کاربر → مشتریِ CRM + خبر به ادمین/گروه.
+
+    `needs_quote=True` یعنی فرمِ استعلام (قیمتِ همهٔ اقلام مشخص نیست)؛ عنوان و متنِ پیام
+    با «خریدِ قیمت‌دار» فرق دارد.
+    """
     try:
         from . import service
         from .models import MessagingSettings
@@ -65,28 +82,33 @@ def on_order_submitted(order):
         buyer = getattr(order, "buyer", None)
         phone = (getattr(order, "contact_phone", "") or "").strip() or _profile_phone(buyer)
         name = (getattr(order, "contact_name", "") or "").strip() or _display_name(buyer)
+        kind = "استعلام" if needs_quote else "سفارش"
         customer, _created = upsert_lead(
             phone, name=name, source=Customer.SOURCE_STORE_PURCHASE,
             user=buyer if getattr(buyer, "pk", None) else None,
-            activity_body=f"سفارش روی سایت ثبت کرد (#{str(order.pk)[:8]}).",
+            activity_body=f"{kind} روی سایت ثبت کرد (#{str(order.pk)[:8]}).",
         )
         if cfg.notify_on_order:
+            title = "📝 استعلامِ جدید (نیازمندِ قیمت‌گذاری)" if needs_quote else "🛒 سفارش جدید در سایت"
             lines = []
             if name:
                 lines.append(f"نام: {name}")
             if phone:
                 lines.append(f"موبایل: {phone}")
-            amount = getattr(order, "total_amount", 0) or 0
-            if amount:
-                lines.append(f"مبلغ: {int(amount):,} ریال")
             try:
-                items = list(order.items.all()[:3])
-                if items:
-                    lines.append("اقلام: " + "، ".join(i.product_name for i in items))
+                for it in order.items.all()[:5]:
+                    unit = _UNIT_LABEL.get(getattr(it, "quantity_unit", ""), getattr(it, "quantity_unit", "") or "")
+                    lines.append(f"• {it.product_name} — {_fmt_qty(it.quantity)} {unit}".rstrip())
             except Exception:  # noqa: BLE001
                 pass
+            if needs_quote:
+                lines.append("وضعیت: منتظرِ قیمت‌گذاریِ شما")
+            else:
+                amount = getattr(order, "total_amount", 0) or 0
+                if amount:
+                    lines.append(f"مبلغ: {int(amount):,} ریال")
             lines.append(f"شناسهٔ سفارش: {str(order.pk)[:8]}")
-            service.notify_admin("🛒 سفارش جدید در سایت", lines, customer=customer)
+            service.notify_admin(title, lines, customer=customer)
         return customer
     except Exception:  # noqa: BLE001
         logger.exception("on_order_submitted failed")
