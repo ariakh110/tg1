@@ -256,3 +256,75 @@ class LeadIntakeAndAdminAlertTests(APITestCase):
         self.assertTrue(
             Customer.objects.filter(phone="09120000003", source=Customer.SOURCE_CHAT).exists()
         )
+
+
+class BaleTwoWayBotTests(APITestCase):
+    """ربات دوطرفهٔ بله: امنیتِ وب‌هوک، دکمه‌های عملیاتیِ CRM، دستورها و ربات قیمت."""
+
+    def setUp(self):
+        self.cfg = MessagingSettings.load()
+        self.cfg.telegram_enabled = True
+        self.cfg.telegram_bot_token = "TOKEN"
+        self.cfg.telegram_admin_chat_id = "-100"  # گروهِ ادمین
+        self.cfg.bale_webhook_enabled = True
+        self.cfg.save()
+        self.customer = Customer.objects.create(name="حسن", phone="09120000010")
+
+    def test_webhook_rejects_wrong_secret(self):
+        res = self.client.post("/api/messaging/bale/webhook/WRONG/", {"message": {"text": "سلام"}}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+    def test_callback_won_sets_stage_for_admin(self):
+        update = {
+            "callback_query": {
+                "id": "cb1", "data": f"crm:won:{self.customer.id}",
+                "from": {"id": 555, "first_name": "علی"},
+                "message": {"chat": {"id": -100}},
+            }
+        }
+        with patch("messaging.providers.telegram.answer_callback_query"), \
+             patch("messaging.providers.telegram.send_message"):
+            res = self.client.post(
+                f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json"
+            )
+        self.assertEqual(res.status_code, 200)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.stage, Customer.STAGE_WON)
+
+    def test_callback_denied_for_non_admin(self):
+        update = {
+            "callback_query": {
+                "id": "cb2", "data": f"crm:won:{self.customer.id}",
+                "from": {"id": 999, "first_name": "غریبه"},
+                "message": {"chat": {"id": 12345}},  # نه گروهِ ادمین، نه آیدیِ مجاز
+            }
+        }
+        with patch("messaging.providers.telegram.answer_callback_query") as ack, \
+             patch("messaging.providers.telegram.send_message"):
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.stage, Customer.STAGE_NEW)  # تغییر نکرد
+        ack.assert_called_once()
+
+    def test_price_bot_replies_to_free_text(self):
+        sample = {"products": [{"title": "میلگرد ۱۴", "price_toman": "100000", "url": "/products/1"}]}
+        update = {"message": {"text": "میلگرد", "chat": {"id": 777}, "from": {"id": 777}}}
+        with patch("assistant.tools.search_products", return_value=sample), \
+             patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+        send.assert_called_once()
+        self.assertIn("میلگرد", send.call_args.args[2])
+
+    def test_today_command_for_admin(self):
+        update = {"message": {"text": "/امروز", "chat": {"id": -100}, "from": {"id": 5}}}
+        with patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+        send.assert_called_once()
+        self.assertIn("امروز", send.call_args.args[2])
+
+    def test_daily_digest_builder(self):
+        from messaging.bale_bot import build_daily_digest
+
+        title, lines = build_daily_digest()
+        self.assertIn("امروز", title)
+        self.assertTrue(any("سرنخ" in line for line in lines))

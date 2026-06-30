@@ -187,10 +187,18 @@ def notify_admin(title, lines=None, *, customer=None, cfg=None):
     messages = []
 
     # --- تلگرام/بله (متنِ ساده تا روی هر دو تمیز نمایش یابد) ---
+    # اگر ربات دوطرفه فعال و مشتری مشخص باشد، دکمه‌های عملیاتی به پیام می‌چسبد.
+    reply_markup = None
+    if customer is not None and getattr(customer, "pk", None) and cfg.bale_webhook_enabled:
+        from .bale_bot import _lead_buttons
+
+        reply_markup = _lead_buttons(customer.pk)
+
     if cfg.telegram_configured:
         for chat_id in cfg.telegram_chat_ids:
             result = telegram.send_message(
                 cfg.telegram_bot_token, chat_id, plain, base_url=cfg.telegram_api_base,
+                reply_markup=reply_markup,
             )
             messages.append(
                 OutboundMessage.objects.create(

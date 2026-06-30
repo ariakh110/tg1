@@ -50,11 +50,22 @@ class MessagingSettings(models.Model):
         help_text="chat_id مقصدِ اطلاع‌رسانی؛ چند مقصد را با کاما جدا کن.",
     )
     # ریشهٔ API تلگرام؛ برای سرورِ داخلِ ایران (که api.telegram.org فیلتر است) یک واسطِ
-    # قابل‌دسترس بگذار: Cloudflare Worker یا nginx reverse-proxy روی دامنه/سرورِ خارج.
+    # قابل‌دسترس بگذار: «بله» (https://tapi.bale.ai)، Cloudflare Worker یا پروکسی.
     telegram_api_base = models.CharField(
         max_length=200, blank=True, default="https://api.telegram.org",
         verbose_name="ریشهٔ API تلگرام",
-        help_text="پیش‌فرض api.telegram.org؛ از داخلِ ایران یک واسط (Cloudflare Worker/پروکسی) بگذار.",
+        help_text="برای «بله»: https://tapi.bale.ai ؛ از داخلِ ایران یک واسط (Worker/پروکسی) برای تلگرام.",
+    )
+
+    # --- ربات دوطرفه (وب‌هوک): دکمه‌های عملیاتی، دستورهای مدیریتی، ربات قیمتِ کاربران ---
+    bale_webhook_enabled = models.BooleanField(default=False, verbose_name="ربات دوطرفه فعال است")
+    bale_admin_user_ids = models.CharField(
+        max_length=255, blank=True, default="", verbose_name="آیدیِ کاربریِ ادمین‌ها (دستورها)",
+        help_text="userIdهای مجاز برای دستورهای مدیریتی در چتِ خصوصی (با کاما). در گروهِ تنظیم‌شده خودبه‌خود مجاز است.",
+    )
+    site_base_url = models.CharField(
+        max_length=200, blank=True, default="https://kavex.ir", verbose_name="آدرسِ سایت",
+        help_text="برای ساختِ لینکِ محصول در پاسخِ ربات قیمت.",
     )
 
     # --- اطلاع‌رسانیِ رویدادهای سایت به ادمین ---
@@ -104,6 +115,21 @@ class MessagingSettings(models.Model):
         """فهرستِ مقصدهای تلگرام (جداشده با کاما)."""
         raw = (self.telegram_admin_chat_id or "").replace("،", ",")
         return [c.strip() for c in raw.split(",") if c.strip()]
+
+    @property
+    def bale_admin_ids(self):
+        """فهرستِ userIdهای ادمین که اجازهٔ دستورهای مدیریتی دارند (جداشده با کاما)."""
+        raw = (self.bale_admin_user_ids or "").replace("،", ",")
+        return [c.strip() for c in raw.split(",") if c.strip()]
+
+    def is_admin_sender(self, chat_id, from_id):
+        """آیا فرستندهٔ یک آپدیتِ بله مجاز به دستورها/دکمه‌های مدیریتی است؟
+
+        مجاز اگر پیام از یکی از مقصدهای تنظیم‌شده (گروه/چتِ ادمین) باشد، یا فرستنده در
+        فهرستِ userIdهای ادمین باشد.
+        """
+        allowed = set(self.telegram_chat_ids) | set(self.bale_admin_ids)
+        return str(chat_id) in allowed or str(from_id) in allowed
 
 
 class OutboundMessage(models.Model):

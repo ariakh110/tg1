@@ -207,6 +207,46 @@ class KavenegarIncomingWebhook(_KavenegarWebhook):
         return Response({"ok": True})
 
 
+class BaleSetWebhookView(APIView):
+    """ثبتِ آدرسِ وب‌هوکِ بله روی بک‌اند (تا ربات دوطرفه آپدیت‌ها را بگیرد) — فقط ادمین."""
+
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "messaging"
+
+    def post(self, request):
+        from .providers import telegram
+
+        cfg = MessagingSettings.load()
+        if not (cfg.telegram_bot_token or "").strip():
+            return Response({"detail": "اول توکنِ ربات را ذخیره کن."}, status=status.HTTP_400_BAD_REQUEST)
+        secret = cfg.webhook_secret
+        url = (request.data.get("url") if isinstance(request.data, dict) else "") or ""
+        url = url.strip() or f"https://{request.get_host()}/api/messaging/bale/webhook/{secret}/"
+        result = telegram.set_webhook(cfg.telegram_bot_token, url, base_url=cfg.telegram_api_base)
+        info = telegram.get_webhook_info(cfg.telegram_bot_token, base_url=cfg.telegram_api_base)
+        return Response(
+            {"ok": result.ok, "url": url, "error": result.error, "info": info.raw},
+            status=status.HTTP_200_OK if result.ok else status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class BaleWebhookView(APIView):
+    """دریافتِ آپدیت‌های ربات بله (عمومی؛ کلیدِ مخفی در مسیر). همیشه ۲۰۰ برمی‌گرداند."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # بدونِ session/CSRF؛ اعتبارسنجی با کلیدِ مخفیِ مسیر
+
+    def post(self, request, secret):
+        cfg = MessagingSettings.load()
+        if not cfg.webhook_secret or secret != cfg.webhook_secret:
+            return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        update = request.data if isinstance(request.data, dict) else {}
+        from .bale_bot import handle_update
+
+        handle_update(update)
+        return Response({"ok": True})
+
+
 class OutboundMessageViewSet(viewsets.ReadOnlyModelViewSet):
     """لاگِ پیام‌های ارسالی (فقط ادمین) — تازه‌ترین اول، با فیلتر."""
 
