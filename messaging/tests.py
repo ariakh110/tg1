@@ -328,3 +328,55 @@ class BaleTwoWayBotTests(APITestCase):
         title, lines = build_daily_digest()
         self.assertIn("امروز", title)
         self.assertTrue(any("سرنخ" in line for line in lines))
+
+
+class SafirBaleSendTests(APITestCase):
+    """سفیر: تبدیلِ شماره، ارسالِ خشک، ارسالِ پیکربندی‌شده، و مسیریابیِ کانال در API."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username="safir-admin", password="pass", is_staff=True)
+        self.customer = Customer.objects.create(name="حسن", phone="09120000001")
+
+    def test_phone_to_safir_format(self):
+        from messaging.providers.safir import to_safir_phone
+
+        self.assertEqual(to_safir_phone("09120000001"), "989120000001")
+        self.assertEqual(to_safir_phone("989120000001"), "989120000001")
+        self.assertEqual(to_safir_phone("9120000001"), "989120000001")
+        self.assertEqual(to_safir_phone("bad"), "")
+
+    def test_send_bale_dry_run_when_disabled(self):
+        with patch("messaging.service.safir.send_message") as mock_send:
+            msg = service.send_bale("09120000001", "سلام", customer=self.customer)
+        mock_send.assert_not_called()
+        self.assertEqual(msg.channel, OutboundMessage.CHANNEL_BALE)
+        self.assertEqual(msg.status, OutboundMessage.STATUS_SKIPPED)
+
+    def test_send_bale_when_configured(self):
+        from messaging.providers.safir import SendResult as SafirResult
+
+        cfg = MessagingSettings.load()
+        cfg.safir_enabled = True
+        cfg.safir_access_key = "KEY"
+        cfg.safir_bot_id = "123456"
+        cfg.save()
+        with patch(
+            "messaging.service.safir.send_message",
+            return_value=SafirResult(ok=True, status="sent", message_id="abc"),
+        ) as mock_send:
+            msg = service.send_bale("09120000001", "سلام", customer=self.customer)
+        mock_send.assert_called_once()
+        # شماره باید به فرمتِ ۹۸ به سفیر برود.
+        self.assertEqual(mock_send.call_args.args[2], "989120000001")
+        self.assertEqual(msg.status, OutboundMessage.STATUS_SENT)
+        self.assertEqual(msg.provider_message_id, "abc")
+
+    def test_send_api_routes_to_bale_channel(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(
+            "/api/messaging/send/",
+            {"customer_id": self.customer.id, "message": "سلام بله", "channel": "bale"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(res.data["channel"], OutboundMessage.CHANNEL_BALE)

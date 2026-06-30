@@ -68,6 +68,15 @@ class MessagingSettings(models.Model):
         help_text="برای ساختِ لینکِ محصول در پاسخِ ربات قیمت.",
     )
 
+    # --- سفیر (Safir): ارسالِ پیامِ بله به مشتری با شمارهٔ موبایل (مثلِ پیامک ولی در بله) ---
+    safir_enabled = models.BooleanField(default=False, verbose_name="ارسالِ پیامِ بله (سفیر) فعال است")
+    # کلیدِ دسترسیِ سازمان از پنلِ کسب‌وکارِ بله؛ محرمانه (write-only در سریالایزر).
+    safir_access_key = models.CharField(max_length=255, blank=True, default="", verbose_name="Api Access Key سفیر")
+    safir_bot_id = models.CharField(
+        max_length=40, blank=True, default="", verbose_name="شناسهٔ عددیِ ربات (bot_id)",
+        help_text="شناسهٔ عددیِ بازویی که با آن پیام ارسال می‌شود.",
+    )
+
     # --- اطلاع‌رسانیِ رویدادهای سایت به ادمین ---
     # شمارهٔ موبایلِ ادمین برای دریافتِ پیامکِ هشدار (در صورتِ فعال‌بودنِ پیامک). خالی ⇒ پیامکِ ادمین نمی‌رود.
     admin_alert_phone = models.CharField(max_length=32, blank=True, default="", verbose_name="موبایلِ ادمین برای هشدارِ پیامکی")
@@ -111,6 +120,15 @@ class MessagingSettings(models.Model):
         )
 
     @property
+    def safir_configured(self):
+        """آماده برای ارسالِ سفیر: سوییچ روشن، کلید و bot_id موجود."""
+        return bool(
+            self.safir_enabled
+            and (self.safir_access_key or "").strip()
+            and (self.safir_bot_id or "").strip()
+        )
+
+    @property
     def telegram_chat_ids(self):
         """فهرستِ مقصدهای تلگرام (جداشده با کاما)."""
         raw = (self.telegram_admin_chat_id or "").replace("،", ",")
@@ -137,10 +155,12 @@ class OutboundMessage(models.Model):
 
     CHANNEL_SMS = "sms"
     CHANNEL_TELEGRAM = "telegram"
+    CHANNEL_BALE = "bale"
     CHANNEL_WHATSAPP = "whatsapp"
     CHANNEL_CHOICES = [
         (CHANNEL_SMS, "پیامک"),
         (CHANNEL_TELEGRAM, "تلگرام"),
+        (CHANNEL_BALE, "بله (سفیر)"),
         (CHANNEL_WHATSAPP, "واتساپ"),
     ]
 

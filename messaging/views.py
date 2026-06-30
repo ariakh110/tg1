@@ -68,7 +68,11 @@ class MessagingSendView(APIView):
         if not recipient:
             return Response({"detail": "گیرنده (customer_id یا recipient) لازم است."}, status=status.HTTP_400_BAD_REQUEST)
 
-        msg = service.send_sms(recipient, message, customer=customer, created_by=request.user)
+        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        if channel == OutboundMessage.CHANNEL_BALE:
+            msg = service.send_bale(recipient, message, customer=customer, created_by=request.user)
+        else:
+            msg = service.send_sms(recipient, message, customer=customer, created_by=request.user)
         return Response(OutboundMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
 
 
@@ -96,7 +100,8 @@ class MessagingBulkSendView(APIView):
         if not qs.exists():
             return Response({"detail": "هیچ مشتریِ منطبقی یافت نشد."}, status=status.HTTP_400_BAD_REQUEST)
 
-        summary = service.send_bulk(qs, message, created_by=request.user)
+        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        summary = service.send_bulk(qs, message, channel=channel, created_by=request.user)
         summary.pop("messages", None)  # خلاصه برگردان، نه همهٔ ردیف‌ها
         return Response(summary, status=status.HTTP_201_CREATED)
 

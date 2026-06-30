@@ -15,6 +15,11 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
     telegram_bot_token = serializers.CharField(
         write_only=True, required=False, allow_blank=True, trim_whitespace=True
     )
+    safir_access_key = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True
+    )
+    safir_configured = serializers.BooleanField(read_only=True)
+    safir_key_configured = serializers.SerializerMethodField()
 
     class Meta:
         model = MessagingSettings
@@ -23,9 +28,11 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
             "default_template", "purchase_template", "daily_send_cap",
             "telegram_enabled", "telegram_bot_token", "telegram_admin_chat_id", "telegram_api_base",
             "bale_webhook_enabled", "bale_admin_user_ids", "site_base_url",
+            "safir_enabled", "safir_access_key", "safir_bot_id",
             "admin_alert_phone", "notify_on_signup", "notify_on_order", "notify_on_chat_lead",
             "api_key_configured", "is_configured",
             "telegram_configured", "telegram_token_configured",
+            "safir_configured", "safir_key_configured",
             "webhook_secret", "updated_at",
         )
         read_only_fields = ("webhook_secret", "updated_at")
@@ -36,9 +43,12 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
     def get_telegram_token_configured(self, obj):
         return bool((obj.telegram_bot_token or "").strip())
 
+    def get_safir_key_configured(self, obj):
+        return bool((obj.safir_access_key or "").strip())
+
     def update(self, instance, validated_data):
         # کلیدهای خالی ⇒ مقدارِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
-        for secret_field in ("kavenegar_api_key", "telegram_bot_token"):
+        for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key"):
             value = validated_data.pop(secret_field, None)
             if value is not None and value.strip():
                 setattr(instance, secret_field, value.strip())

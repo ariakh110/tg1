@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from customers.models import Customer, CustomerActivity
 from .models import MessagingSettings, OutboundMessage
-from .providers import kavenegar, telegram
+from .providers import kavenegar, safir, telegram
 
 # متنِ مراحلِ خرید (پیامکِ فروشِ مستقیم). {order}/{amount} در صورتِ وجود جایگزین می‌شوند.
 PURCHASE_STEPS = {
@@ -42,7 +42,7 @@ def _today_sent_count():
     ).count()
 
 
-def _log_activity(customer, message, status, created_by):
+def _log_activity(customer, message, status, created_by, channel_label="پیامک"):
     label = {
         OutboundMessage.STATUS_SENT: "ارسال شد",
         OutboundMessage.STATUS_SKIPPED: "خشک (سرویس غیرفعال)",
@@ -52,7 +52,7 @@ def _log_activity(customer, message, status, created_by):
     CustomerActivity.objects.create(
         customer=customer,
         kind=CustomerActivity.KIND_MESSAGE,
-        body=f"پیامک ({label}): {snippet}",
+        body=f"{channel_label} ({label}): {snippet}",
         created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
     )
 
@@ -104,16 +104,53 @@ def send_sms(recipient, message, *, customer=None, purpose=OutboundMessage.PURPO
     return msg
 
 
-def send_to_customer(customer, message=None, *, template="", tokens=None,
-                     purpose=OutboundMessage.PURPOSE_MANUAL, created_by=None, cfg=None):
-    """ارسالِ پیامک به مشتریِ CRM (روی شمارهٔ موبایلِ مشتری) + ثبتِ فعالیت روی تایم‌لاین."""
+def send_bale(recipient, message, *, customer=None, purpose=OutboundMessage.PURPOSE_MANUAL,
+              created_by=None, cfg=None, log_activity=True, request_id="", meta=None):
+    """ارسالِ یک پیامِ بله به یک شماره از طریقِ «سفیر» و ثبتِ آن در لاگ.
+
+    اگر سفیر غیرفعال/بی‌کلید باشد، ارسالِ «خشک» (skipped) ثبت می‌شود — بدونِ تماس با سرویس.
+    """
+    cfg = cfg or MessagingSettings.load()
+    phone09 = normalize_phone(recipient)
+    phone98 = safir.to_safir_phone(phone09)
+    body = message or ""
+
+    msg = OutboundMessage(
+        channel=OutboundMessage.CHANNEL_BALE, provider="safir", customer=customer,
+        recipient=phone09, purpose=purpose, body=body, meta=meta,
+        created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
+    )
+    if not phone98:
+        msg.status = OutboundMessage.STATUS_FAILED
+        msg.error = "شمارهٔ گیرنده نامعتبر است."
+    elif not cfg.safir_configured:
+        msg.status = OutboundMessage.STATUS_SKIPPED
+        msg.error = "" if cfg.safir_enabled else "ارسالِ بله (سفیر) در تنظیمات غیرفعال است."
+    else:
+        result = safir.send_message(cfg.safir_access_key, cfg.safir_bot_id, phone98, body, request_id=request_id)
+        msg.status = result.status or (OutboundMessage.STATUS_SENT if result.ok else OutboundMessage.STATUS_FAILED)
+        msg.provider_message_id = result.message_id
+        msg.error = result.error[:400]
+
+    msg.save()
+    if customer and log_activity:
+        _log_activity(customer, body, msg.status, created_by, channel_label="بله")
+    return msg
+
+
+def send_to_customer(customer, message=None, *, channel=OutboundMessage.CHANNEL_SMS, template="",
+                     tokens=None, purpose=OutboundMessage.PURPOSE_MANUAL, created_by=None, cfg=None):
+    """ارسال به مشتریِ CRM روی شمارهٔ موبایلش (پیامک یا بله) + ثبتِ فعالیت روی تایم‌لاین."""
+    if channel == OutboundMessage.CHANNEL_BALE:
+        return send_bale(customer.phone, message, customer=customer, purpose=purpose, created_by=created_by, cfg=cfg)
     return send_sms(
         customer.phone, message, customer=customer, template=template, tokens=tokens,
         purpose=purpose, created_by=created_by, cfg=cfg,
     )
 
 
-def send_bulk(customers, message, *, purpose=OutboundMessage.PURPOSE_BULK, created_by=None, cfg=None):
+def send_bulk(customers, message, *, channel=OutboundMessage.CHANNEL_SMS,
+              purpose=OutboundMessage.PURPOSE_BULK, created_by=None, cfg=None):
     """ارسالِ یک متن به گروهی از مشتریان (به‌ترتیب)؛ سقفِ ارسالِ روزانه رعایت می‌شود.
 
     خروجی: dict خلاصه {sent, skipped, failed, total, messages}.
@@ -127,13 +164,13 @@ def send_bulk(customers, message, *, purpose=OutboundMessage.PURPOSE_BULK, creat
     for customer in customers:
         if cap and (already + counters["sent"]) >= cap:
             msg = OutboundMessage.objects.create(
-                channel=OutboundMessage.CHANNEL_SMS, provider=cfg.provider, customer=customer,
-                recipient=normalize_phone(customer.phone), purpose=purpose, body=message,
+                channel=channel, provider=cfg.provider if channel == OutboundMessage.CHANNEL_SMS else "safir",
+                customer=customer, recipient=normalize_phone(customer.phone), purpose=purpose, body=message,
                 status=OutboundMessage.STATUS_SKIPPED, error="سقفِ ارسالِ روزانه پر شده است.",
                 created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
             )
         else:
-            msg = send_to_customer(customer, message, purpose=purpose, created_by=created_by, cfg=cfg)
+            msg = send_to_customer(customer, message, channel=channel, purpose=purpose, created_by=created_by, cfg=cfg)
         results.append(msg)
         if msg.status in (OutboundMessage.STATUS_SENT, OutboundMessage.STATUS_DELIVERED):
             counters["sent"] += 1
