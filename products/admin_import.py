@@ -398,6 +398,7 @@ def find_product(row, category):
 
 def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
     row = normalize_row(row)
+    price_provided = "price" in row
     for field in NUMERIC_FIELDS:
         if field in row:
             row[field] = parse_decimal(row[field], field)
@@ -468,6 +469,7 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
     price = row.get("price")
     updated_price = False
     has_price = price not in (None, "")
+    clear_price = price_provided and not has_price
     has_delivery = any(row.get(field) not in ("", None) for field in ("province", "city", "address", "country", "incoterm"))
     offer = None
     if has_price or has_delivery:
@@ -514,6 +516,13 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
             tier.save(update_fields=update_fields)
         updated_price = True
 
+    if clear_price:
+        PricingTier.objects.filter(offer__product=product).delete()
+        updated_price = True
+        if product.availability_status != Product.AVAILABILITY_INQUIRY:
+            product.availability_status = Product.AVAILABILITY_INQUIRY
+            product.save(update_fields=["availability_status"])
+
     if has_delivery and offer is not None:
         delivery = offer.delivery_options.first()
         if delivery is None:
@@ -542,6 +551,7 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
         "product_name": product.name,
         "created_product": created_product,
         "updated_price": updated_price,
+        "cleared_price": clear_price,
     }
 
 

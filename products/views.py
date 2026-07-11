@@ -620,9 +620,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             if not isinstance(item, dict):
                 continue
             pid = item.get("product_id")
-            price = item.get("price")
-            if pid in (None, "") or price in (None, ""):
+            if pid in (None, "") or "price" not in item:
                 continue
+            price = item.get("price")
             rows.append({"product_id": pid, "price": price})
         if not rows:
             return Response({"detail": "هیچ قیمت معتبری ارسال نشد."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1026,4 +1026,3 @@ class SellerDetailView(generics.RetrieveUpdateAPIView):
         if obj.user != self.request.user:
             self.permission_denied(self.request)
         return obj
-

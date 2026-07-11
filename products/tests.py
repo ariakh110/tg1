@@ -665,7 +665,6 @@ class AdminProductImportTests(APITestCase):
                 "product_id": product.id,
                 "name": product.name,
                 "seller_id": self.seller.id,
-                "price": "",
                 "province": "تهران",
                 "city": "تهران",
                 "address": "انبار",
@@ -681,6 +680,99 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(delivery.city, "تهران")
         self.assertEqual(delivery.address, "انبار")
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
+
+    def test_admin_blank_price_clears_existing_price_and_marks_inquiry(self):
+        category = ProductCategory.objects.get(code="sheet-acid-washed")
+        product = Product.objects.create(
+            category=category,
+            name="Blank price product",
+            short_description="Blank price product",
+            description="Blank price product",
+            availability_status=Product.AVAILABILITY_IN_STOCK,
+            is_active=True,
+        )
+        offer = Offer.objects.create(product=product, seller=self.seller, is_active=True)
+        PricingTier.objects.create(
+            offer=offer,
+            tier_name="Daily price",
+            unit_price="45000",
+            minimum_quantity=1,
+        )
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "product_id": product.id,
+                "name": product.name,
+                "seller_id": self.seller.id,
+                "price": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertTrue(res.data["updated_price"])
+        self.assertTrue(res.data["cleared_price"])
+        product.refresh_from_db()
+        self.assertEqual(product.availability_status, Product.AVAILABILITY_INQUIRY)
+        self.assertFalse(PricingTier.objects.filter(offer__product=product).exists())
+
+    def test_admin_bulk_price_blank_clears_price_only(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        product = Product.objects.create(
+            category=category,
+            name="Bulk blank price product",
+            short_description="Keep short",
+            description="Keep description",
+            availability_status=Product.AVAILABILITY_IN_STOCK,
+            is_active=True,
+        )
+        ProductSpecification.objects.create(
+            product=product,
+            material_type="sheet",
+            steel_grade="ST37",
+            surface_finish="black",
+            manufacturing_process="sheet",
+            factory="mobarakeh",
+            cut_type="cut",
+            thickness_mm="2",
+            width_mm="1000",
+            length_mm="6000",
+        )
+        offer = Offer.objects.create(product=product, seller=self.seller, is_active=True)
+        PricingTier.objects.create(
+            offer=offer,
+            tier_name="Daily price",
+            unit_price="45000",
+            minimum_quantity=1,
+        )
+        DeliveryLocation.objects.create(
+            offer=offer,
+            incoterm="EXW",
+            country="Iran",
+            province="Isfahan",
+            city="Mobarakeh",
+            address="Warehouse",
+        )
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-bulk-prices/",
+            {"prices": [{"product_id": product.id, "price": ""}]},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertEqual(res.data["updated_prices"], 1)
+        product.refresh_from_db()
+        self.assertEqual(product.name, "Bulk blank price product")
+        self.assertEqual(product.description, "Keep description")
+        self.assertEqual(product.availability_status, Product.AVAILABILITY_INQUIRY)
+        self.assertEqual(product.specifications.steel_grade, "ST37")
+        delivery = offer.delivery_options.get()
+        self.assertEqual(delivery.city, "Mobarakeh")
+        self.assertFalse(PricingTier.objects.filter(offer__product=product).exists())
 
     def test_admin_can_create_coil_without_length_or_price(self):
         self.client.force_authenticate(self.admin)
