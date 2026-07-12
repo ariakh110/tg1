@@ -80,16 +80,17 @@ The system SHALL show admins how category and option changes affect existing pro
 - **WHEN** the taxonomy table is shown
 - **THEN** the option row SHALL show a product usage count or impact hint.
 
-### Requirement: Public product list is factory-grouped and active-only
+### Requirement: Public product list is grade/form-grouped, complete, and active-only
 
-The public product list SHALL render active products through backend-driven category/type/factory grouping.
+The public product list SHALL render every matching active product through backend-driven category/type filters and steel-grade/product-form grouping. Factory, origin, and seller information SHALL remain visible per row.
 
 #### Scenario: Visitor selects sheet category
 
 - **GIVEN** active sheet products exist
 - **WHEN** the visitor opens `/products?family=sheet`
 - **THEN** type tabs SHALL be derived from backend data with active products
-- **AND** product rows SHALL be grouped by factory
+- **AND** product rows SHALL be grouped by steel grade and product form
+- **AND** every matching row SHALL be shown without public pagination controls
 - **AND** inactive products SHALL be excluded.
 
 #### Scenario: Product has no price
@@ -104,20 +105,20 @@ The public product list SHALL render active products through backend-driven cate
 - **WHEN** the product row is rendered
 - **THEN** the row SHALL show a register-order/request action instead of a buy action.
 
-### Requirement: Pagination remains stable
+### Requirement: Public list filters remain stable
 
-The product list SHALL preserve pagination and filters through URL query parameters.
+The product list SHALL preserve category, type, form, search, and ordering filters through URL query parameters while retrieving every backend page internally.
 
 #### Scenario: Visitor changes type tab
 
-- **GIVEN** the visitor is on page 3 of a product list
+- **GIVEN** the visitor has filters selected
 - **WHEN** the visitor selects a different type tab
-- **THEN** pagination SHALL reset to page 1
-- **AND** the new category/type/filter state SHALL be represented in the URL.
+- **THEN** the new category/type/filter state SHALL be represented in the URL
+- **AND** all products matching that state SHALL be displayed.
 
-#### Scenario: Visitor changes page
+#### Scenario: Results span multiple backend pages
 
 - **GIVEN** filters are selected
-- **WHEN** the visitor clicks next or previous page
-- **THEN** existing filters SHALL remain in the URL
-- **AND** the selected page SHALL update without losing category/type selection.
+- **WHEN** matching products span multiple paginated API responses
+- **THEN** the storefront SHALL retrieve every response page
+- **AND** no previous, next, or page-number controls SHALL be rendered.

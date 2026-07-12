@@ -76,10 +76,12 @@ Product list:
 
 - Main category tabs from active categories with active products.
 - Sheet type tabs from backend category/default or active option/product combinations.
-- Factory section cards/tables:
-  - header: factory label, type label, product count, update hint if available.
-  - rows: title, dimensions, origin, market comparison if available later, price/action.
-- Preserve pagination through query string state.
+- Grade/form section cards/tables:
+  - header: steel grade, product form, product count, update hint if available.
+  - rows: title, dimensions, origin, group-local market comparison, price/action.
+- Request bounded backend pages and aggregate every page before grouping the public list.
+- Keep category/type/form/search/ordering filters in query string state; do not expose page navigation.
+- Calculate each row's market comparison from priced products in its own grade/form group.
 
 ## Backward Compatibility
 

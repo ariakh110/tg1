@@ -6,7 +6,9 @@ The first product taxonomy admin step created a dedicated admin panel and backen
 
 The public product list also needs to behave like a real steel price list:
 - category and type tabs must come from active backend data,
-- sheet/coil rows must be grouped by factory,
+- sheet/coil rows must be grouped into comparable steel-grade/product-form sections,
+- every product matching the active filters must be visible together without storefront pagination,
+- row market percentages must compare against the same grade/form group rather than the whole sheet category,
 - each row must show a generated title, dimensions, origin, price or inquiry/order action,
 - inactive products and inactive taxonomy values must not leak into the public list.
 
@@ -16,10 +18,10 @@ The public product list also needs to behave like a real steel price list:
   - edits category or option labels/codes after typos,
   - deactivates outdated categories/options without deleting history,
   - sees how many products depend on each taxonomy value,
-  - reviews products grouped by factory/type and fixes missing specs.
+  - reviews products grouped by grade/form and fixes missing specs.
 - Storefront visitor:
   - selects a main category, then a valid subtype such as black sheet or acid-washed sheet,
-  - sees factory-grouped price sections,
+  - sees complete grade/form price sections with every available thickness,
   - understands whether the product has a price, needs inquiry, or is unavailable/register-order.
 - Future marketplace/order workflow:
   - uses the same controlled taxonomy for RFQs and seller stock listings.
@@ -30,8 +32,10 @@ The public product list also needs to behave like a real steel price list:
 - Admin list keeps inactive taxonomy values visible for management and audit.
 - Product form hides inactive taxonomy values by default.
 - Public category/type tabs only show active taxonomy/category values that have active products.
-- Public product rows are grouped by factory for sheet/coil lists.
-- Each factory section has a concise header and product count.
+- Public product rows are grouped by steel grade and product form for sheet/coil lists.
+- Each grade/form section has a concise header and product count.
+- All matching products are displayed in one continuous list without public pagination controls.
+- Market comparison percentages use only positive best prices in the same grade/form section.
 - Product row title is generated from structured specs when `name` is missing or needs normalization.
 - All taxonomy lifecycle actions are audit logged.
 - Backend and frontend checks pass with no new lint/build errors.
@@ -76,14 +80,15 @@ The public product list also needs to behave like a real steel price list:
 
 - `/products` must request active categories/types from backend data.
 - If the main category is sheet, the list must support type tabs such as black, oiled, alloy, acid-washed, galvanized, color, stainless, when active products exist.
-- Product sections must group by factory.
+- Product sections must group by steel grade and product form while retaining factory per row.
 - Rows must show:
   - title generated from process, type, thickness, width, length, grade/factory,
   - origin as `city - delivery_place` or `province - delivery_place`,
   - price if available,
   - inquiry button when price is empty but product is available for inquiry,
   - order/request button when out of stock.
-- Pagination must remain stable when category/type/filter changes.
+- The storefront must retrieve all paginated API responses for the active filters and render the complete result without page controls.
+- Each priced row's market delta must use the arithmetic mean of positive best prices in its own grade/form section; inquiry-only rows must not affect the mean.
 
 ### FR-6 Admin Product List
 
@@ -135,7 +140,7 @@ The public product list also needs to behave like a real steel price list:
 1. Add backend admin-safe endpoints/actions or allow PATCH with current viewsets where permission rules already fit.
 2. Add usage counts for categories/options.
 3. Add edit/deactivate/reactivate controls to the taxonomy panel.
-4. Finalize public `/products` grouping by active category/type/factory.
+4. Finalize public `/products` grouping by active category/type and grade/form, aggregate all API pages, and use group-local market comparisons.
 5. Add tests for taxonomy CRUD, inactive option visibility, and public list hiding inactive data.
 6. Run backend/frontend verification and smoke tests.
 
@@ -144,3 +149,4 @@ The public product list also needs to behave like a real steel price list:
 - Editing a value can break old product specs if value codes change. Mitigation: prefer editing labels; changing `value` should show usage impact.
 - Inactive option values may still exist on older products. Mitigation: display legacy values read-only but reject new writes.
 - Counts can be expensive if computed naively. Mitigation: use annotated querysets or a dedicated lightweight stats endpoint.
+- Large public result sets can require several API requests. Mitigation: keep backend pages bounded and fetch the remaining pages only for the selected filter state before rendering groups.

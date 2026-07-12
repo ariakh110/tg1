@@ -27,11 +27,11 @@
 ## 4. Frontend Public Product List
 
 - [x] Finalize active category/type tabs from backend data.
-- [x] Group sheet/coil products by factory.
+- [x] Group sheet/coil products by steel grade and product form while retaining factory per row.
 - [x] Render row title from structured specs.
 - [x] Render origin as city/province plus delivery place.
 - [x] Render price, inquiry, or order/request action based on price and availability.
-- [x] Preserve pagination and query parameters across category/type/filter changes.
+- [x] Preserve filter query parameters and aggregate every backend response page into one public list.
 
 ## 5. Verification
 

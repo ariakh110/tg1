@@ -36,7 +36,7 @@ Taxonomy must be stable enough for operators and flexible enough for steel-speci
 - `products.views.ProductCategoryViewSet.active_with_products`: exposes only active categories/types that have active products.
 - `products.views.ProductViewSet.admin_products`: exposes complete admin product inventory, including inactive products when requested.
 - `app/components/admin/AdminDashboardPage.js`: custom admin surface for product creation, price import, taxonomy settings, product list, and audit-facing actions.
-- `app/products/page.js`: public product list grouped by backend category/type and factory.
+- `app/products/page.js`: public product list grouped by backend category/type and comparable steel-grade/product-form groups.
 - `app/products/[id]/page.js`: product detail view.
 
 ## Data flow / Integrations
@@ -45,12 +45,13 @@ Taxonomy must be stable enough for operators and flexible enough for steel-speci
 2. Admin registers products one-by-one or imports an Excel/CSV file.
 3. Backend validates that selected options are defined and, when configured, match their parent option.
 4. Public product list fetches active categories and active products.
-5. Product list groups products by category/type and factory while preserving pagination.
-6. Admin activate/deactivate/delete actions write `ProductAuditLog`.
+5. Product list exhausts bounded backend response pages, then groups every matching product by category/type and steel-grade/product-form in one continuous view.
+6. Row market deltas compare each positive best price with the arithmetic mean of its displayed grade/form group.
+7. Admin activate/deactivate/delete actions write `ProductAuditLog`.
 
 ## Quality attributes (performance, security, reliability)
 
-- Product list queries must use `select_related`, `prefetch_related`, pagination, and indexed/filterable fields where possible.
+- Product list queries must use `select_related`, `prefetch_related`, bounded backend pagination, and indexed/filterable fields where possible; the storefront retrieves all pages for the active filters before rendering.
 - Public endpoints must hide inactive products.
 - Admin endpoints must enforce admin permissions and return inactive products only on admin routes.
 - Controlled option validation must prevent typo-based inconsistent data.
