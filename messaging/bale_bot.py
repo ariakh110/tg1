@@ -1,9 +1,10 @@
 """مغزِ ربات دوطرفهٔ بله: مسیریابیِ آپدیت‌ها (پیام/کلیکِ دکمه).
 
-سه کار می‌کند:
+چهار کار می‌کند:
 - دکمه‌های عملیاتیِ روی پیام‌های گروه (callback_query) → آپدیتِ مستقیمِ CRM.
-- دستورهای مدیریتی (/امروز /قیف /فرصتها /فرصت /سرنخ /بدهکاران) برای ادمین‌ها.
+- منوی دکمه‌ای و دستورهای مدیریتی (/امروز /قیف /فرصتها /فرصت /سرنخ /بدهکاران) برای ادمین‌ها.
 - ربات قیمت برای کاربران: هر متنِ آزاد → جستجوی محصول و پاسخِ قیمت (موتورِ دستیار).
+- پیامِ صریح برای کاربر داخلی‌ای که هنوز به حساب سایت متصل نشده است.
 
 همه چیز «امن» است: هیچ خطایی نباید به وب‌هوک نشت کند (خودِ ویو هم try/except دارد).
 """
@@ -25,15 +26,32 @@ WELCOME_PUBLIC = (
     "نامِ محصول را بفرستید تا قیمت و موجودی را بدهم؛ مثلاً «میلگرد ۱۴» یا «ورق ۳ سیاه»."
 )
 WELCOME_ADMIN = (
-    "پنلِ مدیریتِ کاوکس 👤\n"
-    "دستورها:\n"
-    "/امروز — سرنخ‌های جدید و پیگیری‌های سررسیده\n"
-    "/قیف — آمار قیف مشتریان و فروش سایت\n"
-    "/فرصتها — آخرین فرصت‌های باز سایت\n"
-    "/فرصت 123 — جزئیات یک فرصت فروش\n"
-    "/سرنخ 0912... — پروندهٔ یک مشتری\n"
-    "/بدهکاران — مشتریانِ بدهکار"
+    "پنل مدیریت کاوکس 👤\n"
+    "یکی از گزینه‌های زیر را انتخاب کنید. برای بازکردن دوباره این منو، /menu را بفرستید."
 )
+ACCESS_DENIED = (
+    "⛔ حساب بله شما به پنل کاوکس متصل نیست یا دسترسی CRM ندارد.\n"
+    "ادمین کامل باید در سایت، بخش «پیامک ← کاربران مجاز ربات بله»، شناسه زیر را به حساب سایت متصل کند."
+)
+
+BOT_COMMANDS = [
+    {"command": "menu", "description": "منوی دکمه‌ای مدیریت"},
+    {"command": "today", "description": "خلاصه امروز"},
+    {"command": "funnel", "description": "آمار هر دو قیف"},
+    {"command": "opportunities", "description": "فرصت‌های باز سایت"},
+    {"command": "opportunity", "description": "جزئیات فرصت با شناسه"},
+    {"command": "lead", "description": "پرونده مشتری با موبایل"},
+    {"command": "debtors", "description": "مشتریان بدهکار"},
+]
+
+INTERNAL_COMMAND_TOKENS = {
+    "today", "امروز",
+    "funnel", "قیف",
+    "opportunities", "فرصتها", "فرصت‌ها",
+    "opportunity", "فرصت",
+    "lead", "سرنخ", "مشتری",
+    "debtors", "بدهکاران", "بدهکار",
+}
 
 
 def _cfg():
@@ -68,6 +86,64 @@ def _reply(cfg, chat_id, text, reply_markup=None):
     return telegram.send_message(
         cfg.telegram_bot_token, chat_id, text, base_url=cfg.telegram_api_base, reply_markup=reply_markup,
     )
+
+
+def _admin_menu_buttons():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📋 امروز", "callback_data": "menu:today"},
+                {"text": "📊 هر دو قیف", "callback_data": "menu:funnel"},
+            ],
+            [
+                {"text": "🛒 فرصت‌های باز", "callback_data": "menu:opportunities"},
+                {"text": "💰 بدهکاران", "callback_data": "menu:debtors"},
+            ],
+            [
+                {"text": "👤 پرونده مشتری", "callback_data": "menu:lead_help"},
+                {"text": "🔎 قیمت محصول", "callback_data": "menu:price_help"},
+            ],
+            [{"text": "🏠 منوی اصلی", "callback_data": "menu:home"}],
+        ]
+    }
+
+
+def _public_menu_buttons():
+    return {
+        "inline_keyboard": [
+            [{"text": "🔎 جستجوی قیمت محصول", "callback_data": "public:price_help"}],
+            [{"text": "🪪 شناسه بله من", "callback_data": "public:my_id"}],
+        ]
+    }
+
+
+def _opportunity_buttons(opportunities):
+    rows = [
+        [{
+            "text": f"#{opportunity.pk} · {opportunity.title[:32]}",
+            "callback_data": f"opp:view:{opportunity.pk}",
+        }]
+        for opportunity in list(opportunities)[:10]
+    ]
+    rows.append([
+        {"text": "🔄 بروزرسانی", "callback_data": "menu:opportunities"},
+        {"text": "🏠 منو", "callback_data": "menu:home"},
+    ])
+    return {"inline_keyboard": rows}
+
+
+def _opportunity_card_buttons():
+    return {
+        "inline_keyboard": [[
+            {"text": "↩ فرصت‌ها", "callback_data": "menu:opportunities"},
+            {"text": "🏠 منو", "callback_data": "menu:home"},
+        ]]
+    }
+
+
+def _access_denied_text(bale_user_id):
+    value = str(bale_user_id or "").strip() or "نامشخص"
+    return f"{ACCESS_DENIED}\n\nشناسه بله شما: {value}"
 
 
 def _toman(amount):
@@ -182,12 +258,16 @@ def _funnel_text():
     return "\n".join(customer_lines + site_lines)
 
 
-def _opportunities_text():
-    rows = (
+def _open_opportunities():
+    return list(
         CrmOpportunity.objects.select_related("customer")
         .filter(is_active=True, stage__in=CrmOpportunity.OPEN_STAGES)
         .order_by("-updated_at")[:10]
     )
+
+
+def _opportunities_text(rows=None):
+    rows = _open_opportunities() if rows is None else rows
     if not rows:
         return "فرصت فروش بازی در سایت وجود ندارد."
     lines = ["🛒 آخرین فرصت‌های باز سایت:"]
@@ -197,7 +277,7 @@ def _opportunities_text():
             f"• #{opportunity.pk} | {opportunity.title[:55]}\n"
             f"  {opportunity.get_stage_display()} | {customer_name} | {_irr_as_toman(opportunity.expected_value_irr)}"
         )
-    lines.append("\nبرای جزئیات: /فرصت شناسه")
+    lines.append("\nبرای دیدن جزئیات، دکمه فرصت را انتخاب کنید.")
     return "\n".join(lines)
 
 
@@ -262,6 +342,36 @@ def _lead_buttons(customer_id):
     }
 
 
+def _send_admin_action(cfg, chat_id, action):
+    if action == "home":
+        return _reply(cfg, chat_id, WELCOME_ADMIN, reply_markup=_admin_menu_buttons())
+    if action == "today":
+        return _reply(cfg, chat_id, _today_text(), reply_markup=_admin_menu_buttons())
+    if action == "funnel":
+        return _reply(cfg, chat_id, _funnel_text(), reply_markup=_admin_menu_buttons())
+    if action == "opportunities":
+        rows = _open_opportunities()
+        markup = _opportunity_buttons(rows) if rows else _admin_menu_buttons()
+        return _reply(cfg, chat_id, _opportunities_text(rows), reply_markup=markup)
+    if action == "debtors":
+        return _reply(cfg, chat_id, _debtors_text(), reply_markup=_admin_menu_buttons())
+    if action == "lead_help":
+        return _reply(
+            cfg,
+            chat_id,
+            "👤 برای پرونده مشتری، شماره موبایل را به این شکل بفرستید:\n/سرنخ 09120000000",
+            reply_markup=_admin_menu_buttons(),
+        )
+    if action == "price_help":
+        return _reply(
+            cfg,
+            chat_id,
+            "🔎 نام و مشخصات محصول را همین‌جا بنویسید؛ مثال: «ورق سیاه ST37 ضخامت ۳ میل».",
+            reply_markup=_admin_menu_buttons(),
+        )
+    return _reply(cfg, chat_id, WELCOME_ADMIN, reply_markup=_admin_menu_buttons())
+
+
 def _apply_callback(action, customer, actor_name):
     """عملِ دکمه را روی CRM اعمال می‌کند و یک توضیحِ کوتاه برمی‌گرداند."""
     if action == "called":
@@ -317,6 +427,22 @@ def _handle_callback(cb, cfg):
     message = cb.get("message") or {}
     chat = message.get("chat") or {}
     from_user = cb.get("from") or {}
+
+    if data in ("public:price_help", "public:my_id"):
+        telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "", base_url=cfg.telegram_api_base)
+        text = (
+            "🔎 نام و مشخصات محصول را بنویسید؛ مثال: «میلگرد ۱۴» یا «ورق سیاه ۳ میل»."
+            if data == "public:price_help"
+            else f"🪪 شناسه بله شما: {from_user.get('id') or 'نامشخص'}"
+        )
+        _reply(
+            cfg,
+            chat.get("id"),
+            text,
+            reply_markup=_public_menu_buttons(),
+        )
+        return
+
     operator = _bound_crm_user(from_user.get("id"))
     actor_name = (
         ((operator.get_full_name() or "").strip() or operator.get_username())
@@ -326,12 +452,34 @@ def _handle_callback(cb, cfg):
 
     # Group/chat ids are notification destinations, not authorization credentials.
     if not operator:
-        telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "اجازه ندارید.", base_url=cfg.telegram_api_base)
+        telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "حساب بله متصل نیست.", base_url=cfg.telegram_api_base)
+        _reply(
+            cfg,
+            chat.get("id"),
+            _access_denied_text(from_user.get("id")),
+            reply_markup=_public_menu_buttons(),
+        )
         return
 
     parts = data.split(":")
-    if len(parts) != 3 or parts[0] != "crm":
+
+    if len(parts) == 2 and parts[0] == "menu":
         telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "", base_url=cfg.telegram_api_base)
+        _send_admin_action(cfg, chat.get("id"), parts[1])
+        return
+
+    if len(parts) == 3 and parts[:2] == ["opp", "view"]:
+        telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "", base_url=cfg.telegram_api_base)
+        _reply(
+            cfg,
+            chat.get("id"),
+            _opportunity_card_text(parts[2]),
+            reply_markup=_opportunity_card_buttons(),
+        )
+        return
+
+    if len(parts) != 3 or parts[0] != "crm":
+        telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "دکمه نامعتبر است.", base_url=cfg.telegram_api_base)
         return
     _, action, cid = parts
     customer = Customer.objects.filter(pk=cid).first()
@@ -341,7 +489,7 @@ def _handle_callback(cb, cfg):
 
     note = _apply_callback(action, customer, actor_name)
     telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "ثبت شد ✅", base_url=cfg.telegram_api_base)
-    _reply(cfg, chat.get("id"), note)
+    _reply(cfg, chat.get("id"), note, reply_markup=_admin_menu_buttons())
 
 
 def _handle_message(message, cfg):
@@ -351,35 +499,74 @@ def _handle_message(message, cfg):
     chat = message.get("chat") or {}
     from_user = message.get("from") or {}
     chat_id = chat.get("id")
-    is_admin = bool(_bound_crm_user(from_user.get("id")))
+    operator = _bound_crm_user(from_user.get("id"))
+    is_admin = bool(operator)
+
+    if text in ("منو", "menu", "🏠 منوی اصلی"):
+        _reply(
+            cfg,
+            chat_id,
+            WELCOME_ADMIN if is_admin else WELCOME_PUBLIC,
+            reply_markup=_admin_menu_buttons() if is_admin else _public_menu_buttons(),
+        )
+        return
 
     if text.startswith("/"):
         token = text[1:].split()[0].split("@")[0]
         arg = text[len("/" + token):].strip()
-        if token in ("start", "help", "شروع", "راهنما"):
-            _reply(cfg, chat_id, WELCOME_ADMIN if is_admin else WELCOME_PUBLIC)
+        if token in ("start", "help", "menu", "شروع", "راهنما", "منو"):
+            _reply(
+                cfg,
+                chat_id,
+                WELCOME_ADMIN if is_admin else WELCOME_PUBLIC,
+                reply_markup=_admin_menu_buttons() if is_admin else _public_menu_buttons(),
+            )
+            return
+        if not is_admin and token in INTERNAL_COMMAND_TOKENS:
+            _reply(
+                cfg,
+                chat_id,
+                _access_denied_text(from_user.get("id")),
+                reply_markup=_public_menu_buttons(),
+            )
             return
         if is_admin and token in ("today", "امروز"):
-            _reply(cfg, chat_id, _today_text())
+            _send_admin_action(cfg, chat_id, "today")
             return
         if is_admin and token in ("funnel", "قیف"):
-            _reply(cfg, chat_id, _funnel_text())
+            _send_admin_action(cfg, chat_id, "funnel")
             return
         if is_admin and token in ("opportunities", "فرصتها", "فرصت‌ها"):
-            _reply(cfg, chat_id, _opportunities_text())
+            _send_admin_action(cfg, chat_id, "opportunities")
             return
         if is_admin and token in ("opportunity", "فرصت"):
-            _reply(cfg, chat_id, _opportunity_card_text(arg))
+            if arg:
+                _reply(cfg, chat_id, _opportunity_card_text(arg), reply_markup=_opportunity_card_buttons())
+            else:
+                _send_admin_action(cfg, chat_id, "opportunities")
             return
         if is_admin and token in ("lead", "سرنخ", "مشتری"):
-            _reply(cfg, chat_id, _customer_card_text(arg))
+            if arg:
+                _reply(cfg, chat_id, _customer_card_text(arg), reply_markup=_admin_menu_buttons())
+            else:
+                _send_admin_action(cfg, chat_id, "lead_help")
             return
         if is_admin and token in ("debtors", "بدهکاران", "بدهکار"):
-            _reply(cfg, chat_id, _debtors_text())
+            _send_admin_action(cfg, chat_id, "debtors")
             return
         # دستورِ ناشناخته → راهنما
-        _reply(cfg, chat_id, WELCOME_ADMIN if is_admin else WELCOME_PUBLIC)
+        _reply(
+            cfg,
+            chat_id,
+            WELCOME_ADMIN if is_admin else WELCOME_PUBLIC,
+            reply_markup=_admin_menu_buttons() if is_admin else _public_menu_buttons(),
+        )
         return
 
     # متنِ آزاد ⇒ ربات قیمت (برای همه)
-    _reply(cfg, chat_id, _price_text(text, cfg))
+    _reply(
+        cfg,
+        chat_id,
+        _price_text(text, cfg),
+        reply_markup=_admin_menu_buttons() if is_admin else _public_menu_buttons(),
+    )

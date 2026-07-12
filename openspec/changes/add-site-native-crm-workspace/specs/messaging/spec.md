@@ -35,3 +35,22 @@ Unbound/public Bale users MAY continue to query the live product catalog, but pu
 #### Scenario: Public user asks for a customer
 - **WHEN** an unbound user sends an internal customer-search command
 - **THEN** the bot refuses CRM access and does not disclose whether the customer exists
+
+### Requirement: Bale Button Navigation and Explicit Access Feedback
+The Bale bot SHALL expose an inline button menu for bound operators covering today's work, both funnels, open site opportunities, customer lookup help, debtors, and public product search. Opportunity rows SHALL be selectable through callback buttons. An unbound user who invokes an internal command or button SHALL receive an explicit denial containing their Bale user id and SHALL only receive public-safe buttons. Slash-command menu registration SHALL be best-effort and MUST NOT invalidate a successfully registered webhook when Bale does not support that API method.
+
+#### Scenario: Bound operator opens the button menu
+- **WHEN** a bound operator sends `/menu` or selects the home button
+- **THEN** the bot returns CRM navigation buttons authorized by the operator's live website role
+
+#### Scenario: Operator opens an opportunity from buttons
+- **WHEN** a bound operator selects an opportunity from the open-opportunities menu
+- **THEN** the bot returns that live website opportunity card with back and home buttons
+
+#### Scenario: Unbound user attempts an internal report
+- **WHEN** an unbound user sends `/قیف` or selects an internal callback
+- **THEN** the bot returns no CRM data, explains that the website binding is missing, shows the sender's Bale user id, and limits the keyboard to public-safe actions
+
+#### Scenario: Bale rejects command-menu registration
+- **WHEN** webhook registration succeeds but `setMyCommands` is unsupported or fails
+- **THEN** the webhook remains connected and `/menu` continues to expose the inline button menu

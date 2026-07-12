@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,7 @@ from customers.models import CrmOpportunity, Customer, CustomerActivity
 from . import service
 from .models import BaleUserBinding, MessagingSettings, OutboundMessage
 from .providers.kavenegar import SendResult
+from .providers.telegram import SendResult as TelegramSendResult
 
 User = get_user_model()
 
@@ -126,6 +128,62 @@ class MessagingApiTests(APITestCase):
         UserRole.objects.create(user=marketer, role=RoleCode.MARKETER, is_active=True)
         self.client.force_authenticate(marketer)
         self.assertEqual(self.client.get("/api/messaging/bale-bindings/").status_code, 403)
+
+    def test_connecting_bale_registers_webhook_and_command_menu(self):
+        cfg = MessagingSettings.load()
+        cfg.telegram_bot_token = "TOKEN"
+        cfg.telegram_api_base = "https://tapi.bale.ai"
+        cfg.save()
+        self.client.force_authenticate(self.admin)
+
+        ok = TelegramSendResult(ok=True, status="sent", raw={"ok": True})
+        with patch("messaging.providers.telegram.set_webhook", return_value=ok) as set_webhook, \
+             patch("messaging.providers.telegram.set_my_commands", return_value=ok) as set_commands, \
+             patch("messaging.providers.telegram.get_webhook_info", return_value=ok):
+            response = self.client.post(
+                "/api/messaging/bale/set-webhook/",
+                {"url": "https://kavex.ir/api/messaging/bale/webhook/secret/"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["commands_ok"])
+        set_webhook.assert_called_once()
+        commands = set_commands.call_args.args[1]
+        self.assertIn("menu", [item["command"] for item in commands])
+
+    def test_command_menu_failure_does_not_break_registered_webhook(self):
+        cfg = MessagingSettings.load()
+        cfg.telegram_bot_token = "TOKEN"
+        cfg.telegram_api_base = "https://tapi.bale.ai"
+        cfg.save()
+        self.client.force_authenticate(self.admin)
+
+        webhook_ok = TelegramSendResult(ok=True, status="sent", raw={"ok": True})
+        commands_failed = TelegramSendResult(ok=False, status="failed", error="unsupported")
+        with patch("messaging.providers.telegram.set_webhook", return_value=webhook_ok), \
+             patch("messaging.providers.telegram.set_my_commands", return_value=commands_failed), \
+             patch("messaging.providers.telegram.get_webhook_info", return_value=webhook_ok):
+            response = self.client.post("/api/messaging/bale/set-webhook/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["ok"])
+        self.assertFalse(response.data["commands_ok"])
+        self.assertEqual(response.data["commands_error"], "unsupported")
+
+    def test_telegram_provider_serializes_command_menu(self):
+        from .providers import telegram
+
+        with patch("messaging.providers.telegram._call", return_value=TelegramSendResult(ok=True)) as call:
+            telegram.set_my_commands(
+                "TOKEN",
+                [{"command": "/menu", "description": "منوی مدیریت"}],
+                base_url="https://tapi.bale.ai",
+            )
+
+        self.assertEqual(call.call_args.args[1], "setMyCommands")
+        payload = json.loads(call.call_args.args[2]["commands"])
+        self.assertEqual(payload, [{"command": "menu", "description": "منوی مدیریت"}])
 
 
 class WebhookTests(APITestCase):
@@ -340,7 +398,64 @@ class BaleTwoWayBotTests(APITestCase):
         update = {"message": {"text": "/قیف", "chat": {"id": -100}, "from": {"id": 999}}}
         with patch("messaging.providers.telegram.send_message") as send:
             self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
-        self.assertNotIn("قیف مشتریان", send.call_args.args[2])
+        text = send.call_args.args[2]
+        self.assertNotIn("قیف مشتریان", text)
+        self.assertIn("متصل نیست", text)
+        self.assertIn("999", text)
+        callback_data = [
+            button["callback_data"]
+            for row in send.call_args.kwargs["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("public:my_id", callback_data)
+        self.assertNotIn("menu:funnel", callback_data)
+
+    def test_bound_operator_receives_button_menu(self):
+        update = {"message": {"text": "/menu", "chat": {"id": -100}, "from": {"id": 5}}}
+        with patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+
+        callback_data = [
+            button["callback_data"]
+            for row in send.call_args.kwargs["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("menu:today", callback_data)
+        self.assertIn("menu:funnel", callback_data)
+        self.assertIn("menu:opportunities", callback_data)
+
+    def test_button_callback_opens_both_funnels_for_bound_operator(self):
+        update = {
+            "callback_query": {
+                "id": "menu-funnel",
+                "data": "menu:funnel",
+                "from": {"id": 5},
+                "message": {"chat": {"id": -100}},
+            }
+        }
+        with patch("messaging.providers.telegram.answer_callback_query") as ack, \
+             patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+
+        ack.assert_called_once()
+        self.assertIn("قیف مشتریان", send.call_args.args[2])
+        self.assertIn("قیف فروش سایت", send.call_args.args[2])
+
+    def test_public_user_can_get_own_bale_id_from_button(self):
+        update = {
+            "callback_query": {
+                "id": "public-id",
+                "data": "public:my_id",
+                "from": {"id": 887766},
+                "message": {"chat": {"id": 12345}},
+            }
+        }
+        with patch("messaging.providers.telegram.answer_callback_query") as ack, \
+             patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+
+        ack.assert_called_once()
+        self.assertIn("887766", send.call_args.args[2])
 
     def test_price_bot_replies_to_free_text(self):
         sample = {"products": [{"title": "میلگرد ۱۴", "price_toman": "100000", "url": "/products/1"}]}
@@ -407,6 +522,50 @@ class BaleTwoWayBotTests(APITestCase):
         self.assertIn("استعلام ورق ۱۰ میل", replies[0])
         self.assertIn(f"فرصت #{opportunity.pk}", replies[1])
         self.assertIn("پیشنهاد ارسال‌شده", replies[1])
+
+    def test_opportunity_buttons_open_live_opportunity_card(self):
+        opportunity = CrmOpportunity.objects.create(
+            customer=self.customer,
+            title="استعلام ورق CK45",
+            stage=CrmOpportunity.STAGE_PRICING,
+            expected_value_irr=70_000_000,
+        )
+        list_update = {
+            "callback_query": {
+                "id": "opp-list",
+                "data": "menu:opportunities",
+                "from": {"id": 5},
+                "message": {"chat": {"id": -100}},
+            }
+        }
+        detail_update = {
+            "callback_query": {
+                "id": "opp-detail",
+                "data": f"opp:view:{opportunity.pk}",
+                "from": {"id": 5},
+                "message": {"chat": {"id": -100}},
+            }
+        }
+        with patch("messaging.providers.telegram.answer_callback_query"), \
+             patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(
+                f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/",
+                list_update,
+                format="json",
+            )
+            self.client.post(
+                f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/",
+                detail_update,
+                format="json",
+            )
+
+        list_buttons = send.call_args_list[0].kwargs["reply_markup"]["inline_keyboard"]
+        list_callbacks = [button["callback_data"] for row in list_buttons for button in row]
+        self.assertIn(f"opp:view:{opportunity.pk}", list_callbacks)
+        self.assertIn(f"فرصت #{opportunity.pk}", send.call_args_list[1].args[2])
+        detail_buttons = send.call_args_list[1].kwargs["reply_markup"]["inline_keyboard"]
+        detail_callbacks = [button["callback_data"] for row in detail_buttons for button in row]
+        self.assertIn("menu:opportunities", detail_callbacks)
 
 
 class SafirBaleSendTests(APITestCase):

@@ -93,6 +93,25 @@ def set_webhook(token, webhook_url, *, base_url=""):
     return _call(token, "setWebhook", {"url": webhook_url}, base_url=base_url)
 
 
+def set_my_commands(token, commands, *, base_url=""):
+    """Register the slash-command menu; unsupported providers fail without affecting the webhook."""
+
+    normalized = [
+        {
+            "command": str(item.get("command") or "").strip().lstrip("/"),
+            "description": str(item.get("description") or "").strip(),
+        }
+        for item in (commands or [])
+        if str(item.get("command") or "").strip() and str(item.get("description") or "").strip()
+    ]
+    return _call(
+        token,
+        "setMyCommands",
+        {"commands": json.dumps(normalized, ensure_ascii=False)},
+        base_url=base_url,
+    )
+
+
 def get_webhook_info(token, *, base_url=""):
     """وضعیتِ فعلیِ وب‌هوک (برای نمایش/عیب‌یابی)."""
     return _call(token, "getWebhookInfo", {}, base_url=base_url)

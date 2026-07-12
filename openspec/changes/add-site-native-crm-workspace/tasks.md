@@ -43,6 +43,7 @@
 - [ ] 4.4 Implement safe stage/quote/order/payment/report commands through domain services
 - [ ] 4.5 Add confirmation for financial/final actions, `/لغو`, timeouts, and invalid-state recovery
 - [x] 4.6 Keep public catalog price search isolated from internal CRM access
+- [x] 4.7 Add inline button navigation, opportunity drill-down, visible Bale user id for binding, and best-effort command-menu registration
 
 ## 5. Configuration and Automation
 

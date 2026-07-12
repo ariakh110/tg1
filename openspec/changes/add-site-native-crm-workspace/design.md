@@ -148,6 +148,8 @@ Internal commands/wizards:
 
 Every multi-step write shows a final summary and explicit confirmation. Financial actions, final close, and merge require a second confirmation. Public free-text product search stays available but is routed separately and cannot access CRM commands without a valid binding.
 
+The read-only first slice uses inline callback keyboards as the primary Bale navigation because they are supported by the deployed Bale client. `/menu` recreates the keyboard, open opportunities include detail buttons, and unbound operators receive their Bale user id with public-safe buttons only. `setMyCommands` is registered when the provider supports it, but its failure is reported separately and never rolls back a working webhook.
+
 ## API and UI Shape
 
 Backend resources:
@@ -201,4 +203,5 @@ The product owner approved keeping both funnels. Website data and Bale operation
 - Migration `customers.0007` backfills existing `StoreOrder` and `AssistantInquiry` records without changing customer stages or copying transactional payment/logistics rows.
 - `AssistantInquiry.matched_price` is retained as catalog-price metadata and is not treated as total opportunity value without a normalized quantity; direct-order totals remain the monetary source for site sales KPIs.
 - The first Bale slice is read-only for opportunities. `BaleUserBinding` maps a Bale user id to an active website user and permissions are recalculated on every internal command/callback; group/chat ids are notification destinations only.
+- The first Bale slice exposes inline buttons for daily work, both funnels, opportunities, customer lookup help, debtors, and product search. Unbound internal requests return the sender's Bale id instead of falling through to the public welcome message.
 - Financial and final Bale write actions remain disabled until sessions, replay protection, confirmation, and domain-service routing are implemented.

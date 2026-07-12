@@ -31,7 +31,7 @@ The current customer-level `stage` is useful as a customer-relationship funnel a
 - Added additive opportunity, transition-history, and retryable sync-event models plus backfill migrations.
 - Synchronizes direct store orders and assistant inquiries after commit without changing `Customer.stage` or blocking source transactions.
 - Added admin-scoped opportunity/list/funnel/sync-retry APIs and a second funnel tab while preserving the existing customer funnel.
-- Added read-only Bale opportunity reports and website-managed Bale-user bindings with live website role checks.
+- Added read-only Bale reports, inline button navigation and opportunity drill-down, plus website-managed Bale-user bindings with live website role checks and explicit unbound-user feedback.
 - Deferred Bale write wizards, automation, dedicated leads/follow-ups, and Excel round-trip to later slices.
 
 ## Impact

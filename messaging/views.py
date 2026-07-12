@@ -221,6 +221,7 @@ class BaleSetWebhookView(APIView):
     admin_section = "messaging"
 
     def post(self, request):
+        from .bale_bot import BOT_COMMANDS
         from .providers import telegram
 
         cfg = MessagingSettings.load()
@@ -230,9 +231,23 @@ class BaleSetWebhookView(APIView):
         url = (request.data.get("url") if isinstance(request.data, dict) else "") or ""
         url = url.strip() or f"https://{request.get_host()}/api/messaging/bale/webhook/{secret}/"
         result = telegram.set_webhook(cfg.telegram_bot_token, url, base_url=cfg.telegram_api_base)
+        commands_result = None
+        if result.ok:
+            commands_result = telegram.set_my_commands(
+                cfg.telegram_bot_token,
+                BOT_COMMANDS,
+                base_url=cfg.telegram_api_base,
+            )
         info = telegram.get_webhook_info(cfg.telegram_bot_token, base_url=cfg.telegram_api_base)
         return Response(
-            {"ok": result.ok, "url": url, "error": result.error, "info": info.raw},
+            {
+                "ok": result.ok,
+                "url": url,
+                "error": result.error,
+                "info": info.raw,
+                "commands_ok": commands_result.ok if commands_result is not None else False,
+                "commands_error": commands_result.error if commands_result is not None else "وب‌هوک ثبت نشد.",
+            },
             status=status.HTTP_200_OK if result.ok else status.HTTP_400_BAD_REQUEST,
         )
 
