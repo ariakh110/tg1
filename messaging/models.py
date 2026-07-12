@@ -150,6 +150,38 @@ class MessagingSettings(models.Model):
         return str(chat_id) in allowed or str(from_id) in allowed
 
 
+class BaleUserBinding(models.Model):
+    """Verified mapping from one Bale operator id to one website user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="bale_binding",
+        verbose_name="کاربر سایت",
+    )
+    bale_user_id = models.CharField(max_length=40, unique=True, db_index=True, verbose_name="شناسه کاربر بله")
+    display_name = models.CharField(max_length=120, blank=True, default="", verbose_name="نام نمایشی بله")
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name="فعال")
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="verified_bale_bindings",
+        verbose_name="تأییدکننده",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        verbose_name = "اتصال کاربر بله"
+        verbose_name_plural = "اتصال کاربران بله"
+
+    def __str__(self):
+        return f"{self.bale_user_id} -> {self.user}"
+
+
 class OutboundMessage(models.Model):
     """لاگِ هر تلاشِ ارسالِ پیام (ممیزی + پیگیریِ وضعیت). کانال‌پذیر تا تلگرام/واتساپ بعداً اضافه شوند."""
 

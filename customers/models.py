@@ -292,3 +292,213 @@ class CustomerActivity(models.Model):
     @property
     def has_open_follow_up(self):
         return bool(self.follow_up_at) and not self.follow_up_done
+
+
+class CrmOpportunity(models.Model):
+    """A sales need/deal tracked independently from the customer's lifecycle stage."""
+
+    STAGE_NEW_INQUIRY = "new_inquiry"
+    STAGE_QUALIFIED = "qualified"
+    STAGE_PRICING = "pricing"
+    STAGE_QUOTE_SENT = "quote_sent"
+    STAGE_PAYMENT_PENDING = "payment_pending"
+    STAGE_FULFILLMENT = "fulfillment"
+    STAGE_WON = "won"
+    STAGE_LOST = "lost"
+    STAGE_CHOICES = [
+        (STAGE_NEW_INQUIRY, "استعلام جدید"),
+        (STAGE_QUALIFIED, "نیاز تکمیل‌شده"),
+        (STAGE_PRICING, "قیمت‌گذاری و موجودی"),
+        (STAGE_QUOTE_SENT, "پیشنهاد ارسال‌شده"),
+        (STAGE_PAYMENT_PENDING, "در انتظار پرداخت"),
+        (STAGE_FULFILLMENT, "اجرا، بارگیری و حمل"),
+        (STAGE_WON, "فروش موفق"),
+        (STAGE_LOST, "ازدست‌رفته"),
+    ]
+    OPEN_STAGES = (
+        STAGE_NEW_INQUIRY,
+        STAGE_QUALIFIED,
+        STAGE_PRICING,
+        STAGE_QUOTE_SENT,
+        STAGE_PAYMENT_PENDING,
+        STAGE_FULFILLMENT,
+    )
+    CLOSED_STAGES = (STAGE_WON, STAGE_LOST)
+    DEFAULT_PROBABILITY = {
+        STAGE_NEW_INQUIRY: 10,
+        STAGE_QUALIFIED: 25,
+        STAGE_PRICING: 40,
+        STAGE_QUOTE_SENT: 55,
+        STAGE_PAYMENT_PENDING: 75,
+        STAGE_FULFILLMENT: 90,
+        STAGE_WON: 100,
+        STAGE_LOST: 0,
+    }
+
+    SOURCE_MANUAL = "manual"
+    SOURCE_ASSISTANT_INQUIRY = "assistant_inquiry"
+    SOURCE_STORE_ORDER = "store_order"
+    SOURCE_BALE = "bale"
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL, "ثبت دستی"),
+        (SOURCE_ASSISTANT_INQUIRY, "استعلام دستیار سایت"),
+        (SOURCE_STORE_ORDER, "سفارش مستقیم سایت"),
+        (SOURCE_BALE, "ربات بله"),
+    ]
+
+    customer = models.ForeignKey(
+        Customer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="opportunities",
+        verbose_name="مشتری",
+    )
+    title = models.CharField(max_length=240, verbose_name="عنوان فرصت")
+    stage = models.CharField(
+        max_length=24,
+        choices=STAGE_CHOICES,
+        default=STAGE_NEW_INQUIRY,
+        db_index=True,
+        verbose_name="مرحله فرصت",
+    )
+    source_type = models.CharField(
+        max_length=24,
+        choices=SOURCE_CHOICES,
+        default=SOURCE_MANUAL,
+        db_index=True,
+        verbose_name="منبع فرصت",
+    )
+    source_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="شناسه رکورد منبع",
+    )
+    source_status = models.CharField(max_length=32, blank=True, default="", verbose_name="وضعیت منبع")
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_owned_opportunities",
+        verbose_name="مسئول فروش",
+    )
+    expected_value_irr = models.BigIntegerField(default=0, verbose_name="ارزش مورد انتظار (ریال)")
+    probability = models.PositiveSmallIntegerField(default=10, verbose_name="احتمال موفقیت")
+    need_details = models.TextField(blank=True, default="", verbose_name="شرح نیاز")
+    next_action = models.CharField(max_length=255, blank=True, default="", verbose_name="اقدام بعدی")
+    next_follow_up_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="پیگیری بعدی")
+    lost_reason = models.CharField(max_length=255, blank=True, default="", verbose_name="دلیل شکست")
+    metadata = models.JSONField(default=dict, blank=True, verbose_name="اطلاعات منبع")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_created_opportunities",
+        verbose_name="ثبت‌کننده",
+    )
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name="فعال")
+    closed_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="زمان بسته‌شدن")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        verbose_name = "فرصت فروش"
+        verbose_name_plural = "فرصت‌های فروش"
+        indexes = [
+            models.Index(fields=["source_type", "source_id"]),
+            models.Index(fields=["stage", "updated_at"]),
+            models.Index(fields=["owner", "stage"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_type", "source_id"],
+                condition=~Q(source_id=""),
+                name="customers_unique_opportunity_source",
+            ),
+            models.CheckConstraint(
+                check=Q(probability__gte=0, probability__lte=100),
+                name="customers_opportunity_probability_0_100",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.title} - {self.get_stage_display()}"
+
+
+class CrmOpportunityStageHistory(models.Model):
+    """Idempotent audit trail for automatic and manual opportunity transitions."""
+
+    opportunity = models.ForeignKey(
+        CrmOpportunity,
+        on_delete=models.CASCADE,
+        related_name="stage_history",
+        verbose_name="فرصت",
+    )
+    from_stage = models.CharField(max_length=24, blank=True, default="", verbose_name="مرحله قبلی")
+    to_stage = models.CharField(max_length=24, db_index=True, verbose_name="مرحله جدید")
+    event = models.CharField(max_length=80, blank=True, default="", verbose_name="رویداد")
+    event_key = models.CharField(
+        max_length=180,
+        null=True,
+        blank=True,
+        unique=True,
+        verbose_name="کلید یکتای رویداد",
+    )
+    reason = models.CharField(max_length=255, blank=True, default="", verbose_name="دلیل")
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        verbose_name="کاربر عامل",
+    )
+    metadata = models.JSONField(default=dict, blank=True, verbose_name="اطلاعات رویداد")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        verbose_name = "تاریخچه مرحله فرصت"
+        verbose_name_plural = "تاریخچه مراحل فرصت‌ها"
+        indexes = [models.Index(fields=["opportunity", "created_at"])]
+
+    def __str__(self):
+        return f"{self.opportunity_id}: {self.from_stage or '-'} -> {self.to_stage}"
+
+
+class CrmSyncEvent(models.Model):
+    """Retryable record of website-to-CRM synchronization attempts."""
+
+    STATUS_PENDING = "pending"
+    STATUS_PROCESSED = "processed"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "در انتظار"),
+        (STATUS_PROCESSED, "انجام‌شده"),
+        (STATUS_FAILED, "ناموفق"),
+    ]
+
+    source_type = models.CharField(max_length=24, choices=CrmOpportunity.SOURCE_CHOICES, db_index=True)
+    source_id = models.CharField(max_length=64, db_index=True)
+    event_key = models.CharField(max_length=180, unique=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        verbose_name = "رویداد همگام‌سازی CRM"
+        verbose_name_plural = "رویدادهای همگام‌سازی CRM"
+        indexes = [models.Index(fields=["status", "updated_at"])]
+
+    def __str__(self):
+        return f"{self.source_type}:{self.source_id} ({self.status})"

@@ -24,9 +24,9 @@ The workbook defines a generic CRM in 33 sheets. The website already implements 
 
 ### Customer
 
-`Customer` remains the stable person/company record keyed by normalized phone. It gains or formalizes customer type, lifecycle, owner, address, tags, first source, channel identities, and optional website user link. Lifecycle codes are `new`, `active`, `loyal`, `at_risk`, and `inactive`.
+`Customer` remains the stable person/company record keyed by normalized phone. Its existing `stage` and funnel endpoint remain the customer-relationship funnel shown in the current admin dashboard. Existing customer counts, stage history, ledger KPIs, CLV, follow-up totals, and labels remain backward-compatible.
 
-The existing commercial `Customer.stage` becomes deprecated. During migration, its value is preserved in legacy metadata/history and mapped to lifecycle plus, where justified, one migrated opportunity.
+The new opportunity funnel is additive and does not automatically overwrite `Customer.stage`. The two funnels have separate endpoints, labels, and explanations so customer statistics are not confused with deal statistics.
 
 ### Lead
 
@@ -169,16 +169,13 @@ The admin workspace uses operational views rather than one customer-stage table:
 - CRM configuration
 - Excel operations and import error report
 
-## Migration
+## Additive Data Rollout
 
-1. Add new models/fields without removing existing stage/follow-up fields.
-2. Backfill lifecycle from existing customer stage.
-3. Create migrated opportunities for meaningful legacy commercial stages and preserve old code in metadata.
-4. Backfill stage history where reliable and label older customer-stage activities as legacy.
-5. Copy open embedded follow-ups to dedicated records with source activity ids.
-6. Switch APIs/UI/bot to opportunity stages behind a feature flag.
-7. Verify counts, customers, transactions, open follow-ups, and stage histories.
-8. Deprecate customer commercial stage only after production verification; do not drop data in the same release.
+1. Add opportunity/history models without removing or redefining existing customer stage/follow-up fields.
+2. Backfill opportunities from existing assistant inquiries and direct store orders using stable source keys.
+3. Copy open embedded follow-ups to dedicated records only when that phase starts, preserving source activity ids.
+4. Add the second funnel endpoint/UI and Bale commands without replacing the customer funnel.
+5. Verify that existing customer counts, ledger KPIs, histories, and screenshots remain unchanged.
 
 ## Risks / Trade-offs
 
@@ -190,8 +187,18 @@ The admin workspace uses operational views rather than one customer-stage table:
 
 ## Rollback
 
-New models and fields are additive. The feature flag can return the UI/bot to the current customer-level CRM while preserving newly written data. Event handlers can be disabled independently. No existing order/payment/logistics table is removed or rewritten.
+New models and fields are additive. The opportunity funnel and event handlers can be disabled independently while the current customer funnel continues to work. No existing customer, order, payment, or logistics table is removed or rewritten.
 
-## Open Question for Approval
+## Approved Priority
 
-Approve the source-of-truth rule: the website database owns live data, while Excel is a controlled round-trip/reporting interface and cannot directly change financial or fulfillment records.
+The product owner approved keeping both funnels. Website data and Bale operations are the current priority; Excel remains a later controlled reporting/import interface.
+
+## First-Slice Implementation Notes
+
+- `CrmOpportunity` uses a partial unique constraint on `(source_type, source_id)` so one direct order or assistant inquiry cannot create duplicate opportunities.
+- `CrmOpportunityStageHistory.event_key` and `CrmSyncEvent.event_key` make source-event replay idempotent. Failed sync events remain visible through an admin API and can be retried.
+- `customers.signals` schedules synchronization with `transaction.on_commit`; exceptions are logged and do not roll back checkout, payment, or logistics writes.
+- Migration `customers.0007` backfills existing `StoreOrder` and `AssistantInquiry` records without changing customer stages or copying transactional payment/logistics rows.
+- `AssistantInquiry.matched_price` is retained as catalog-price metadata and is not treated as total opportunity value without a normalized quantity; direct-order totals remain the monetary source for site sales KPIs.
+- The first Bale slice is read-only for opportunities. `BaleUserBinding` maps a Bale user id to an active website user and permissions are recalculated on every internal command/callback; group/chat ids are notification destinations only.
+- Financial and final Bale write actions remain disabled until sessions, replay protection, confirmation, and domain-service routing are implemented.

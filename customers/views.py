@@ -10,8 +10,13 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .models import Customer, CustomerActivity, CustomerTransaction
+from .models import CrmOpportunity, CrmSyncEvent, Customer, CustomerActivity, CustomerTransaction
+from .opportunities import opportunity_funnel_snapshot, process_sync_event, transition_opportunity
 from .serializers import (
+    CrmOpportunityDetailSerializer,
+    CrmOpportunitySerializer,
+    CrmOpportunityTransitionSerializer,
+    CrmSyncEventSerializer,
     CustomerActivitySerializer,
     CustomerDetailSerializer,
     CustomerSerializer,
@@ -139,6 +144,97 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 "quote_to_close": quote_to_close,
             }
         )
+
+
+class CrmOpportunityViewSet(viewsets.ModelViewSet):
+    """Independent site/manual sales opportunities without changing Customer.stage."""
+
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_sections = ("crm", "crm-funnel")
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["stage", "source_type", "owner", "customer", "is_active"]
+    search_fields = ["title", "customer__name", "customer__phone", "source_id", "need_details"]
+    ordering_fields = [
+        "updated_at",
+        "created_at",
+        "expected_value_irr",
+        "probability",
+        "next_follow_up_at",
+    ]
+    ordering = ["-updated_at"]
+
+    def get_queryset(self):
+        queryset = CrmOpportunity.objects.select_related("customer", "owner", "created_by")
+        if self.action == "retrieve":
+            queryset = queryset.prefetch_related("stage_history__actor_user")
+        return queryset
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return CrmOpportunityDetailSerializer
+        return CrmOpportunitySerializer
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        opportunity = serializer.save(created_by=user, source_type=CrmOpportunity.SOURCE_MANUAL)
+        transition_opportunity(
+            opportunity,
+            opportunity.stage,
+            actor=user,
+            event="CRM_OPPORTUNITY_CREATED",
+            metadata={"origin": "admin_api"},
+        )
+
+    @action(detail=True, methods=["post"])
+    def transition(self, request, pk=None):
+        opportunity = self.get_object()
+        if opportunity.source_type in {
+            CrmOpportunity.SOURCE_STORE_ORDER,
+            CrmOpportunity.SOURCE_ASSISTANT_INQUIRY,
+        }:
+            return Response(
+                {"detail": "مرحله این فرصت از وضعیت سفارش یا استعلام سایت به‌روزرسانی می‌شود."},
+                status=400,
+            )
+        input_serializer = CrmOpportunityTransitionSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        opportunity, _changed = transition_opportunity(
+            opportunity,
+            input_serializer.validated_data["stage"],
+            actor=request.user,
+            event="CRM_MANUAL_TRANSITION",
+            reason=input_serializer.validated_data.get("reason", ""),
+            metadata={"origin": "admin_api"},
+        )
+        return Response(CrmOpportunityDetailSerializer(opportunity, context=self.get_serializer_context()).data)
+
+    @action(detail=False, methods=["get"])
+    def funnel(self, request):
+        return Response(opportunity_funnel_snapshot(self.filter_queryset(self.get_queryset())))
+
+
+class CrmSyncEventViewSet(viewsets.ReadOnlyModelViewSet):
+    """Synchronization audit and retry surface for website-originated CRM events."""
+
+    queryset = CrmSyncEvent.objects.all()
+    serializer_class = CrmSyncEventSerializer
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_sections = ("crm", "crm-funnel")
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["status", "source_type", "source_id"]
+    ordering_fields = ["created_at", "updated_at", "attempts"]
+    ordering = ["-created_at"]
+
+    @action(detail=True, methods=["post"])
+    def retry(self, request, pk=None):
+        sync_event = self.get_object()
+        opportunity = process_sync_event(sync_event)
+        sync_event.refresh_from_db()
+        payload = self.get_serializer(sync_event).data
+        payload["opportunity_id"] = opportunity.pk if opportunity else None
+        return Response(payload, status=200 if opportunity else 400)
 
 
 class CustomerTransactionViewSet(viewsets.ModelViewSet):

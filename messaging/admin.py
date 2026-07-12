@@ -1,11 +1,19 @@
 from django.contrib import admin
 
-from .models import MessagingSettings, OutboundMessage
+from .models import BaleUserBinding, MessagingSettings, OutboundMessage
 
 
 @admin.register(MessagingSettings)
 class MessagingSettingsAdmin(admin.ModelAdmin):
     list_display = ("__str__", "provider", "sms_enabled", "updated_at")
+
+
+@admin.register(BaleUserBinding)
+class BaleUserBindingAdmin(admin.ModelAdmin):
+    list_display = ("bale_user_id", "user", "display_name", "is_active", "verified_by", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("bale_user_id", "display_name", "user__username", "user__email")
+    autocomplete_fields = ("user", "verified_by")
 
 
 @admin.register(OutboundMessage)

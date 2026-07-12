@@ -4,7 +4,14 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import Customer, CustomerActivity, CustomerTransaction
+from .models import (
+    CrmOpportunity,
+    CrmOpportunityStageHistory,
+    CrmSyncEvent,
+    Customer,
+    CustomerActivity,
+    CustomerTransaction,
+)
 
 User = get_user_model()
 
@@ -158,3 +165,196 @@ class CrmActivityFollowUpTests(APITestCase):
         data = self.client.get("/api/crm/customers/funnel/").data
         self.assertIsNone(data["avg_cycle_days"])
         self.assertIsNone(data["quote_to_close"])
+
+
+class CrmOpportunityTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username="opp-admin", password="pass", is_staff=True)
+        self.outsider = User.objects.create_user(username="opp-outsider", password="pass")
+        self.buyer = User.objects.create_user(username="opp-buyer", password="pass")
+        self.customer = Customer.objects.create(
+            name="شرکت خریدار",
+            phone="09120000101",
+            user=self.buyer,
+            stage=Customer.STAGE_NEW,
+        )
+
+    def test_store_order_sync_is_unique_idempotent_and_keeps_customer_stage(self):
+        from sales.models import StoreOrder, StoreOrderStatus
+
+        from .opportunities import sync_store_order_opportunity
+
+        order = StoreOrder.objects.create(
+            buyer=self.buyer,
+            contact_name=self.customer.name,
+            contact_phone=self.customer.phone,
+            status=StoreOrderStatus.QUOTE_REQUESTED,
+            total_amount=80_000_000,
+        )
+        opportunity = sync_store_order_opportunity(order, event_key="test:order:pricing")
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_PRICING)
+        self.assertEqual(opportunity.expected_value_irr, 80_000_000)
+        self.assertEqual(opportunity.customer, self.customer)
+
+        duplicate = sync_store_order_opportunity(order, event_key="test:order:pricing")
+        self.assertEqual(duplicate.pk, opportunity.pk)
+        self.assertEqual(CrmOpportunity.objects.count(), 1)
+        self.assertEqual(CrmOpportunityStageHistory.objects.count(), 1)
+
+        order.status = StoreOrderStatus.PRICE_CONFIRMED
+        order.total_amount = 120_000_000
+        order.save(update_fields=["status", "total_amount", "updated_at"])
+        opportunity = sync_store_order_opportunity(order, event_key="test:order:quoted")
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_QUOTE_SENT)
+        self.assertEqual(opportunity.expected_value_irr, 120_000_000)
+
+        order.status = StoreOrderStatus.QUOTE_REQUESTED
+        order.quote_rejection_reason = "نیاز به اصلاح مقدار"
+        order.save(update_fields=["status", "quote_rejection_reason", "updated_at"])
+        opportunity = sync_store_order_opportunity(order, event_key="test:order:quote-rejected")
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_PRICING)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.stage, Customer.STAGE_NEW)
+
+    def test_assistant_inquiry_sync_tracks_one_opportunity(self):
+        from assistant.models import AssistantConversation, AssistantInquiry
+
+        from .opportunities import sync_assistant_inquiry_opportunity
+
+        conversation = AssistantConversation.objects.create(
+            session_key="opp-inquiry",
+            user=self.buyer,
+            lead_name=self.customer.name,
+            lead_phone=self.customer.phone,
+        )
+        inquiry = AssistantInquiry.objects.create(
+            conversation=conversation,
+            product="ورق",
+            grade="CK45",
+            size="۱۰ میل",
+            quantity="۵ تن",
+            matched_price=350_000,
+            status=AssistantInquiry.STATUS_NEW,
+        )
+        opportunity = sync_assistant_inquiry_opportunity(inquiry, event_key="test:inquiry:new")
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_NEW_INQUIRY)
+        self.assertEqual(opportunity.expected_value_irr, 0)  # matched_price is a unit/catalog price, not deal total
+        self.assertEqual(opportunity.metadata["matched_price_toman"], 350_000)
+
+        inquiry.status = AssistantInquiry.STATUS_QUOTED
+        inquiry.save(update_fields=["status", "updated_at"])
+        opportunity = sync_assistant_inquiry_opportunity(inquiry, event_key="test:inquiry:quoted")
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_QUOTE_SENT)
+        self.assertEqual(CrmOpportunity.objects.count(), 1)
+
+    def test_source_projected_fields_cannot_be_overwritten_from_crm_api(self):
+        from sales.models import StoreOrder, StoreOrderStatus
+
+        from .opportunities import sync_store_order_opportunity
+
+        order = StoreOrder.objects.create(
+            buyer=self.buyer,
+            contact_phone=self.customer.phone,
+            status=StoreOrderStatus.PAYMENT_PENDING,
+            total_amount=75_000_000,
+        )
+        opportunity = sync_store_order_opportunity(order, event_key="test:source-protection")
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            f"/api/crm/opportunities/{opportunity.pk}/",
+            {"expected_value_irr": 1, "title": "دستکاری"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        opportunity.refresh_from_db()
+        self.assertEqual(opportunity.expected_value_irr, 75_000_000)
+        self.assertNotEqual(opportunity.title, "دستکاری")
+
+    def test_opportunity_funnel_is_independent_from_customer_funnel(self):
+        CrmOpportunity.objects.create(
+            customer=self.customer,
+            title="سفارش اول",
+            stage=CrmOpportunity.STAGE_PAYMENT_PENDING,
+            expected_value_irr=100_000_000,
+            probability=75,
+        )
+        CrmOpportunity.objects.create(
+            customer=self.customer,
+            title="سفارش دوم",
+            stage=CrmOpportunity.STAGE_WON,
+            expected_value_irr=50_000_000,
+            probability=100,
+            closed_at=timezone.now(),
+        )
+        self.client.force_authenticate(self.admin)
+        opportunity_data = self.client.get("/api/crm/opportunities/funnel/").data
+        customer_data = self.client.get("/api/crm/customers/funnel/").data
+
+        self.assertEqual(opportunity_data["total_opportunities"], 2)
+        self.assertEqual(opportunity_data["open_count"], 1)
+        self.assertEqual(opportunity_data["won_count"], 1)
+        self.assertEqual(opportunity_data["open_pipeline_value_irr"], 100_000_000)
+        self.assertEqual(opportunity_data["won_revenue_irr"], 50_000_000)
+        self.assertEqual(customer_data["total_customers"], 1)
+        self.assertEqual(customer_data["won_count"], 0)
+
+    def test_manual_transition_records_history_and_requires_lost_reason(self):
+        self.client.force_authenticate(self.admin)
+        created = self.client.post(
+            "/api/crm/opportunities/",
+            {
+                "customer": self.customer.pk,
+                "title": "نیاز دستی",
+                "expected_value_irr": 20_000_000,
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        opportunity_id = created.data["id"]
+        rejected = self.client.post(
+            f"/api/crm/opportunities/{opportunity_id}/transition/",
+            {"stage": CrmOpportunity.STAGE_LOST},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+        transitioned = self.client.post(
+            f"/api/crm/opportunities/{opportunity_id}/transition/",
+            {"stage": CrmOpportunity.STAGE_QUALIFIED},
+            format="json",
+        )
+        self.assertEqual(transitioned.status_code, 200, transitioned.data)
+        self.assertEqual(transitioned.data["stage"], CrmOpportunity.STAGE_QUALIFIED)
+        self.assertEqual(CrmOpportunityStageHistory.objects.filter(opportunity_id=opportunity_id).count(), 2)
+
+        detail = self.client.get(f"/api/crm/customers/{self.customer.pk}/")
+        self.assertEqual(detail.data["opportunities"][0]["id"], opportunity_id)
+
+    def test_non_admin_cannot_read_opportunity_funnel_or_sync_events(self):
+        self.client.force_authenticate(self.outsider)
+        self.assertIn(self.client.get("/api/crm/opportunities/funnel/").status_code, (401, 403))
+        self.assertIn(self.client.get("/api/crm/sync-events/").status_code, (401, 403))
+
+    def test_retryable_sync_event_processes_order(self):
+        from sales.models import StoreOrder, StoreOrderStatus
+
+        from .opportunities import process_sync_event
+
+        order = StoreOrder.objects.create(
+            buyer=self.buyer,
+            contact_name=self.customer.name,
+            contact_phone=self.customer.phone,
+            status=StoreOrderStatus.PAYMENT_PENDING,
+            total_amount=60_000_000,
+        )
+        sync_event = CrmSyncEvent.objects.create(
+            source_type=CrmOpportunity.SOURCE_STORE_ORDER,
+            source_id=str(order.pk),
+            event_key="test:sync-event:order",
+        )
+        opportunity = process_sync_event(sync_event)
+        self.assertIsNotNone(opportunity)
+        self.assertEqual(opportunity.stage, CrmOpportunity.STAGE_PAYMENT_PENDING)
+        sync_event.refresh_from_db()
+        self.assertEqual(sync_event.status, CrmSyncEvent.STATUS_PROCESSED)
+        self.assertEqual(sync_event.attempts, 1)

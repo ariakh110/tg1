@@ -1,16 +1,21 @@
 ## ADDED Requirements
 
-### Requirement: Customer Lifecycle Is Separate from Sales Opportunities
-The system SHALL store customer lifecycle independently from commercial pipeline stage. A customer MAY have multiple leads and multiple open or closed opportunities at the same time, and moving or closing one opportunity MUST NOT overwrite the stages of the customer's other opportunities. Lost SHALL be an opportunity outcome, not a permanent customer lifecycle state.
+### Requirement: Customer and Opportunity Funnels Coexist
+The system SHALL preserve the existing customer-stage funnel and its current KPIs while adding an independent opportunity/direct-sales funnel. A customer MAY have multiple leads and multiple open or closed opportunities at the same time. Moving or closing an opportunity MUST NOT automatically overwrite `Customer.stage` or change the existing customer-funnel statistics.
 
 #### Scenario: One customer has two simultaneous needs
 - **WHEN** one customer requests CK45 sheet and also creates a separate ST37 order
 - **THEN** the CRM stores two opportunities that can occupy different stages
-- **AND** the funnel counts both opportunities while the customer remains one record
+- **AND** the opportunity funnel counts both while the customer funnel counts one customer
 
-#### Scenario: A lost deal does not lose the customer
+#### Scenario: Existing customer funnel remains available
+- **WHEN** the site-native opportunity funnel is enabled
+- **THEN** the current customer funnel still returns the existing stages, customer counts, ledger KPIs, CLV, and follow-up metrics
+
+#### Scenario: A lost deal does not rewrite the customer funnel
 - **WHEN** one opportunity is closed as lost
-- **THEN** the customer remains available for future opportunities and keeps an independent lifecycle status
+- **THEN** the customer remains available for future opportunities
+- **AND** its existing customer stage is not automatically changed
 
 ### Requirement: Site-Native Direct-Sales Pipeline
 The CRM SHALL use stable direct-sales stages `new_inquiry`, `qualified`, `pricing`, `quote_sent`, `payment_pending`, `fulfillment`, `won`, and `lost`. Stage changes SHALL follow website events and SHALL record transition history with from/to stage, time, actor or system event, reason, and source metadata. Marketplace user-to-user activity MUST NOT be included in this funnel.

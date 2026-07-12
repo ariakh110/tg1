@@ -1,15 +1,17 @@
 from django_filters.rest_framework import DjangoFilterBackend
+from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsAdminOrActiveAdminRole
+from accounts.permissions import IsAdminOrActiveAdminRole, IsFullAdminUser
 from customers.models import Customer
 
 from . import service
-from .models import MessagingSettings, OutboundMessage
-from .serializers import MessagingSettingsSerializer, OutboundMessageSerializer
+from .models import BaleUserBinding, MessagingSettings, OutboundMessage
+from .serializers import BaleUserBindingSerializer, MessagingSettingsSerializer, OutboundMessageSerializer
 
 MAX_BODY_LEN = 900  # سقفِ کاوه‌نگار برای کلِ متنِ پیامک
 
@@ -250,6 +252,54 @@ class BaleWebhookView(APIView):
 
         handle_update(update)
         return Response({"ok": True})
+
+
+class BaleUserBindingViewSet(viewsets.ModelViewSet):
+    """Manage verified Bale operator identities from the website admin panel."""
+
+    queryset = BaleUserBinding.objects.select_related("user", "verified_by").all()
+    serializer_class = BaleUserBindingSerializer
+    permission_classes = [IsFullAdminUser]
+    admin_section = "messaging"
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["user", "bale_user_id", "is_active"]
+
+    def perform_create(self, serializer):
+        serializer.save(verified_by=self.request.user)
+
+    @action(detail=False, methods=["get"])
+    def eligible_users(self, request):
+        from accounts.admin_sections import ALL, effective_admin_sections
+
+        rows = []
+        from django.db.models import Q
+
+        from accounts.models import RoleCode
+
+        users = (
+            get_user_model()
+            .objects.filter(is_active=True)
+            .filter(
+                Q(is_staff=True)
+                | Q(is_superuser=True)
+                | Q(roles__is_active=True, roles__role__in=[RoleCode.ADMIN, RoleCode.MARKETER])
+            )
+            .distinct()
+            .order_by("username")
+        )
+        for user in users:
+            sections = effective_admin_sections(user)
+            if sections != ALL and not ({"crm", "crm-funnel"} & sections):
+                continue
+            rows.append(
+                {
+                    "id": user.pk,
+                    "username": user.get_username(),
+                    "display_name": (user.get_full_name() or "").strip() or user.get_username(),
+                }
+            )
+        return Response(rows)
 
 
 class OutboundMessageViewSet(viewsets.ReadOnlyModelViewSet):

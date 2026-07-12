@@ -2,7 +2,7 @@
 
 سه کار می‌کند:
 - دکمه‌های عملیاتیِ روی پیام‌های گروه (callback_query) → آپدیتِ مستقیمِ CRM.
-- دستورهای مدیریتی (/امروز /سرنخ /بدهکاران) برای ادمین‌ها.
+- دستورهای مدیریتی (/امروز /قیف /فرصتها /فرصت /سرنخ /بدهکاران) برای ادمین‌ها.
 - ربات قیمت برای کاربران: هر متنِ آزاد → جستجوی محصول و پاسخِ قیمت (موتورِ دستیار).
 
 همه چیز «امن» است: هیچ خطایی نباید به وب‌هوک نشت کند (خودِ ویو هم try/except دارد).
@@ -14,7 +14,8 @@ from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from customers.models import Customer, CustomerActivity, CustomerTransaction
+from customers.models import CrmOpportunity, Customer, CustomerActivity, CustomerTransaction
+from customers.opportunities import opportunity_funnel_snapshot
 from customers.services import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,9 @@ WELCOME_ADMIN = (
     "پنلِ مدیریتِ کاوکس 👤\n"
     "دستورها:\n"
     "/امروز — سرنخ‌های جدید و پیگیری‌های سررسیده\n"
+    "/قیف — آمار قیف مشتریان و فروش سایت\n"
+    "/فرصتها — آخرین فرصت‌های باز سایت\n"
+    "/فرصت 123 — جزئیات یک فرصت فروش\n"
     "/سرنخ 0912... — پروندهٔ یک مشتری\n"
     "/بدهکاران — مشتریانِ بدهکار"
 )
@@ -36,6 +40,26 @@ def _cfg():
     from .models import MessagingSettings
 
     return MessagingSettings.load()
+
+
+def _bound_crm_user(bale_user_id):
+    """Resolve an active Bale identity and re-check its current website permissions."""
+
+    from accounts.admin_sections import ALL, effective_admin_sections
+
+    from .models import BaleUserBinding
+
+    binding = (
+        BaleUserBinding.objects.select_related("user")
+        .filter(bale_user_id=str(bale_user_id or ""), is_active=True, user__is_active=True)
+        .first()
+    )
+    if not binding:
+        return None
+    sections = effective_admin_sections(binding.user)
+    if sections == ALL or ({"crm", "crm-funnel"} & sections):
+        return binding.user
+    return None
 
 
 def _reply(cfg, chat_id, text, reply_markup=None):
@@ -51,6 +75,10 @@ def _toman(amount):
     return f"{n:,} تومان"
 
 
+def _irr_as_toman(amount):
+    return _toman(int(amount or 0) // 10)
+
+
 # ── کارت‌ها و خلاصه‌های CRM ─────────────────────────────────────────────────
 
 def _balance_qs():
@@ -63,7 +91,7 @@ def _balance_qs():
 
 
 def build_daily_digest():
-    """خلاصهٔ روزانه: سرنخ‌های جدیدِ امروز، پیگیری‌های سررسیده/امروز، و بدهکارها. (title, lines)"""
+    """Daily customer and direct-site sales snapshot. Returns ``(title, lines)``."""
     now = timezone.localtime()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
@@ -75,12 +103,25 @@ def build_daily_digest():
         .order_by("follow_up_at")
     )
     debtors = _balance_qs().filter(_bal__gt=0).count()
+    open_opportunities = CrmOpportunity.objects.filter(
+        is_active=True,
+        stage__in=CrmOpportunity.OPEN_STAGES,
+    )
+    new_opportunities = CrmOpportunity.objects.filter(created_at__gte=today_start).count()
 
     lines = [f"🆕 سرنخِ جدیدِ امروز: {new_today}", f"⏰ پیگیریِ سررسیده/امروز: {open_follow.count()}"]
     for a in open_follow[:8]:
         when = timezone.localtime(a.follow_up_at).strftime("%H:%M")
         lines.append(f"• {a.customer.name} ({a.customer.phone}) — {when}")
     lines.append(f"💰 مشتریِ بدهکار: {debtors}")
+    lines.extend(
+        [
+            f"🧾 فرصت جدید سایت: {new_opportunities}",
+            f"🏷 در قیمت‌گذاری: {open_opportunities.filter(stage=CrmOpportunity.STAGE_PRICING).count()}",
+            f"💳 در انتظار پرداخت: {open_opportunities.filter(stage=CrmOpportunity.STAGE_PAYMENT_PENDING).count()}",
+            f"🚚 در اجرا و حمل: {open_opportunities.filter(stage=CrmOpportunity.STAGE_FULFILLMENT).count()}",
+        ]
+    )
     return "📋 خلاصهٔ امروزِ کاوکس", lines
 
 
@@ -118,6 +159,73 @@ def _debtors_text():
     lines = ["💰 بدهکارها (تا ۱۰ نفر):"]
     for c in rows:
         lines.append(f"• {c.name} ({c.phone}) — {_toman(c._bal)}")
+    return "\n".join(lines)
+
+
+def _funnel_text():
+    customer_rows = Customer.objects.values("stage").annotate(count=Count("id"))
+    customer_counts = {row["stage"]: row["count"] for row in customer_rows}
+    customer_total = sum(customer_counts.values())
+    customer_lines = [f"👥 قیف مشتریان — {customer_total} مشتری"]
+    for code, label in Customer.STAGE_CHOICES:
+        customer_lines.append(f"• {label}: {customer_counts.get(code, 0)}")
+
+    site = opportunity_funnel_snapshot()
+    site_lines = [
+        "",
+        f"🛒 قیف فروش سایت — {site['total_opportunities']} فرصت",
+        f"باز: {site['open_count']} | موفق: {site['won_count']} | ازدست‌رفته: {site['lost_count']}",
+        f"ارزش فرصت‌های باز: {_irr_as_toman(site['open_pipeline_value_irr'])}",
+    ]
+    for stage in site["stages"]:
+        site_lines.append(f"• {stage['label']}: {stage['count']}")
+    return "\n".join(customer_lines + site_lines)
+
+
+def _opportunities_text():
+    rows = (
+        CrmOpportunity.objects.select_related("customer")
+        .filter(is_active=True, stage__in=CrmOpportunity.OPEN_STAGES)
+        .order_by("-updated_at")[:10]
+    )
+    if not rows:
+        return "فرصت فروش بازی در سایت وجود ندارد."
+    lines = ["🛒 آخرین فرصت‌های باز سایت:"]
+    for opportunity in rows:
+        customer_name = opportunity.customer.name if opportunity.customer else "مشتری ثبت‌نشده"
+        lines.append(
+            f"• #{opportunity.pk} | {opportunity.title[:55]}\n"
+            f"  {opportunity.get_stage_display()} | {customer_name} | {_irr_as_toman(opportunity.expected_value_irr)}"
+        )
+    lines.append("\nبرای جزئیات: /فرصت شناسه")
+    return "\n".join(lines)
+
+
+def _opportunity_card_text(raw_id):
+    try:
+        opportunity_id = int(str(raw_id or "").strip())
+    except (TypeError, ValueError):
+        return "شناسه فرصت معتبر نیست. مثال: /فرصت 123"
+    opportunity = CrmOpportunity.objects.select_related("customer", "owner").filter(pk=opportunity_id).first()
+    if not opportunity:
+        return f"فرصت #{opportunity_id} پیدا نشد."
+    customer_name = opportunity.customer.name if opportunity.customer else "مشتری ثبت‌نشده"
+    customer_phone = opportunity.customer.phone if opportunity.customer else "—"
+    owner = opportunity.owner
+    owner_name = ((owner.get_full_name() or "").strip() or owner.get_username()) if owner else "بدون مسئول"
+    lines = [
+        f"🧾 فرصت #{opportunity.pk}",
+        opportunity.title,
+        f"مرحله: {opportunity.get_stage_display()}",
+        f"مشتری: {customer_name} | {customer_phone}",
+        f"ارزش: {_irr_as_toman(opportunity.expected_value_irr)}",
+        f"منبع: {opportunity.get_source_type_display()} | وضعیت منبع: {opportunity.source_status or '—'}",
+        f"مسئول: {owner_name}",
+    ]
+    if opportunity.next_action:
+        lines.append(f"اقدام بعدی: {opportunity.next_action}")
+    if opportunity.lost_reason:
+        lines.append(f"دلیل شکست: {opportunity.lost_reason}")
     return "\n".join(lines)
 
 
@@ -209,10 +317,15 @@ def _handle_callback(cb, cfg):
     message = cb.get("message") or {}
     chat = message.get("chat") or {}
     from_user = cb.get("from") or {}
-    actor_name = (from_user.get("first_name") or from_user.get("username") or "ادمین").strip()
+    operator = _bound_crm_user(from_user.get("id"))
+    actor_name = (
+        ((operator.get_full_name() or "").strip() or operator.get_username())
+        if operator
+        else "ادمین"
+    )
 
-    # فقط ادمین‌ها (یا اعضای گروهِ تنظیم‌شده) اجازهٔ تغییرِ CRM دارند.
-    if not cfg.is_admin_sender(chat.get("id"), from_user.get("id")):
+    # Group/chat ids are notification destinations, not authorization credentials.
+    if not operator:
         telegram.answer_callback_query(cfg.telegram_bot_token, cb_id, "اجازه ندارید.", base_url=cfg.telegram_api_base)
         return
 
@@ -238,7 +351,7 @@ def _handle_message(message, cfg):
     chat = message.get("chat") or {}
     from_user = message.get("from") or {}
     chat_id = chat.get("id")
-    is_admin = cfg.is_admin_sender(chat_id, from_user.get("id"))
+    is_admin = bool(_bound_crm_user(from_user.get("id")))
 
     if text.startswith("/"):
         token = text[1:].split()[0].split("@")[0]
@@ -248,6 +361,15 @@ def _handle_message(message, cfg):
             return
         if is_admin and token in ("today", "امروز"):
             _reply(cfg, chat_id, _today_text())
+            return
+        if is_admin and token in ("funnel", "قیف"):
+            _reply(cfg, chat_id, _funnel_text())
+            return
+        if is_admin and token in ("opportunities", "فرصتها", "فرصت‌ها"):
+            _reply(cfg, chat_id, _opportunities_text())
+            return
+        if is_admin and token in ("opportunity", "فرصت"):
+            _reply(cfg, chat_id, _opportunity_card_text(arg))
             return
         if is_admin and token in ("lead", "سرنخ", "مشتری"):
             _reply(cfg, chat_id, _customer_card_text(arg))

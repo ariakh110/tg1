@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
-from .models import MessagingSettings, OutboundMessage
+from accounts.admin_sections import ALL, effective_admin_sections
+
+from .models import BaleUserBinding, MessagingSettings, OutboundMessage
 
 
 class MessagingSettingsSerializer(serializers.ModelSerializer):
@@ -70,3 +72,55 @@ class OutboundMessageSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         )
         read_only_fields = fields
+
+
+class BaleUserBindingSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+    user_display_name = serializers.SerializerMethodField()
+    verified_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BaleUserBinding
+        fields = (
+            "id",
+            "user",
+            "username",
+            "user_display_name",
+            "bale_user_id",
+            "display_name",
+            "is_active",
+            "verified_by_name",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "username",
+            "user_display_name",
+            "verified_by_name",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_user_display_name(self, obj):
+        return (obj.user.get_full_name() or "").strip() or obj.user.get_username()
+
+    def get_verified_by_name(self, obj):
+        user = obj.verified_by
+        if not user:
+            return ""
+        return (user.get_full_name() or "").strip() or user.get_username()
+
+    def validate_bale_user_id(self, value):
+        normalized = str(value or "").strip()
+        if not normalized or len(normalized) > 40 or not normalized.isascii() or not normalized.isdigit():
+            raise serializers.ValidationError("شناسه کاربر بله معتبر نیست.")
+        return normalized
+
+    def validate_user(self, user):
+        if not user.is_active:
+            raise serializers.ValidationError("کاربر سایت غیرفعال است.")
+        sections = effective_admin_sections(user)
+        if sections != ALL and not ({"crm", "crm-funnel"} & sections):
+            raise serializers.ValidationError("کاربر سایت دسترسی فعال CRM ندارد.")
+        return user

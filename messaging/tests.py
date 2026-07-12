@@ -3,9 +3,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from customers.models import Customer, CustomerActivity
+from customers.models import CrmOpportunity, Customer, CustomerActivity
 from . import service
-from .models import MessagingSettings, OutboundMessage
+from .models import BaleUserBinding, MessagingSettings, OutboundMessage
 from .providers.kavenegar import SendResult
 
 User = get_user_model()
@@ -60,6 +60,7 @@ class MessagingApiTests(APITestCase):
         self.client.force_authenticate(self.outsider)
         self.assertIn(self.client.get("/api/messaging/settings/").status_code, (401, 403))
         self.assertIn(self.client.get("/api/messaging/messages/").status_code, (401, 403))
+        self.assertIn(self.client.get("/api/messaging/bale-bindings/").status_code, (401, 403))
         self.assertIn(self.client.post("/api/messaging/send/", {"recipient": "09120000001", "message": "x"}, format="json").status_code, (401, 403))
 
     def test_settings_key_is_write_only(self):
@@ -100,6 +101,31 @@ class MessagingApiTests(APITestCase):
         self.client.force_authenticate(self.admin)
         res = self.client.post("/api/messaging/notify-step/", {"customer_id": self.c1.id, "step": "nope"}, format="json")
         self.assertEqual(res.status_code, 400)
+
+    def test_admin_configures_verified_bale_binding(self):
+        self.client.force_authenticate(self.admin)
+        eligible = self.client.get("/api/messaging/bale-bindings/eligible_users/")
+        self.assertEqual(eligible.status_code, 200)
+        self.assertIn(self.admin.pk, [row["id"] for row in eligible.data])
+        self.assertNotIn(self.outsider.pk, [row["id"] for row in eligible.data])
+
+        created = self.client.post(
+            "/api/messaging/bale-bindings/",
+            {"user": self.admin.pk, "bale_user_id": "554433", "display_name": "مدیر بله"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        binding = BaleUserBinding.objects.get(pk=created.data["id"])
+        self.assertEqual(binding.verified_by, self.admin)
+        self.assertEqual(binding.user, self.admin)
+
+    def test_scoped_marketer_cannot_manage_bale_identity_bindings(self):
+        from accounts.models import RoleCode, UserRole
+
+        marketer = User.objects.create_user(username="binding-marketer", password="pass")
+        UserRole.objects.create(user=marketer, role=RoleCode.MARKETER, is_active=True)
+        self.client.force_authenticate(marketer)
+        self.assertEqual(self.client.get("/api/messaging/bale-bindings/").status_code, 403)
 
 
 class WebhookTests(APITestCase):
@@ -268,6 +294,10 @@ class BaleTwoWayBotTests(APITestCase):
         self.cfg.telegram_admin_chat_id = "-100"  # گروهِ ادمین
         self.cfg.bale_webhook_enabled = True
         self.cfg.save()
+        self.operator = User.objects.create_user(username="bale-operator", password="pass", is_staff=True)
+        self.reporter = User.objects.create_user(username="bale-reporter", password="pass", is_staff=True)
+        BaleUserBinding.objects.create(user=self.operator, bale_user_id="555", display_name="علی")
+        BaleUserBinding.objects.create(user=self.reporter, bale_user_id="5", display_name="گزارشگر")
         self.customer = Customer.objects.create(name="حسن", phone="09120000010")
 
     def test_webhook_rejects_wrong_secret(self):
@@ -306,6 +336,12 @@ class BaleTwoWayBotTests(APITestCase):
         self.assertEqual(self.customer.stage, Customer.STAGE_NEW)  # تغییر نکرد
         ack.assert_called_once()
 
+    def test_admin_group_does_not_authorize_unbound_member(self):
+        update = {"message": {"text": "/قیف", "chat": {"id": -100}, "from": {"id": 999}}}
+        with patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+        self.assertNotIn("قیف مشتریان", send.call_args.args[2])
+
     def test_price_bot_replies_to_free_text(self):
         sample = {"products": [{"title": "میلگرد ۱۴", "price_toman": "100000", "url": "/products/1"}]}
         update = {"message": {"text": "میلگرد", "chat": {"id": 777}, "from": {"id": 777}}}
@@ -328,6 +364,49 @@ class BaleTwoWayBotTests(APITestCase):
         title, lines = build_daily_digest()
         self.assertIn("امروز", title)
         self.assertTrue(any("سرنخ" in line for line in lines))
+
+    def test_funnel_command_reports_customer_and_site_funnels(self):
+        CrmOpportunity.objects.create(
+            customer=self.customer,
+            title="سفارش ورق CK45",
+            stage=CrmOpportunity.STAGE_PRICING,
+            expected_value_irr=90_000_000,
+            probability=40,
+        )
+        update = {"message": {"text": "/قیف", "chat": {"id": -100}, "from": {"id": 5}}}
+        with patch("messaging.providers.telegram.send_message") as send:
+            self.client.post(f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/", update, format="json")
+        text = send.call_args.args[2]
+        self.assertIn("قیف مشتریان", text)
+        self.assertIn("قیف فروش سایت", text)
+        self.assertIn("قیمت‌گذاری", text)
+
+    def test_opportunity_commands_read_live_site_data(self):
+        opportunity = CrmOpportunity.objects.create(
+            customer=self.customer,
+            title="استعلام ورق ۱۰ میل",
+            stage=CrmOpportunity.STAGE_QUOTE_SENT,
+            source_type=CrmOpportunity.SOURCE_ASSISTANT_INQUIRY,
+            source_id="991",
+            source_status="quoted",
+            expected_value_irr=50_000_000,
+            probability=55,
+        )
+        updates = [
+            {"message": {"text": "/فرصتها", "chat": {"id": -100}, "from": {"id": 5}}},
+            {"message": {"text": f"/فرصت {opportunity.pk}", "chat": {"id": -100}, "from": {"id": 5}}},
+        ]
+        with patch("messaging.providers.telegram.send_message") as send:
+            for update in updates:
+                self.client.post(
+                    f"/api/messaging/bale/webhook/{self.cfg.webhook_secret}/",
+                    update,
+                    format="json",
+                )
+        replies = [call.args[2] for call in send.call_args_list]
+        self.assertIn("استعلام ورق ۱۰ میل", replies[0])
+        self.assertIn(f"فرصت #{opportunity.pk}", replies[1])
+        self.assertIn("پیشنهاد ارسال‌شده", replies[1])
 
 
 class SafirBaleSendTests(APITestCase):

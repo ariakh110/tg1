@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import Customer, CustomerActivity, CustomerTransaction
+from .models import (
+    CrmOpportunity,
+    CrmOpportunityStageHistory,
+    CrmSyncEvent,
+    Customer,
+    CustomerActivity,
+    CustomerTransaction,
+)
 
 
 class CustomerActivitySerializer(serializers.ModelSerializer):
@@ -126,9 +133,170 @@ class CustomerSerializer(serializers.ModelSerializer):
         return full or user.get_username()
 
 
+class CrmOpportunityStageHistorySerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+    from_stage_display = serializers.SerializerMethodField()
+    to_stage_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CrmOpportunityStageHistory
+        fields = [
+            "id",
+            "from_stage",
+            "from_stage_display",
+            "to_stage",
+            "to_stage_display",
+            "event",
+            "event_key",
+            "reason",
+            "actor_name",
+            "metadata",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        user = obj.actor_user
+        if not user:
+            return "سیستم"
+        return (user.get_full_name() or "").strip() or user.get_username()
+
+    def get_from_stage_display(self, obj):
+        return dict(CrmOpportunity.STAGE_CHOICES).get(obj.from_stage, obj.from_stage)
+
+    def get_to_stage_display(self, obj):
+        return dict(CrmOpportunity.STAGE_CHOICES).get(obj.to_stage, obj.to_stage)
+
+
+class CrmOpportunitySerializer(serializers.ModelSerializer):
+    stage_display = serializers.CharField(source="get_stage_display", read_only=True)
+    source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default="")
+    customer_phone = serializers.CharField(source="customer.phone", read_only=True, default="")
+    owner_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CrmOpportunity
+        fields = [
+            "id",
+            "customer",
+            "customer_name",
+            "customer_phone",
+            "title",
+            "stage",
+            "stage_display",
+            "source_type",
+            "source_type_display",
+            "source_id",
+            "source_status",
+            "owner",
+            "owner_name",
+            "expected_value_irr",
+            "probability",
+            "need_details",
+            "next_action",
+            "next_follow_up_at",
+            "lost_reason",
+            "metadata",
+            "is_active",
+            "closed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "stage",
+            "stage_display",
+            "source_type",
+            "source_type_display",
+            "source_id",
+            "source_status",
+            "owner_name",
+            "customer_name",
+            "customer_phone",
+            "lost_reason",
+            "metadata",
+            "closed_at",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_owner_name(self, obj):
+        user = obj.owner
+        if not user:
+            return ""
+        return (user.get_full_name() or "").strip() or user.get_username()
+
+    def validate_expected_value_irr(self, value):
+        if value < 0:
+            raise serializers.ValidationError("ارزش فرصت نمی‌تواند منفی باشد.")
+        return value
+
+    def validate_probability(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("احتمال موفقیت باید بین صفر تا صد باشد.")
+        return value
+
+    def validate(self, attrs):
+        instance = self.instance
+        if instance and instance.source_type in {
+            CrmOpportunity.SOURCE_STORE_ORDER,
+            CrmOpportunity.SOURCE_ASSISTANT_INQUIRY,
+        }:
+            protected = {"customer", "title", "expected_value_irr", "need_details"}
+            attempted = sorted(protected & set(attrs))
+            if attempted:
+                raise serializers.ValidationError(
+                    {field: "این فیلد از رکورد منبع سایت همگام می‌شود." for field in attempted}
+                )
+        return attrs
+
+
+class CrmOpportunityDetailSerializer(CrmOpportunitySerializer):
+    stage_history = CrmOpportunityStageHistorySerializer(many=True, read_only=True)
+
+    class Meta(CrmOpportunitySerializer.Meta):
+        fields = CrmOpportunitySerializer.Meta.fields + ["stage_history"]
+
+
+class CrmOpportunityTransitionSerializer(serializers.Serializer):
+    stage = serializers.ChoiceField(choices=CrmOpportunity.STAGE_CHOICES)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if attrs["stage"] == CrmOpportunity.STAGE_LOST and not attrs.get("reason", "").strip():
+            raise serializers.ValidationError({"reason": "برای فرصت ازدست‌رفته دلیل را وارد کنید."})
+        return attrs
+
+
+class CrmSyncEventSerializer(serializers.ModelSerializer):
+    source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = CrmSyncEvent
+        fields = [
+            "id",
+            "source_type",
+            "source_type_display",
+            "source_id",
+            "event_key",
+            "status",
+            "status_display",
+            "attempts",
+            "last_error",
+            "payload",
+            "processed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class CustomerDetailSerializer(CustomerSerializer):
     transactions = CustomerTransactionSerializer(many=True, read_only=True)
     activities = CustomerActivitySerializer(many=True, read_only=True)
+    opportunities = CrmOpportunitySerializer(many=True, read_only=True)
 
     class Meta(CustomerSerializer.Meta):
-        fields = CustomerSerializer.Meta.fields + ["transactions", "activities"]
+        fields = CustomerSerializer.Meta.fields + ["transactions", "activities", "opportunities"]

@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    BaleUserBindingViewSet,
     BaleSetWebhookView,
     BaleWebhookView,
     KavenegarIncomingWebhook,
@@ -16,6 +17,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"messages", OutboundMessageViewSet, basename="outbound-message")
+router.register(r"bale-bindings", BaleUserBindingViewSet, basename="bale-user-binding")
 
 app_name = "messaging"
 
