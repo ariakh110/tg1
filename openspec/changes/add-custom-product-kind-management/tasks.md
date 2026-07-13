@@ -23,4 +23,4 @@
 - [x] 4.2 Run focused backend tests and Django checks
 - [x] 4.3 Run frontend lint/build and responsive smoke checks
 - [x] 4.4 Validate this OpenSpec change in strict mode
-- [ ] 4.5 Commit, pull/push, and rebuild manual deploy archives
+- [x] 4.5 Commit, pull/push, and rebuild manual deploy archives
