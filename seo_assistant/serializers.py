@@ -23,6 +23,7 @@ class SeoKnowledgeSerializer(serializers.ModelSerializer):
 
 class SeoAssistantSettingsSerializer(serializers.ModelSerializer):
     api_key_configured = serializers.SerializerMethodField()
+    request_timeout_seconds = serializers.IntegerField(min_value=30, max_value=110)
     # کلیدِ اختصاصیِ این دستیار — فقط نوشتنی (هرگز در پاسخِ GET برنمی‌گردد).
     openai_api_key = serializers.CharField(
         write_only=True, required=False, allow_blank=True, trim_whitespace=True
@@ -33,7 +34,8 @@ class SeoAssistantSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "is_enabled", "assistant_name", "greeting", "persona", "site_context",
             "openai_api_key", "openai_base_url", "chat_model", "embedding_model", "temperature",
-            "max_context_chunks", "max_tool_iterations", "api_key_configured", "updated_at",
+            "max_context_chunks", "max_tool_iterations", "request_timeout_seconds",
+            "api_key_configured", "updated_at",
         )
         read_only_fields = ("updated_at",)
 

@@ -19,11 +19,24 @@ class SeoAssistantError(Exception):
     pass
 
 
-def _timeout():
-    return getattr(dj_settings, "OPENAI_API_TIMEOUT_SECONDS", 30)
+class SeoAssistantCancelled(Exception):
+    pass
 
 
-def _post_json(path, body, cfg):
+def _timeout(cfg):
+    configured = getattr(cfg, "request_timeout_seconds", None)
+    if configured is None:
+        configured = getattr(dj_settings, "SEO_ASSISTANT_API_TIMEOUT_SECONDS", 90)
+    return max(30, min(110, int(configured)))
+
+
+def _raise_if_cancelled(cancel_check=None):
+    if cancel_check and cancel_check():
+        raise SeoAssistantCancelled("درخواست توسط کاربر متوقف شد.")
+
+
+def _post_json(path, body, cfg, cancel_check=None):
+    _raise_if_cancelled(cancel_check)
     api_key = cfg.api_key
     if not api_key:
         raise SeoAssistantError("کلید سرویس هوش مصنوعی تنظیم نشده است (تنظیمات سایت → کلید OpenAI/AvalAI).")
@@ -34,9 +47,12 @@ def _post_json(path, body, cfg):
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
+    timeout_seconds = _timeout(cfg)
     try:
-        with urlopen(request, timeout=_timeout()) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8")
+        _raise_if_cancelled(cancel_check)
+        return json.loads(raw)
     except HTTPError as exc:
         # خطای واقعیِ AvalAI را به ادمین نشان بده (کلید نامعتبر، مدلِ پشتیبانی‌نشده، اعتبارِ تمام‌شده و ...).
         # این دستیار فقط ادمین‌محور است، پس افشای جزئیاتِ بالادست بی‌خطر و برای دیباگ ضروری است.
@@ -58,7 +74,8 @@ def _post_json(path, body, cfg):
     except (URLError, TimeoutError) as exc:
         reason = getattr(exc, "reason", None) or exc
         raise SeoAssistantError(
-            f"ارتباط با سرویس هوش مصنوعی برقرار نشد: {reason} (base_url: {base})."
+            f"سرویس هوش مصنوعی در مهلت {timeout_seconds} ثانیه پاسخ نداد: {reason} "
+            f"(base_url: {base})."
         ) from exc
     except json.JSONDecodeError as exc:
         raise SeoAssistantError("پاسخ هوش مصنوعی قابل پردازش نبود.") from exc
@@ -66,9 +83,14 @@ def _post_json(path, body, cfg):
 
 # ---------- Embeddings / RAG ----------
 
-def embed_texts(texts, cfg=None):
+def embed_texts(texts, cfg=None, cancel_check=None):
     cfg = cfg or SeoAssistantSettings.load()
-    payload = _post_json("/embeddings", {"model": cfg.embedding_model, "input": texts}, cfg)
+    payload = _post_json(
+        "/embeddings",
+        {"model": cfg.embedding_model, "input": texts},
+        cfg,
+        cancel_check=cancel_check,
+    )
     data = sorted(payload.get("data", []), key=lambda d: d.get("index", 0))
     return [item.get("embedding") for item in data]
 
@@ -114,7 +136,7 @@ def _keyword_score(query, text):
     return sum(1 for t in terms if t in low)
 
 
-def retrieve(query, cfg=None, k=None):
+def retrieve(query, cfg=None, k=None, cancel_check=None):
     """بازگرداندن متنِ دانش‌های مرتبط برای تزریق به پرامپت (RAG با fallbackِ کلیدواژه‌ای)."""
     cfg = cfg or SeoAssistantSettings.load()
     k = k or cfg.max_context_chunks
@@ -124,9 +146,11 @@ def retrieve(query, cfg=None, k=None):
 
     query_vec = None
     try:
-        query_vec = embed_texts([query], cfg)[0]
+        query_vec = embed_texts([query], cfg, cancel_check=cancel_check)[0]
     except SeoAssistantError:
         query_vec = None
+
+    _raise_if_cancelled(cancel_check)
 
     scored = []
     for entry in active:
@@ -168,7 +192,7 @@ def _history_messages(conversation, limit=12):
     return [{"role": m.role, "content": m.content} for m in msgs if m.content]
 
 
-def _chat_completion(messages, cfg):
+def _chat_completion(messages, cfg, cancel_check=None):
     body = {
         "model": cfg.chat_model,
         "messages": messages,
@@ -176,57 +200,72 @@ def _chat_completion(messages, cfg):
         "tool_choice": "auto",
         "temperature": float(cfg.temperature),
     }
-    payload = _post_json("/chat/completions", body, cfg)
+    payload = _post_json("/chat/completions", body, cfg, cancel_check=cancel_check)
     choices = payload.get("choices") or []
     if not choices:
         raise SeoAssistantError("پاسخی از هوش مصنوعی دریافت نشد.")
     return choices[0].get("message", {})
 
 
-def run_chat(conversation, user_text, cfg=None):
+def run_chat(conversation, user_text, cfg=None, chat_request=None, cancel_check=None):
     """یک نوبت گفتگو: پیام ادمین را پردازش و پاسخ نهایی را برمی‌گرداند (با اجرای ابزار)."""
     cfg = cfg or SeoAssistantSettings.load()
+    message_defaults = {"conversation": conversation, "chat_request": chat_request}
 
-    SeoMessage.objects.create(conversation=conversation, role=SeoMessage.ROLE_USER, content=user_text)
+    try:
+        _raise_if_cancelled(cancel_check)
+        SeoMessage.objects.create(role=SeoMessage.ROLE_USER, content=user_text, **message_defaults)
+        _raise_if_cancelled(cancel_check)
 
-    knowledge_chunks = retrieve(user_text, cfg)
-    system_prompt = _build_system_prompt(cfg, knowledge_chunks)
-    history = _history_messages(conversation)
-    messages = [{"role": "system", "content": system_prompt}] + history
+        knowledge_chunks = retrieve(user_text, cfg, cancel_check=cancel_check)
+        _raise_if_cancelled(cancel_check)
+        system_prompt = _build_system_prompt(cfg, knowledge_chunks)
+        history = _history_messages(conversation)
+        messages = [{"role": "system", "content": system_prompt}] + history
 
-    for _ in range(max(1, cfg.max_tool_iterations)):
-        message = _chat_completion(messages, cfg)
-        # فقط tool_callهای معتبر؛ بعضی مدل‌ها/پراکسی‌ها (AvalAI) گاهی tool_call با name=null
-        # و arguments خالی می‌فرستند — این‌ها را نادیده می‌گیریم تا نه کرش شود نه content=null ذخیره گردد.
-        tool_calls = [
-            c for c in (message.get("tool_calls") or [])
-            if isinstance(c, dict) and ((c.get("function") or {}).get("name") or "").strip()
-        ]
-        if not tool_calls:
-            reply = (message.get("content") or "").strip() or "متوجه نشدم، می‌شود واضح‌تر بفرمایید؟"
-            SeoMessage.objects.create(conversation=conversation, role=SeoMessage.ROLE_ASSISTANT, content=reply)
-            return reply
+        for _ in range(max(1, cfg.max_tool_iterations)):
+            _raise_if_cancelled(cancel_check)
+            message = _chat_completion(messages, cfg, cancel_check=cancel_check)
+            _raise_if_cancelled(cancel_check)
+            # فقط tool_callهای معتبر؛ بعضی مدل‌ها/پراکسی‌ها (AvalAI) گاهی tool_call با name=null
+            # و arguments خالی می‌فرستند — این‌ها را نادیده می‌گیریم تا نه کرش شود نه content=null ذخیره گردد.
+            tool_calls = [
+                c for c in (message.get("tool_calls") or [])
+                if isinstance(c, dict) and ((c.get("function") or {}).get("name") or "").strip()
+            ]
+            if not tool_calls:
+                reply = (message.get("content") or "").strip() or "متوجه نشدم، می‌شود واضح‌تر بفرمایید؟"
+                _raise_if_cancelled(cancel_check)
+                SeoMessage.objects.create(role=SeoMessage.ROLE_ASSISTANT, content=reply, **message_defaults)
+                return reply
 
-        messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
-        for call in tool_calls:
-            fn = call.get("function", {})
-            name = (fn.get("name") or "").strip()
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result = execute_tool(name, args, conversation)
-            SeoMessage.objects.create(
-                conversation=conversation,
-                role=SeoMessage.ROLE_TOOL,
-                content=name or "tool",  # هرگز null نشود (ستون NOT NULL است)
-                tool_name=name,
-                tool_payload={"args": args, "result": result},
-            )
-            messages.append(
-                {"role": "tool", "tool_call_id": call.get("id", ""), "content": json.dumps(result, ensure_ascii=False)}
-            )
+            messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
+            for call in tool_calls:
+                _raise_if_cancelled(cancel_check)
+                fn = call.get("function", {})
+                name = (fn.get("name") or "").strip()
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result = execute_tool(name, args, conversation)
+                _raise_if_cancelled(cancel_check)
+                SeoMessage.objects.create(
+                    role=SeoMessage.ROLE_TOOL,
+                    content=name or "tool",  # هرگز null نشود (ستون NOT NULL است)
+                    tool_name=name,
+                    tool_payload={"args": args, "result": result},
+                    **message_defaults,
+                )
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.get("id", ""), "content": json.dumps(result, ensure_ascii=False)}
+                )
 
-    fallback = "برای جمع‌بندی دقیق‌تر، لطفاً سؤال را کمی محدودتر کنید یا URL مشخصی برای آدیت بدهید."
-    SeoMessage.objects.create(conversation=conversation, role=SeoMessage.ROLE_ASSISTANT, content=fallback)
-    return fallback
+        fallback = "برای جمع‌بندی دقیق‌تر، لطفاً سؤال را کمی محدودتر کنید یا URL مشخصی برای آدیت بدهید."
+        _raise_if_cancelled(cancel_check)
+        SeoMessage.objects.create(role=SeoMessage.ROLE_ASSISTANT, content=fallback, **message_defaults)
+        return fallback
+    except SeoAssistantCancelled:
+        if chat_request is not None:
+            chat_request.messages.all().delete()
+        raise

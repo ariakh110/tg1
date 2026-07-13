@@ -1,11 +1,19 @@
 from django.contrib import admin
 
-from .models import SeoAssistantSettings, SeoConversation, SeoKnowledge, SeoMessage
+from .models import SeoAssistantSettings, SeoChatRequest, SeoConversation, SeoKnowledge, SeoMessage
 
 
 @admin.register(SeoAssistantSettings)
 class SeoAssistantSettingsAdmin(admin.ModelAdmin):
-    list_display = ("assistant_name", "is_enabled", "chat_model", "embedding_model", "openai_base_url", "updated_at")
+    list_display = (
+        "assistant_name",
+        "is_enabled",
+        "chat_model",
+        "embedding_model",
+        "request_timeout_seconds",
+        "openai_base_url",
+        "updated_at",
+    )
 
 
 @admin.register(SeoKnowledge)
@@ -27,3 +35,11 @@ class SeoConversationAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("session_key", "title")
     inlines = [SeoMessageInline]
+
+
+@admin.register(SeoChatRequest)
+class SeoChatRequestAdmin(admin.ModelAdmin):
+    list_display = ("request_id", "status", "cancel_requested", "user", "conversation", "created_at", "finished_at")
+    list_filter = ("status", "cancel_requested")
+    search_fields = ("request_id", "conversation__session_key", "user__username")
+    readonly_fields = ("request_id", "created_at", "updated_at", "finished_at")

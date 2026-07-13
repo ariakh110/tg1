@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    SeoChatCancelView,
     SeoAssistantSettingsView,
     SeoChatView,
     SeoConversationViewSet,
@@ -16,6 +17,7 @@ app_name = "seo_assistant"
 
 urlpatterns = [
     path("admin/chat/", SeoChatView.as_view(), name="admin-chat"),
+    path("admin/chat/<uuid:request_id>/cancel/", SeoChatCancelView.as_view(), name="admin-chat-cancel"),
     path("admin/settings/", SeoAssistantSettingsView.as_view(), name="admin-settings"),
     path("", include(router.urls)),
 ]

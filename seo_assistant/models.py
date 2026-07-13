@@ -1,6 +1,8 @@
 import hashlib
+import uuid
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -53,6 +55,10 @@ class SeoAssistantSettings(models.Model):
     temperature = models.DecimalField(max_digits=3, decimal_places=2, default=0.20)
     max_context_chunks = models.PositiveSmallIntegerField(default=8)
     max_tool_iterations = models.PositiveSmallIntegerField(default=4)
+    request_timeout_seconds = models.PositiveSmallIntegerField(
+        default=90,
+        validators=[MinValueValidator(30), MaxValueValidator(110)],
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -172,6 +178,52 @@ class SeoConversation(models.Model):
         return f"{self.title or self.session_key} ({self.get_status_display()})"
 
 
+class SeoChatRequest(models.Model):
+    """وضعیت یک نوبت پردازش برای لغو، جلوگیری از replay و کنارگذاشتن پاسخ دیررس."""
+
+    STATUS_RUNNING = "running"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_RUNNING, "در حال پردازش"),
+        (STATUS_COMPLETED, "تکمیل‌شده"),
+        (STATUS_CANCELLED, "لغوشده"),
+        (STATUS_FAILED, "ناموفق"),
+    ]
+
+    request_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        SeoConversation,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="chat_requests",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="seo_chat_requests",
+    )
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_RUNNING)
+    cancel_requested = models.BooleanField(default=False)
+    reply = models.TextField(blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "درخواست گفتگوی سئو"
+        verbose_name_plural = "درخواست‌های گفتگوی سئو"
+
+    def __str__(self):
+        return f"{self.request_id} ({self.get_status_display()})"
+
+
 class SeoMessage(models.Model):
     ROLE_USER = "user"
     ROLE_ASSISTANT = "assistant"
@@ -183,6 +235,13 @@ class SeoMessage(models.Model):
     ]
 
     conversation = models.ForeignKey(SeoConversation, on_delete=models.CASCADE, related_name="messages")
+    chat_request = models.ForeignKey(
+        SeoChatRequest,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="messages",
+    )
     role = models.CharField(max_length=12, choices=ROLE_CHOICES)
     content = models.TextField(blank=True, default="")
     tool_name = models.CharField(max_length=60, blank=True, default="")
