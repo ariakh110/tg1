@@ -1057,6 +1057,88 @@ class AdminProductImportTests(APITestCase):
             ).exists()
         )
 
+    def test_admin_can_create_and_use_custom_product_kind(self):
+        self.client.force_authenticate(self.admin)
+        category_res = self.client.post(
+            "/api/categories/",
+            {
+                "name": "نبشی سفارشی",
+                "code": "angle-custom",
+                "product_kind": "angle",
+                "spec_defaults": {"material_type": "angle"},
+                "required_spec_fields": [],
+                "sort_order": 900,
+                "is_active": True,
+            },
+            format="json",
+        )
+        option_res = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "steel_grade",
+                "value": "ST37-ANGLE",
+                "label": "ST37 نبشی",
+                "product_kind": "angle",
+                "sort_order": 1,
+                "is_active": True,
+            },
+            format="json",
+        )
+        mismatched_child = self.client.post(
+            "/api/categories/",
+            {
+                "name": "زیرگروه ناسازگار نبشی",
+                "code": "angle-invalid-child",
+                "parent": category_res.data.get("id"),
+                "product_kind": "sheet",
+                "spec_defaults": {"material_type": "sheet"},
+                "is_active": True,
+            },
+            format="json",
+        )
+        invalid_kind = self.client.post(
+            "/api/categories/",
+            {
+                "name": "نوع با کد نامعتبر",
+                "code": "invalid-kind-code",
+                "product_kind": "نبشی",
+                "is_active": True,
+            },
+            format="json",
+        )
+        product_res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "نبشی ۵۰ در ۵۰ تست",
+                "category_code": "angle-custom",
+                "seller_id": self.seller.id,
+                "price": "52000",
+                "steel_grade": "ST37-ANGLE",
+                "thickness_mm": "5",
+                "width_mm": "50",
+                "height_mm": "50",
+                "length_mm": "6000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(category_res.status_code, status.HTTP_201_CREATED, category_res.data)
+        self.assertEqual(option_res.status_code, status.HTTP_201_CREATED, option_res.data)
+        self.assertEqual(mismatched_child.status_code, status.HTTP_400_BAD_REQUEST, mismatched_child.data)
+        self.assertIn("product_kind", mismatched_child.data)
+        self.assertEqual(invalid_kind.status_code, status.HTTP_400_BAD_REQUEST, invalid_kind.data)
+        self.assertIn("product_kind", invalid_kind.data)
+        self.assertEqual(product_res.status_code, status.HTTP_200_OK, product_res.data)
+        product = Product.objects.get(pk=product_res.data["product_id"])
+        self.assertEqual(product.category.product_kind, "angle")
+        self.assertEqual(product.specifications.material_type, "angle")
+        self.assertEqual(product.specifications.steel_grade, "ST37-ANGLE")
+        self.assertEqual(str(product.specifications.height_mm), "50.00")
+
+        public_categories = self.client.get("/api/categories/active-with-products/")
+        codes = {item["code"] for item in public_categories.data["results"]}
+        self.assertIn("angle-custom", codes)
+
     def test_admin_can_deactivate_reactivate_category_and_public_list_hides_it(self):
         category = ProductCategory.objects.get(code="sheet-black")
         Product.objects.create(

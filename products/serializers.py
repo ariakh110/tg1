@@ -1,4 +1,6 @@
 # products/serializers.py
+import re
+
 from rest_framework import serializers
 from django.conf import settings
 from .models import (
@@ -70,6 +72,44 @@ class ProductCategorySerializer(serializers.ModelSerializer):
 
     def get_merged_required_spec_fields(self, obj):
         return obj.merged_required_spec_fields()
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        parent = attrs.get("parent", getattr(self.instance, "parent", None))
+        product_kind = str(
+            attrs.get("product_kind", getattr(self.instance, "product_kind", "")) or ""
+        ).strip().lower()
+
+        if parent:
+            inherited_kind = parent.resolved_product_kind()
+            if product_kind and inherited_kind and product_kind != inherited_kind:
+                raise serializers.ValidationError(
+                    {"product_kind": "نوع محصول زیر‌دسته باید با دسته والد یکسان باشد."}
+                )
+            product_kind = inherited_kind or product_kind
+
+        if product_kind and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,49}", product_kind):
+            raise serializers.ValidationError(
+                {
+                    "product_kind": (
+                        "کد نوع محصول باید ۲ تا ۵۰ نویسه و فقط شامل حروف انگلیسی کوچک، "
+                        "عدد، خط تیره یا زیرخط باشد."
+                    )
+                }
+            )
+
+        defaults = dict(attrs.get("spec_defaults", getattr(self.instance, "spec_defaults", {})) or {})
+        material_type = str(defaults.get("material_type") or "").strip().lower()
+        if product_kind and material_type and material_type != product_kind:
+            raise serializers.ValidationError(
+                {"spec_defaults": "material_type باید با نوع محصول دسته یکسان باشد."}
+            )
+        if product_kind:
+            defaults["material_type"] = product_kind
+
+        attrs["product_kind"] = product_kind
+        attrs["spec_defaults"] = defaults
+        return attrs
 
 
 # -------------------------

@@ -8,6 +8,13 @@ The key steel use case is:
 
 `دسته اصلی -> نوع محصول/ورق -> گرید/آلیاژ -> کارخانه -> ابعاد/قطر -> مبدا -> قیمت یا استعلام`
 
+## Implementation Update - 1405/04/22
+
+- The taxonomy category form can create a custom root product kind with a stable technical code such as `angle` or `channel`.
+- Saved custom kinds are read from backend category data and become available in controlled-option management without another frontend code change.
+- Custom kinds use a generic product form that preserves common dimensions and renders configured controlled options.
+- Header, mobile, and homepage category navigation read active categories with products from the backend; built-in families retain their dedicated landing hubs.
+
 For sheets, the admin selects:
 - main category: ورق
 - manufacturing process: ورق or رول
@@ -39,6 +46,7 @@ For sheets, the admin selects:
 ### FR-1 Backend Taxonomy
 
 - `ProductCategory` stores the main visible category tree, including product kind and default/required spec fields.
+- A root category may define a new stable custom `product_kind`; child categories inherit their parent's kind.
 - `ProductAttributeOption` stores controlled values for manufacturing process, surface finish/type, steel grade, factory, cut type, delivery place, province, and city.
 - Option dependencies use `parent`; examples:
   - `steel_grade(ST37)` parent = `surface_finish(black)`
@@ -49,6 +57,7 @@ For sheets, the admin selects:
 
 - `/admin/dashboard` has a dedicated product taxonomy management surface.
 - Admin can create searchable values without typing raw product form values manually.
+- Admin can explicitly create a new product kind from the root-category form and then select it for controlled options.
 - Admin sees existing values grouped by their purpose and dependency.
 - Required dependencies are visible before submit: factory requires sheet/coil parent; sheet grade may require sheet type parent; city requires province parent.
 
@@ -65,6 +74,7 @@ For sheets, the admin selects:
 ### FR-4 Public Product List
 
 - Category and sheet-type tabs come from active products only.
+- Header, mobile, homepage, and category navigation include backend-created root kinds only after they have active products.
 - Product rows are grouped by factory for sheet/coil lists.
 - Rows show generated title, dimensions, origin as `city - delivery place`, market comparison when available, and price/inquiry/order action.
 - Public list hides inactive products.
