@@ -19,4 +19,4 @@
 - [x] 3.2 Run backend SEO tests, migration checks, and Django checks
 - [x] 3.3 Run frontend lint/build and responsive smoke checks
 - [x] 3.4 Validate this OpenSpec change in strict mode
-- [ ] 3.5 Commit, pull/push, and rebuild manual deploy archives
+- [x] 3.5 Commit, pull/push, and rebuild manual deploy archives
