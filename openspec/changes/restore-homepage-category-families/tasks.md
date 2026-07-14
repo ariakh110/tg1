@@ -13,4 +13,4 @@
 - [x] 3.1 Run targeted lint and production build
 - [x] 3.2 Verify desktop and mobile category grids with production taxonomy data
 - [x] 3.3 Validate this OpenSpec change in strict mode
-- [ ] 3.4 Commit, pull/push, and rebuild manual deploy archives
+- [x] 3.4 Commit, pull/push, and rebuild manual deploy archives
