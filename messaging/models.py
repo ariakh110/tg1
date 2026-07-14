@@ -182,6 +182,76 @@ class BaleUserBinding(models.Model):
         return f"{self.bale_user_id} -> {self.user}"
 
 
+class MessagingContactGroup(models.Model):
+    SOURCE_WEBSITE = "website"
+    SOURCE_KAVENEGAR = "kavenegar"
+    SOURCE_CHOICES = [
+        (SOURCE_WEBSITE, "گروه سایت"),
+        (SOURCE_KAVENEGAR, "واردشده از کاوه‌نگار"),
+    ]
+
+    name = models.CharField(max_length=160, unique=True, verbose_name="نام گروه")
+    source = models.CharField(
+        max_length=16,
+        choices=SOURCE_CHOICES,
+        default=SOURCE_WEBSITE,
+        db_index=True,
+        verbose_name="منبع",
+    )
+    kavenegar_tag = models.CharField(max_length=200, blank=True, default="", verbose_name="تگ کاوه‌نگار")
+    description = models.CharField(max_length=300, blank=True, default="", verbose_name="توضیح")
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name="فعال")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_messaging_groups",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        verbose_name = "گروه پیام‌رسانی"
+        verbose_name_plural = "گروه‌های پیام‌رسانی"
+
+    def __str__(self):
+        return self.name
+
+
+class MessagingContactGroupMember(models.Model):
+    group = models.ForeignKey(
+        MessagingContactGroup,
+        on_delete=models.CASCADE,
+        related_name="members",
+        verbose_name="گروه",
+    )
+    customer = models.ForeignKey(
+        "customers.Customer",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="messaging_group_memberships",
+        verbose_name="مشتری CRM",
+    )
+    phone = models.CharField(max_length=11, db_index=True, verbose_name="موبایل نرمال‌شده")
+    name = models.CharField(max_length=160, blank=True, default="", verbose_name="نام")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name", "phone", "id"]
+        verbose_name = "عضو گروه پیام‌رسانی"
+        verbose_name_plural = "اعضای گروه پیام‌رسانی"
+        constraints = [
+            models.UniqueConstraint(fields=["group", "phone"], name="messaging_unique_group_phone"),
+        ]
+        indexes = [models.Index(fields=["group", "phone"])]
+
+    def __str__(self):
+        return f"{self.group}: {self.phone}"
+
+
 class OutboundMessage(models.Model):
     """لاگِ هر تلاشِ ارسالِ پیام (ممیزی + پیگیریِ وضعیت). کانال‌پذیر تا تلگرام/واتساپ بعداً اضافه شوند."""
 

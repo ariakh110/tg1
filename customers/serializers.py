@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from products.models import ProductCategory
 
 from .models import (
     CrmOpportunity,
@@ -86,6 +87,12 @@ class CustomerSerializer(serializers.ModelSerializer):
     # از annotate شدنِ کوئری در ویوست می‌آیند؛ روی نمونهٔ تکی ممکن است نباشند.
     next_follow_up_at = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     open_follow_up_count = serializers.IntegerField(read_only=True, required=False)
+    product_interests = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ProductCategory.objects.all(),
+        required=False,
+    )
+    product_interest_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
@@ -98,6 +105,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             "province",
             "note",
             "extra_phones",
+            "product_interests",
+            "product_interest_details",
             "user",
             "is_active",
             "stage",
@@ -131,6 +140,17 @@ class CustomerSerializer(serializers.ModelSerializer):
             return ""
         full = (user.get_full_name() or "").strip()
         return full or user.get_username()
+
+    def get_product_interest_details(self, obj):
+        return [
+            {
+                "id": category.id,
+                "name": category.name,
+                "code": category.code or "",
+                "full_path": " / ".join(item.name for item in category.get_ancestors(include_self=True)),
+            }
+            for category in obj.product_interests.all()
+        ]
 
 
 class CrmOpportunityStageHistorySerializer(serializers.ModelSerializer):

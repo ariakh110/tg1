@@ -95,7 +95,7 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = ProductCategorySerializer
     permission_classes = [IsAdminRoleOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["parent", "hscode", "code", "product_kind", "is_active"]
+    filterset_fields = ["parent", "hscode", "code", "product_kind", "is_active", "show_in_navigation"]
     search_fields = ["name", "hscode", "code"]
     ordering_fields = ["sort_order", "name"]
     ordering = ["tree_id", "lft"]

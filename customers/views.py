@@ -34,13 +34,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
     admin_sections = ("crm", "crm-funnel")
     pagination_class = None
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["stage", "source", "is_active"]
+    filterset_fields = ["stage", "source", "is_active", "product_interests"]
     search_fields = ["name", "phone", "company", "city"]
     ordering_fields = ["updated_at", "created_at", "name", "next_follow_up_at"]
     ordering = ["-updated_at"]
 
     def get_queryset(self):
-        return Customer.objects.annotate(
+        return Customer.objects.prefetch_related("product_interests").annotate(
             next_follow_up_at=Min("activities__follow_up_at", filter=_OPEN_FOLLOW_UP),
             open_follow_up_count=Count("activities", filter=_OPEN_FOLLOW_UP),
         )

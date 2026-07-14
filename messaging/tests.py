@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from customers.models import CrmOpportunity, Customer, CustomerActivity
 from . import service
-from .models import BaleUserBinding, MessagingSettings, OutboundMessage
+from .models import BaleUserBinding, MessagingContactGroup, MessagingSettings, OutboundMessage
 from .providers.kavenegar import SendResult
 from .providers.telegram import SendResult as TelegramSendResult
 
@@ -63,6 +63,15 @@ class MessagingApiTests(APITestCase):
         self.assertIn(self.client.get("/api/messaging/settings/").status_code, (401, 403))
         self.assertIn(self.client.get("/api/messaging/messages/").status_code, (401, 403))
         self.assertIn(self.client.get("/api/messaging/bale-bindings/").status_code, (401, 403))
+        self.assertIn(self.client.get("/api/messaging/groups/").status_code, (401, 403))
+        self.assertIn(
+            self.client.post(
+                "/api/messaging/audience-preview/",
+                {"all_active": True},
+                format="json",
+            ).status_code,
+            (401, 403),
+        )
         self.assertIn(self.client.post("/api/messaging/send/", {"recipient": "09120000001", "message": "x"}, format="json").status_code, (401, 403))
 
     def test_settings_key_is_write_only(self):
@@ -84,12 +93,196 @@ class MessagingApiTests(APITestCase):
         self.assertEqual(OutboundMessage.objects.filter(customer=self.c1).count(), 1)
         self.assertTrue(CustomerActivity.objects.filter(customer=self.c1, kind=CustomerActivity.KIND_MESSAGE).exists())
 
+    def test_single_send_rejects_unknown_channel(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/messaging/send/",
+            {"customer_id": self.c1.id, "channel": "telegram", "message": "نباید ارسال شود"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(OutboundMessage.objects.count(), 0)
+
     def test_bulk_send_to_segment(self):
         self.client.force_authenticate(self.admin)
         res = self.client.post("/api/messaging/send-bulk/", {"stage": Customer.STAGE_PROPOSAL, "message": "تخفیف ویژه"}, format="json")
         self.assertEqual(res.status_code, 201, res.data)
         self.assertEqual(res.data["total"], 2)  # فقط دو مشتریِ proposal
         self.assertEqual(OutboundMessage.objects.filter(purpose=OutboundMessage.PURPOSE_BULK).count(), 2)
+
+    def test_group_import_normalizes_deduplicates_and_previews(self):
+        self.client.force_authenticate(self.admin)
+        created = self.client.post(
+            "/api/messaging/groups/",
+            {"name": "مشتریان ورق", "source": "kavenegar", "kavenegar_tag": "sheet-list"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        group_id = created.data["id"]
+
+        replaced = self.client.post(
+            f"/api/messaging/groups/{group_id}/replace-members/",
+            {
+                "customer_ids": [self.c1.id],
+                "phones": "رضا, +989120000002\nتکراری, 09120000001\nشماره خراب",
+            },
+            format="json",
+        )
+        self.assertEqual(replaced.status_code, 200, replaced.data)
+        self.assertEqual(replaced.data["import_summary"]["member_count"], 2)
+        self.assertEqual(replaced.data["import_summary"]["duplicate_count"], 1)
+        self.assertEqual(replaced.data["import_summary"]["invalid_count"], 1)
+
+        preview = self.client.post(
+            "/api/messaging/audience-preview/",
+            {"group_ids": [group_id]},
+            format="json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["valid_count"], 2)
+        self.assertEqual(preview.data["source_counts"]["groups"], 2)
+        self.assertEqual(OutboundMessage.objects.count(), 0)
+
+    def test_product_audience_unites_interests_and_site_purchases(self):
+        from products.models import Product, ProductCategory
+        from sales.models import StoreOrder, StoreOrderItem, StoreOrderStatus
+
+        root = ProductCategory.objects.create(name="خانواده مصرفی تست", code="consumer-test", product_kind="sheet")
+        child = ProductCategory.objects.create(
+            name="ورق گالوانیزه مصرفی تست",
+            code="consumer-test-galvanized",
+            parent=root,
+            product_kind="sheet",
+        )
+        product = Product.objects.create(
+            category=child,
+            name="ورق گالوانیزه تست کمپین",
+            short_description="تست",
+            description="تست",
+        )
+        self.c1.product_interests.add(child)
+        buyer = User.objects.create_user(username="campaign-buyer", password="pass")
+        self.c2.user = buyer
+        self.c2.save(update_fields=["user"])
+        order = StoreOrder.objects.create(buyer=buyer, status=StoreOrderStatus.SUBMITTED)
+        StoreOrderItem.objects.create(order=order, product=product, product_name=product.name)
+        self.client.force_authenticate(self.admin)
+
+        preview = self.client.post(
+            "/api/messaging/audience-preview/",
+            {"product_category_ids": [root.id]},
+            format="json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["valid_count"], 2)
+        self.assertEqual({item["customer_id"] for item in preview.data["sample"]}, {self.c1.id, self.c2.id})
+
+        updated = self.client.patch(
+            f"/api/crm/customers/{self.c3.id}/",
+            {"product_interests": [child.id]},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["product_interests"], [child.id])
+        self.assertEqual(updated.data["product_interest_details"][0]["code"], child.code)
+
+    def test_sms_group_campaign_batches_with_kavenegar_tag(self):
+        cfg = MessagingSettings.load()
+        cfg.sms_enabled = True
+        cfg.kavenegar_api_key = "TESTKEY"
+        cfg.sender = "10004346"
+        cfg.save()
+        group = MessagingContactGroup.objects.create(
+            name="گروه کمپین تست",
+            source=MessagingContactGroup.SOURCE_KAVENEGAR,
+            kavenegar_tag="campaign-test",
+            created_by=self.admin,
+        )
+        service.replace_group_members(group, customer_ids=[self.c1.id, self.c2.id])
+        self.client.force_authenticate(self.admin)
+        provider_results = [
+            SendResult(ok=True, status="sent", message_id="901", cost=100),
+            SendResult(ok=True, status="sent", message_id="902", cost=100),
+        ]
+
+        with patch("messaging.service.kavenegar.send_sms_many", return_value=provider_results) as send_many:
+            response = self.client.post(
+                "/api/messaging/send-bulk/",
+                {"group_ids": [group.id], "channel": "sms", "message": "لیست بار امروز"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["sent"], 2)
+        self.assertEqual(response.data["total"], 2)
+        send_many.assert_called_once()
+        self.assertEqual(send_many.call_args.args[1], ["09120000001", "09120000002"])
+        self.assertEqual(send_many.call_args.kwargs["tag"], "campaign-test")
+        self.assertEqual(OutboundMessage.objects.filter(status=OutboundMessage.STATUS_SENT).count(), 2)
+
+    def test_bale_group_campaign_uses_safir_for_each_unique_recipient(self):
+        from messaging.providers.safir import SendResult as SafirResult
+
+        cfg = MessagingSettings.load()
+        cfg.safir_enabled = True
+        cfg.safir_access_key = "SAFIR-TEST"
+        cfg.safir_bot_id = "123"
+        cfg.save()
+        group = MessagingContactGroup.objects.create(name="گروه بله تست", created_by=self.admin)
+        service.replace_group_members(group, customer_ids=[self.c1.id, self.c2.id])
+        self.client.force_authenticate(self.admin)
+
+        with patch(
+            "messaging.service.safir.send_message",
+            side_effect=[
+                SafirResult(ok=True, status="sent", message_id="bale-1"),
+                SafirResult(ok=True, status="sent", message_id="bale-2"),
+            ],
+        ) as send_bale:
+            response = self.client.post(
+                "/api/messaging/send-bulk/",
+                {"group_ids": [group.id], "channel": "bale", "message": "لیست بار در بله"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["sent"], 2)
+        self.assertEqual(send_bale.call_count, 2)
+        self.assertEqual(
+            OutboundMessage.objects.filter(
+                channel=OutboundMessage.CHANNEL_BALE,
+                status=OutboundMessage.STATUS_SENT,
+            ).count(),
+            2,
+        )
+
+    def test_sms_group_campaign_respects_daily_cap(self):
+        cfg = MessagingSettings.load()
+        cfg.sms_enabled = True
+        cfg.kavenegar_api_key = "TESTKEY"
+        cfg.daily_send_cap = 1
+        cfg.save()
+        OutboundMessage.objects.create(
+            channel=OutboundMessage.CHANNEL_SMS,
+            recipient="09120000009",
+            body="ارسال قبلی",
+            status=OutboundMessage.STATUS_SENT,
+        )
+        group = MessagingContactGroup.objects.create(name="گروه سقف روزانه", created_by=self.admin)
+        service.replace_group_members(group, customer_ids=[self.c1.id, self.c2.id])
+        self.client.force_authenticate(self.admin)
+
+        with patch("messaging.service.kavenegar.send_sms_many") as send_many:
+            response = self.client.post(
+                "/api/messaging/send-bulk/",
+                {"group_ids": [group.id], "channel": "sms", "message": "ارسال محدود"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["cap_limited"], 2)
+        self.assertEqual(response.data["skipped"], 2)
+        send_many.assert_not_called()
 
     def test_notify_step_records_order_status(self):
         self.client.force_authenticate(self.admin)

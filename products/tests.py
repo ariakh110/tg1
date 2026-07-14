@@ -1,7 +1,11 @@
 from django.contrib.auth import get_user_model
 from io import BytesIO
+import shutil
+import tempfile
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -21,6 +25,12 @@ from .models import (
 from .serializers import ProductSpecificationSerializer
 
 User = get_user_model()
+
+
+def make_test_category_icon(filename="category.png", image_format="PNG"):
+    content = BytesIO()
+    Image.new("RGB", (24, 24), color=(25, 95, 145)).save(content, format=image_format)
+    return SimpleUploadedFile(filename, content.getvalue(), content_type=f"image/{image_format.lower()}")
 
 
 class SellerProfileTests(APITestCase):
@@ -511,6 +521,49 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(str(tier.dimension_length_mm), "6000.00")
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
         self.assertEqual(offer.delivery_options.get().city, "مبارکه")
+
+    def test_admin_can_manage_category_visual_and_navigation_visibility(self):
+        media_root = tempfile.mkdtemp(prefix="category-icons-")
+        self.addCleanup(shutil.rmtree, media_root, True)
+        category = ProductCategory.objects.get(code="sheet")
+        self.client.force_authenticate(self.admin)
+
+        with self.settings(MEDIA_ROOT=media_root):
+            visual = self.client.patch(
+                f"/api/categories/{category.id}/",
+                {
+                    "icon_key": "sheet",
+                    "icon_image": make_test_category_icon(),
+                    "show_in_navigation": False,
+                },
+                format="multipart",
+            )
+
+            self.assertEqual(visual.status_code, status.HTTP_200_OK, visual.data)
+            self.assertEqual(visual.data["icon_key"], "sheet")
+            self.assertFalse(visual.data["show_in_navigation"])
+            self.assertIn("products/category-icons/", visual.data["icon_image"])
+            category.refresh_from_db()
+            uploaded_name = category.icon_image.name
+            self.assertTrue(category.icon_image.storage.exists(uploaded_name))
+
+            invalid = self.client.patch(
+                f"/api/categories/{category.id}/",
+                {"icon_image": make_test_category_icon("category.gif", "GIF")},
+                format="multipart",
+            )
+            self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST, invalid.data)
+            category.refresh_from_db()
+            self.assertEqual(category.icon_image.name, uploaded_name)
+
+            removed = self.client.patch(
+                f"/api/categories/{category.id}/",
+                {"icon_image": None},
+                format="json",
+            )
+            self.assertEqual(removed.status_code, status.HTTP_200_OK, removed.data)
+            self.assertIsNone(removed.data["icon_image"])
+            self.assertFalse(category.icon_image.storage.exists(uploaded_name))
 
     def test_admin_product_price_defaults_to_kilogram_when_basis_is_omitted(self):
         self.client.force_authenticate(self.admin)

@@ -42,22 +42,42 @@ def _post(api_key, method_path, params):
 
 
 def _result_from_payload(payload):
+    return _results_from_payload(payload, 1)[0]
+
+
+def _results_from_payload(payload, expected_count):
     ret = (payload or {}).get("return") or {}
     api_status = ret.get("status")
     if api_status != 200:
-        return SendResult(
-            ok=False, status="failed",
-            error=f"کاوه‌نگار (کد {api_status}): {ret.get('message') or 'بدون جزئیات'}",
-            raw=payload or {},
-        )
+        error = f"کاوه‌نگار (کد {api_status}): {ret.get('message') or 'بدون جزئیات'}"
+        return [
+            SendResult(ok=False, status="failed", error=error, raw=payload or {})
+            for _ in range(expected_count)
+        ]
     entries = (payload or {}).get("entries") or []
-    entry = entries[0] if entries else {}
-    return SendResult(
-        ok=True, status="sent",
-        message_id=str(entry.get("messageid", "")),
-        cost=entry.get("cost"),
-        raw=payload or {},
-    )
+    results = []
+    for index in range(expected_count):
+        entry = entries[index] if index < len(entries) else None
+        if entry is None:
+            results.append(
+                SendResult(
+                    ok=False,
+                    status="failed",
+                    error="کاوه‌نگار برای این گیرنده نتیجه‌ای برنگرداند.",
+                    raw=payload or {},
+                )
+            )
+            continue
+        results.append(
+            SendResult(
+                ok=True,
+                status="sent",
+                message_id=str(entry.get("messageid", "")),
+                cost=entry.get("cost"),
+                raw={"return": ret, "entry": entry},
+            )
+        )
+    return results
 
 
 def _safe_call(api_key, method_path, params):
@@ -76,9 +96,42 @@ def _safe_call(api_key, method_path, params):
     return _result_from_payload(payload)
 
 
-def send_sms(api_key, receptor, message, sender=""):
+def send_sms(api_key, receptor, message, sender="", tag=""):
     """ارسالِ متنیِ ساده (sms/send)."""
-    return _safe_call(api_key, "sms/send", {"receptor": receptor, "message": message, "sender": sender})
+    return _safe_call(
+        api_key,
+        "sms/send",
+        {"receptor": receptor, "message": message, "sender": sender, "tag": tag},
+    )
+
+
+def send_sms_many(api_key, receptors, message, sender="", tag=""):
+    """Send one text to up to 200 explicit receptors in a single Kavenegar request."""
+    receptors = [str(value).strip() for value in receptors if str(value).strip()]
+    if not receptors:
+        return []
+    if len(receptors) > 200:
+        error = "حداکثر ۲۰۰ گیرنده در هر درخواست کاوه‌نگار مجاز است."
+        return [SendResult(ok=False, status="failed", error=error) for _ in receptors]
+    try:
+        payload = _post(
+            api_key,
+            "sms/send",
+            {"receptor": ",".join(receptors), "message": message, "sender": sender, "tag": tag},
+        )
+    except HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8", "replace"))
+            return _results_from_payload(payload, len(receptors))
+        except Exception:  # noqa: BLE001
+            error = f"خطای HTTP {exc.code} از کاوه‌نگار."
+    except (URLError, TimeoutError) as exc:
+        error = f"ارتباط با کاوه‌نگار برقرار نشد: {getattr(exc, 'reason', exc)}"
+    except Exception as exc:  # noqa: BLE001
+        error = f"ارسال ناموفق بود: {type(exc).__name__}: {exc}"
+    else:
+        return _results_from_payload(payload, len(receptors))
+    return [SendResult(ok=False, status="failed", error=error) for _ in receptors]
 
 
 def send_lookup(api_key, receptor, template, token, token2="", token3=""):

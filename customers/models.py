@@ -72,6 +72,12 @@ class Customer(models.Model):
     province = models.CharField(max_length=100, blank=True, default="", verbose_name="استان")
     note = models.TextField(blank=True, default="", verbose_name="یادداشت")
     extra_phones = models.JSONField(default=list, blank=True, verbose_name="شماره‌های دیگر")
+    product_interests = models.ManyToManyField(
+        "products.ProductCategory",
+        blank=True,
+        related_name="crm_consumers",
+        verbose_name="دسته‌های محصول مصرفی",
+    )
     stage = models.CharField(
         max_length=12,
         choices=STAGE_CHOICES,

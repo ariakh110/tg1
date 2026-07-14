@@ -36,6 +36,7 @@ class CustomerAdmin(admin.ModelAdmin):
     list_display = ("name", "phone", "company", "city", "stage", "source", "balance_display", "is_active", "updated_at")
     list_filter = ("stage", "source", "is_active", "province", "city")
     search_fields = ("name", "phone", "company")
+    filter_horizontal = ("product_interests",)
     inlines = [CrmOpportunityInline, CustomerActivityInline, CustomerTransactionInline]
 
     @admin.display(description="مانده (تومان)")

@@ -1,5 +1,8 @@
+import re
+
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
+from django.db.models import Count
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -10,10 +13,18 @@ from accounts.permissions import IsAdminOrActiveAdminRole, IsFullAdminUser
 from customers.models import Customer
 
 from . import service
-from .models import BaleUserBinding, MessagingSettings, OutboundMessage
-from .serializers import BaleUserBindingSerializer, MessagingSettingsSerializer, OutboundMessageSerializer
+from .models import BaleUserBinding, MessagingContactGroup, MessagingSettings, OutboundMessage
+from .serializers import (
+    BaleUserBindingSerializer,
+    MessagingContactGroupDetailSerializer,
+    MessagingContactGroupSerializer,
+    MessagingSettingsSerializer,
+    OutboundMessageSerializer,
+)
 
 MAX_BODY_LEN = 900  # سقفِ کاوه‌نگار برای کلِ متنِ پیامک
+MAX_SMS_CAMPAIGN_RECIPIENTS = 2000
+MAX_BALE_CAMPAIGN_RECIPIENTS = 200
 
 # نگاشتِ کدِ عددیِ وضعیتِ کاوه‌نگار به وضعیتِ داخلیِ ما (جدولِ وضعیتِ پیامک‌ها).
 KAVENEGAR_STATUS_MAP = {
@@ -71,6 +82,8 @@ class MessagingSendView(APIView):
             return Response({"detail": "گیرنده (customer_id یا recipient) لازم است."}, status=status.HTTP_400_BAD_REQUEST)
 
         channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
+            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
         if channel == OutboundMessage.CHANNEL_BALE:
             msg = service.send_bale(recipient, message, customer=customer, created_by=request.user)
         else:
@@ -78,8 +91,26 @@ class MessagingSendView(APIView):
         return Response(OutboundMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
 
 
+class MessagingAudiencePreviewView(APIView):
+    """Resolve a campaign audience without sending or creating outbound logs."""
+
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "messaging"
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        audience = service.resolve_audience(data)
+        if not audience["selector_count"]:
+            return Response(
+                {"detail": "حداقل یک مشتری، گروه، دسته محصول یا فیلتر مخاطب انتخاب کنید."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        audience.pop("recipients", None)
+        return Response(audience)
+
+
 class MessagingBulkSendView(APIView):
-    """ارسالِ یک متن به یک سگمنت از مشتریان: با customer_ids یا فیلترِ stage/source/is_active — فقط ادمین."""
+    """Send one confirmed campaign to resolved customer/group/product audiences."""
 
     permission_classes = [IsAdminOrActiveAdminRole]
     admin_section = "messaging"
@@ -90,22 +121,100 @@ class MessagingBulkSendView(APIView):
         if not message:
             return Response({"detail": "متنِ پیام خالی است."}, status=status.HTTP_400_BAD_REQUEST)
 
-        ids = data.get("customer_ids") or []
-        if ids:
-            qs = Customer.objects.filter(pk__in=ids)
-        else:
-            qs = Customer.objects.filter(is_active=True)
-            for f in ("stage", "source"):
-                if data.get(f):
-                    qs = qs.filter(**{f: data[f]})
-        qs = qs.exclude(phone="")
-        if not qs.exists():
+        audience = service.resolve_audience(data)
+        if not audience["selector_count"]:
+            return Response(
+                {"detail": "حداقل یک مشتری، گروه، دسته محصول یا فیلتر مخاطب انتخاب کنید."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not audience["valid_count"]:
             return Response({"detail": "هیچ مشتریِ منطبقی یافت نشد."}, status=status.HTTP_400_BAD_REQUEST)
 
         channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
-        summary = service.send_bulk(qs, message, channel=channel, created_by=request.user)
+        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
+            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+        campaign_limit = (
+            MAX_BALE_CAMPAIGN_RECIPIENTS
+            if channel == OutboundMessage.CHANNEL_BALE
+            else MAX_SMS_CAMPAIGN_RECIPIENTS
+        )
+        if audience["valid_count"] > campaign_limit:
+            return Response(
+                {
+                    "detail": f"تعداد گیرندگان از سقف این ارسال ({campaign_limit}) بیشتر است.",
+                    "valid_count": audience["valid_count"],
+                    "limit": campaign_limit,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tag = str(data.get("kavenegar_tag") or "").strip()
+        if not tag:
+            group_ids = data.get("group_ids") or []
+            group_tags = list(
+                MessagingContactGroup.objects.filter(pk__in=group_ids, is_active=True)
+                .exclude(kavenegar_tag="")
+                .values_list("kavenegar_tag", flat=True)
+                .distinct()
+            )
+            if len(group_tags) == 1:
+                tag = group_tags[0]
+        if tag and not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", tag):
+            return Response(
+                {"detail": "تگ کاوه‌نگار فقط می‌تواند شامل حروف انگلیسی، عدد، خط تیره و زیرخط باشد."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        summary = service.send_bulk_recipients(
+            audience["recipients"],
+            message,
+            channel=channel,
+            created_by=request.user,
+            tag=tag,
+        )
         summary.pop("messages", None)  # خلاصه برگردان، نه همهٔ ردیف‌ها
+        summary["audience"] = {
+            key: audience[key]
+            for key in ("valid_count", "invalid_count", "duplicate_count", "source_counts")
+        }
         return Response(summary, status=status.HTTP_201_CREATED)
+
+
+class MessagingContactGroupViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_section = "messaging"
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["source", "is_active"]
+
+    def get_queryset(self):
+        return MessagingContactGroup.objects.annotate(_member_count=Count("members", distinct=True)).prefetch_related(
+            "members__customer"
+        )
+
+    def get_serializer_class(self):
+        if self.action in ("retrieve", "replace_members"):
+            return MessagingContactGroupDetailSerializer
+        return MessagingContactGroupSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="replace-members")
+    def replace_members(self, request, pk=None):
+        group = self.get_object()
+        data = request.data if isinstance(request.data, dict) else {}
+        summary = service.replace_group_members(
+            group,
+            customer_ids=data.get("customer_ids") or [],
+            phones=data.get("phones") or [],
+        )
+        group.refresh_from_db()
+        return Response(
+            {
+                "group": MessagingContactGroupDetailSerializer(group, context={"request": request}).data,
+                "import_summary": summary,
+            }
+        )
 
 
 class MessagingNotifyStepView(APIView):

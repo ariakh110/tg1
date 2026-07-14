@@ -39,9 +39,18 @@ class DeliveryLocationInline(admin.TabularInline):
 # ---------- دسته‌بندی ----------
 @admin.register(ProductCategory)
 class ProductCategoryAdmin(admin.ModelAdmin):
-    list_display = ("name", "parent", "code", "product_kind", "sort_order", "is_active")
+    list_display = (
+        "name",
+        "parent",
+        "code",
+        "product_kind",
+        "icon_key",
+        "show_in_navigation",
+        "sort_order",
+        "is_active",
+    )
     search_fields = ("name", "hscode", "code")
-    list_filter = ("parent", "product_kind", "is_active")
+    list_filter = ("parent", "product_kind", "show_in_navigation", "is_active")
 
 
 # ---------- محصول ----------

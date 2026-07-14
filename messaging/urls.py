@@ -8,6 +8,8 @@ from .views import (
     KavenegarIncomingWebhook,
     KavenegarStatusWebhook,
     MessagingBulkSendView,
+    MessagingAudiencePreviewView,
+    MessagingContactGroupViewSet,
     MessagingNotifyStepView,
     MessagingSendView,
     MessagingSettingsView,
@@ -18,6 +20,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r"messages", OutboundMessageViewSet, basename="outbound-message")
 router.register(r"bale-bindings", BaleUserBindingViewSet, basename="bale-user-binding")
+router.register(r"groups", MessagingContactGroupViewSet, basename="messaging-contact-group")
 
 app_name = "messaging"
 
@@ -25,6 +28,7 @@ urlpatterns = [
     path("settings/", MessagingSettingsView.as_view(), name="settings"),
     path("send/", MessagingSendView.as_view(), name="send"),
     path("send-bulk/", MessagingBulkSendView.as_view(), name="send-bulk"),
+    path("audience-preview/", MessagingAudiencePreviewView.as_view(), name="audience-preview"),
     path("notify-step/", MessagingNotifyStepView.as_view(), name="notify-step"),
     path("test-alert/", MessagingTestAlertView.as_view(), name="test-alert"),
     # ربات دوطرفهٔ بله

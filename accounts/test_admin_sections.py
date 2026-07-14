@@ -31,7 +31,7 @@ class MarketerSectionAccessTests(APITestCase):
     def test_marketer_sections_are_limited(self):
         self.assertEqual(
             effective_admin_sections(self.marketer),
-            {"crm", "crm-followups", "crm-funnel", "assistant", "direct-sales"},
+            {"crm", "crm-followups", "crm-funnel", "messaging", "assistant", "direct-sales"},
         )
 
     def test_inactive_marketer_has_no_sections(self):
@@ -50,7 +50,7 @@ class MarketerSectionAccessTests(APITestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(
             res.data["admin_sections"],
-            ["direct-sales", "crm", "crm-followups", "crm-funnel", "assistant"],
+            ["direct-sales", "crm", "crm-followups", "crm-funnel", "messaging", "assistant"],
         )
 
     # --- allowed sections work ---
@@ -59,6 +59,7 @@ class MarketerSectionAccessTests(APITestCase):
         self.assertEqual(self.client.get("/api/crm/customers/").status_code, 200)
         self.assertEqual(self.client.get("/api/crm/customers/funnel/").status_code, 200)
         self.assertEqual(self.client.get("/api/crm/activities/follow_ups/").status_code, 200)
+        self.assertEqual(self.client.get("/api/messaging/groups/").status_code, 200)
 
     def test_marketer_can_access_assistant(self):
         self.client.force_authenticate(self.marketer)

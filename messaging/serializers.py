@@ -1,8 +1,16 @@
+import re
+
 from rest_framework import serializers
 
 from accounts.admin_sections import ALL, effective_admin_sections
 
-from .models import BaleUserBinding, MessagingSettings, OutboundMessage
+from .models import (
+    BaleUserBinding,
+    MessagingContactGroup,
+    MessagingContactGroupMember,
+    MessagingSettings,
+    OutboundMessage,
+)
 
 
 class MessagingSettingsSerializer(serializers.ModelSerializer):
@@ -72,6 +80,61 @@ class OutboundMessageSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         )
         read_only_fields = fields
+
+
+class MessagingContactGroupMemberSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default="")
+
+    class Meta:
+        model = MessagingContactGroupMember
+        fields = ("id", "customer", "customer_name", "phone", "name", "created_at")
+        read_only_fields = fields
+
+
+class MessagingContactGroupSerializer(serializers.ModelSerializer):
+    source_display = serializers.CharField(source="get_source_display", read_only=True)
+    member_count = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MessagingContactGroup
+        fields = (
+            "id",
+            "name",
+            "source",
+            "source_display",
+            "kavenegar_tag",
+            "description",
+            "is_active",
+            "member_count",
+            "created_by_name",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "source_display", "member_count", "created_by_name", "created_at", "updated_at")
+
+    def get_member_count(self, obj):
+        annotated = getattr(obj, "_member_count", None)
+        return annotated if annotated is not None else obj.members.count()
+
+    def get_created_by_name(self, obj):
+        user = obj.created_by
+        if not user:
+            return ""
+        return (user.get_full_name() or "").strip() or user.get_username()
+
+    def validate_kavenegar_tag(self, value):
+        value = str(value or "").strip()
+        if value and not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value):
+            raise serializers.ValidationError("تگ کاوه‌نگار فقط می‌تواند شامل حروف انگلیسی، عدد، خط تیره و زیرخط باشد.")
+        return value
+
+
+class MessagingContactGroupDetailSerializer(MessagingContactGroupSerializer):
+    members = MessagingContactGroupMemberSerializer(many=True, read_only=True)
+
+    class Meta(MessagingContactGroupSerializer.Meta):
+        fields = MessagingContactGroupSerializer.Meta.fields + ("members",)
 
 
 class BaleUserBindingSerializer(serializers.ModelSerializer):

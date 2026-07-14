@@ -77,6 +77,23 @@ class Seller(models.Model):
 
 # ----------- دسته‌بندی سلسله مراتبی -----------
 class ProductCategory(MPTTModel):
+    ICON_CHOICES = [
+        ("layers", "Layers"),
+        ("sheet", "Sheet"),
+        ("rebar", "Rebar"),
+        ("beam", "Beam"),
+        ("pipe", "Pipe"),
+        ("profile", "Profile"),
+        ("billet", "Billet"),
+        ("coil", "Coil"),
+        ("ore", "Ore"),
+        ("scrap", "Scrap"),
+        ("recycle", "Recycle"),
+        ("factory", "Factory"),
+        ("cubes", "Cubes"),
+        ("package", "Package"),
+    ]
+
     name = models.CharField(max_length=255, unique=True)
     parent = TreeForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     hscode = models.CharField(max_length=20, unique=True, null=True, blank=True)
@@ -84,6 +101,9 @@ class ProductCategory(MPTTModel):
     product_kind = models.CharField(max_length=50, blank=True, default="")
     spec_defaults = models.JSONField(default=dict, blank=True)
     required_spec_fields = models.JSONField(default=list, blank=True)
+    icon_key = models.CharField(max_length=32, choices=ICON_CHOICES, blank=True, default="")
+    icon_image = models.ImageField(upload_to="products/category-icons/", null=True, blank=True)
+    show_in_navigation = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 

@@ -14,6 +14,9 @@ from .models import (
 # Category
 # -------------------------
 class ProductCategorySerializer(serializers.ModelSerializer):
+    MAX_ICON_IMAGE_SIZE = 2 * 1024 * 1024
+    ALLOWED_ICON_FORMATS = {"JPEG", "PNG", "WEBP"}
+
     children_count = serializers.SerializerMethodField()
     level = serializers.IntegerField(read_only=True)
     full_path = serializers.SerializerMethodField()
@@ -37,6 +40,9 @@ class ProductCategorySerializer(serializers.ModelSerializer):
             "merged_spec_defaults",
             "required_spec_fields",
             "merged_required_spec_fields",
+            "icon_key",
+            "icon_image",
+            "show_in_navigation",
             "sort_order",
             "is_active",
             "level",
@@ -72,6 +78,24 @@ class ProductCategorySerializer(serializers.ModelSerializer):
 
     def get_merged_required_spec_fields(self, obj):
         return obj.merged_required_spec_fields()
+
+    def validate_icon_image(self, value):
+        if value is None:
+            return value
+        if value.size > self.MAX_ICON_IMAGE_SIZE:
+            raise serializers.ValidationError("حجم تصویر دسته نباید بیشتر از ۲ مگابایت باشد.")
+        image_format = str(getattr(getattr(value, "image", None), "format", "") or "").upper()
+        if image_format not in self.ALLOWED_ICON_FORMATS:
+            raise serializers.ValidationError("فرمت تصویر دسته باید PNG، JPEG یا WebP باشد.")
+        return value
+
+    def update(self, instance, validated_data):
+        image_was_supplied = "icon_image" in validated_data
+        old_image = instance.icon_image if image_was_supplied else None
+        category = super().update(instance, validated_data)
+        if old_image and old_image.name != getattr(category.icon_image, "name", ""):
+            old_image.delete(save=False)
+        return category
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
