@@ -14,4 +14,3 @@ The landing editor reads product families from a hard-coded six-item frontend li
 - Affected specs: `product-seo`
 - Backend schema/API: no change; the existing `/api/categories/` endpoint remains the source of truth.
 - Frontend: landing admin data loading, category route validation/title resolution, landing route validation/title resolution, and sitemap family discovery.
-

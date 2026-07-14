@@ -18,4 +18,3 @@ Product taxonomy is editable at runtime, but cluster landings were originally bu
 
 ## Migration Plan
 No database migration is required. Deploy the frontend archive after the documented checks pass.
-

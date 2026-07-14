@@ -26,4 +26,3 @@ Make product taxonomy the operational source of truth for cluster landing famili
 - Automatic landing generation from taxonomy records.
 - Changing the landing database relation from a string family code to a foreign key.
 - Treating every taxonomy child as a separate family URL.
-

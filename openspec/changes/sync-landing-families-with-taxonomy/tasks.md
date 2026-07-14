@@ -14,4 +14,4 @@
 - [x] 3.1 Run targeted lint and production build
 - [x] 3.2 Validate responsive/admin behavior and public dynamic routes
 - [x] 3.3 Validate this OpenSpec change in strict mode
-- [ ] 3.4 Commit, pull/push, and rebuild manual deploy archives
+- [x] 3.4 Commit, pull/push, and rebuild manual deploy archives

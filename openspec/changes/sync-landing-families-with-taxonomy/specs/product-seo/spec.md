@@ -18,4 +18,3 @@ Admins SHALL create keyword cluster landing pages through the admin panel. The f
 #### Scenario: Existing legacy landing remains editable
 - **WHEN** an existing landing references a family that is no longer in the active taxonomy options
 - **THEN** the editor retains that current family value while editing instead of silently replacing it
-
