@@ -30,5 +30,5 @@
 
 ## 6. Delivery
 - [x] 6.1 Run Django checks, migration checks, targeted/full tests, frontend lint/build, and strict OpenSpec validation
-- [ ] 6.2 Commit scoped backend/frontend changes, pull/rebase safely, and push both branches
-- [ ] 6.3 Rebuild `deploy/backend.tar.gz` and `deploy/frontend.tar.gz` with checksums for manual upload
+- [x] 6.2 Commit scoped backend/frontend changes, pull/rebase safely, and push both branches
+- [x] 6.3 Rebuild `deploy/backend.tar.gz` and `deploy/frontend.tar.gz` with checksums for manual upload
