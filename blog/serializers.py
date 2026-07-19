@@ -10,6 +10,21 @@ from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, Homepage
 from .seo import analyze_post, build_article_schema, snapshot_post
 
 
+MAX_BLOG_IMAGE_SIZE = 5 * 1024 * 1024
+ALLOWED_BLOG_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
+
+
+def validate_blog_image(value, label="تصویر"):
+    if value is None:
+        return value
+    if value.size > MAX_BLOG_IMAGE_SIZE:
+        raise serializers.ValidationError(f"حجم {label} نباید بیشتر از ۵ مگابایت باشد.")
+    image_format = str(getattr(getattr(value, "image", None), "format", "") or "").upper()
+    if image_format not in ALLOWED_BLOG_IMAGE_FORMATS:
+        raise serializers.ValidationError(f"فرمت {label} باید PNG، JPEG یا WebP باشد.")
+    return value
+
+
 ALLOWED_CONTENT_TAGS = [
     "a",
     "blockquote",
@@ -266,6 +281,12 @@ class AdminPostSerializer(serializers.ModelSerializer):
         except ValueError as exc:
             raise serializers.ValidationError(str(exc)) from exc
 
+    def validate_thumbnail(self, value):
+        return validate_blog_image(value, "تصویر اصلی مطلب")
+
+    def validate_og_image(self, value):
+        return validate_blog_image(value, "تصویر شبکه‌های اجتماعی")
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         if 'content_blocks' in attrs:
@@ -276,6 +297,10 @@ class AdminPostSerializer(serializers.ModelSerializer):
         scheduled_at = attrs.get('scheduled_at', getattr(self.instance, 'scheduled_at', None))
         if status == 'scheduled' and not scheduled_at:
             raise serializers.ValidationError({'scheduled_at': 'برای انتشار زمان‌بندی‌شده، تاریخ انتشار الزامی است.'})
+        if 'thumbnail' in attrs and attrs['thumbnail']:
+            thumbnail_alt = attrs.get('thumbnail_alt', getattr(self.instance, 'thumbnail_alt', ''))
+            if not str(thumbnail_alt or '').strip():
+                raise serializers.ValidationError({'thumbnail_alt': 'متن جایگزین تصویر اصلی الزامی است.'})
         return attrs
 
     def _unique_slug(self, title, requested_slug=''):
@@ -307,6 +332,10 @@ class AdminPostSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context['request']
         PostRevision.objects.create(post=instance, snapshot=snapshot_post(instance), created_by=request.user)
+        old_images = {
+            field: getattr(instance, field) if field in validated_data else None
+            for field in ('thumbnail', 'og_image')
+        }
         old_slug = instance.slug
         if 'slug' in validated_data or 'title' in validated_data:
             validated_data['slug'] = self._unique_slug(
@@ -316,6 +345,10 @@ class AdminPostSerializer(serializers.ModelSerializer):
         post = super().update(instance, validated_data)
         if old_slug != post.slug:
             SlugRedirect.objects.update_or_create(old_slug=old_slug, defaults={'post': post})
+        for field, old_image in old_images.items():
+            new_image = getattr(post, field)
+            if old_image and old_image.name != getattr(new_image, 'name', ''):
+                old_image.delete(save=False)
         return self._update_score(post)
 
 
@@ -334,6 +367,16 @@ class MediaAssetSerializer(serializers.ModelSerializer):
         model = MediaAsset
         fields = ['id', 'file', 'alt_text', 'title', 'caption', 'uploaded_by', 'created_at']
         read_only_fields = ['uploaded_by', 'created_at']
+
+    def validate_file(self, value):
+        return validate_blog_image(value, "تصویر داخل محتوا")
+
+    def update(self, instance, validated_data):
+        old_file = instance.file if 'file' in validated_data else None
+        asset = super().update(instance, validated_data)
+        if old_file and old_file.name != getattr(asset.file, 'name', ''):
+            old_file.delete(save=False)
+        return asset
 
 
 class HomepageSlideSerializer(serializers.ModelSerializer):
@@ -393,5 +436,4 @@ class SiteSEOSettingsSerializer(serializers.ModelSerializer):
         model = SiteSEOSettings
         fields = ['robots_txt', 'updated_at']
         read_only_fields = ['updated_at']
-
 

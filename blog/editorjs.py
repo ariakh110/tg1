@@ -64,7 +64,7 @@ def render_editor_data(value):
             if not url:
                 continue
             caption = str(block_data.get("caption", ""))
-            alt = escape(str(block_data.get("alt") or caption), quote=True)
+            alt = escape(str(block_data.get("alt") or caption or file_data.get("alt") or ""), quote=True)
             footer = f"<figcaption>{caption}</figcaption>" if caption else ""
             rendered.append(f'<figure><img src="{url}" alt="{alt}">{footer}</figure>')
     return "\n".join(rendered)

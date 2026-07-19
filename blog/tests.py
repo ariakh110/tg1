@@ -1,6 +1,7 @@
 import math
 import shutil
 import tempfile
+from io import BytesIO
 from urllib.parse import quote
 from unittest.mock import patch
 
@@ -8,11 +9,19 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from PIL import Image
 from rest_framework.test import APIClient
 
-from .models import Category, Post, SiteSEOSettings
+from .models import Category, MediaAsset, Post, SiteSEOSettings
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp()
+
+
+def make_test_blog_image(filename="article.png", image_format="PNG", padding=0):
+    content = BytesIO()
+    Image.new("RGB", (32, 18), color=(31, 78, 121)).save(content, format=image_format)
+    payload = content.getvalue() + (b"\0" * padding)
+    return SimpleUploadedFile(filename, payload, content_type=f"image/{image_format.lower()}")
 
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
@@ -230,6 +239,112 @@ class BlogAPITests(TestCase):
         self.assertIn("<h1>عنوان خبر</h1>", post.content)
         self.assertNotIn("<script", post.content)
         self.assertEqual(post.content_blocks["blocks"][0]["type"], "header")
+
+    def test_admin_editor_preserves_inline_image_position_and_fallback_alt(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/posts/",
+            {
+                "title": "مطلب تصویری",
+                "content_blocks": {
+                    "blocks": [
+                        {"type": "paragraph", "data": {"text": "متن قبل تصویر"}},
+                        {
+                            "type": "image",
+                            "data": {
+                                "file": {"url": "https://example.com/media/blog/media/article.webp", "alt": "تصویر ورق فولادی"},
+                                "caption": "",
+                            },
+                        },
+                        {"type": "paragraph", "data": {"text": "متن بعد تصویر"}},
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        content = Post.objects.get(pk=response.data["id"]).content
+        before_index = content.index("متن قبل تصویر")
+        image_index = content.index("<figure>")
+        after_index = content.index("متن بعد تصویر")
+        self.assertLess(before_index, image_index)
+        self.assertLess(image_index, after_index)
+        self.assertIn('alt="تصویر ورق فولادی"', content)
+
+    def test_admin_can_upload_replace_and_remove_featured_image(self):
+        post = self.make_post(slug="featured-image")
+        old_name = post.thumbnail.name
+        storage = post.thumbnail.storage
+        self.client.force_authenticate(self.admin)
+
+        uploaded = self.client.patch(
+            f"/api/blog/admin/posts/{post.id}/",
+            {
+                "thumbnail": make_test_blog_image(),
+                "thumbnail_alt": "تصویر اصلی بازار فولاد",
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(uploaded.status_code, 200, uploaded.data)
+        post.refresh_from_db()
+        uploaded_name = post.thumbnail.name
+        self.assertNotEqual(uploaded_name, old_name)
+        self.assertFalse(storage.exists(old_name))
+        self.assertTrue(storage.exists(uploaded_name))
+        self.assertEqual(post.thumbnail_alt, "تصویر اصلی بازار فولاد")
+
+        rejected = self.client.patch(
+            f"/api/blog/admin/posts/{post.id}/",
+            {
+                "thumbnail": make_test_blog_image("unsafe.gif", "GIF"),
+                "thumbnail_alt": "تصویر نامعتبر",
+            },
+            format="multipart",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        post.refresh_from_db()
+        self.assertEqual(post.thumbnail.name, uploaded_name)
+
+        removed = self.client.patch(
+            f"/api/blog/admin/posts/{post.id}/",
+            {"thumbnail": None},
+            format="json",
+        )
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertIsNone(removed.data["thumbnail"])
+        self.assertFalse(storage.exists(uploaded_name))
+
+    def test_admin_media_upload_validates_format_and_size(self):
+        self.client.force_authenticate(self.admin)
+
+        uploaded = self.client.post(
+            "/api/blog/admin/media/",
+            {"file": make_test_blog_image("inline.webp", "WEBP"), "alt_text": "تصویر داخل مطلب"},
+            format="multipart",
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.data)
+        self.assertEqual(MediaAsset.objects.count(), 1)
+
+        invalid_format = self.client.post(
+            "/api/blog/admin/media/",
+            {"file": make_test_blog_image("inline.gif", "GIF"), "alt_text": "تصویر نامعتبر"},
+            format="multipart",
+        )
+        self.assertEqual(invalid_format.status_code, 400, invalid_format.data)
+
+        oversized = self.client.post(
+            "/api/blog/admin/media/",
+            {
+                "file": make_test_blog_image("large.png", padding=(5 * 1024 * 1024)),
+                "alt_text": "تصویر بزرگ",
+            },
+            format="multipart",
+        )
+        self.assertEqual(oversized.status_code, 400, oversized.data)
+        self.assertEqual(MediaAsset.objects.count(), 1)
 
     @override_settings(OPENAI_API_KEY="")
     def test_ai_suggestions_endpoint_reports_missing_api_key_in_persian(self):
