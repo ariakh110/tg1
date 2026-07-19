@@ -30,4 +30,4 @@
 - [x] 5.2 Keep a successful image replacement successful when cleanup of the obsolete file fails.
 - [x] 5.3 Exclude runtime media from source archives and prepare writable media directories during deployment.
 - [x] 5.4 Show a useful Persian error when a proxy or server returns a non-JSON 5xx response.
-- [ ] 5.5 Run regression checks, synchronize GitHub, and rebuild the manual deployment archives.
+- [x] 5.5 Run regression checks, synchronize GitHub, and rebuild the manual deployment archives.
