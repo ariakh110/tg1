@@ -20,7 +20,14 @@ The browser performs an early type/size check for usability. DRF serializers enf
 
 Post revisions continue to cover article text and metadata. Historical image binaries are not copied into revision snapshots; replacing or removing a featured image is therefore an explicit media operation outside revision restore.
 
+### Runtime media is deployment state
+
+The backend source archive excludes `media/`. The deployment updater preserves that directory, detects the systemd service user, creates the blog image subdirectories, restores ownership and write permissions, and verifies that the service user can write before restarting the backend. This prevents a root-owned source extraction from turning valid uploads into production 500 responses.
+
+Storage write failures are translated to a JSON `503` response and the database update is rolled back. Failure to delete an obsolete image after a successful replacement is logged for later cleanup but does not turn the completed replacement into a failed request.
+
 ## Risks
 
 - An author who has not selected an Editor.js block will get end-of-document insertion; the UI reports the actual placement.
 - Existing image URLs remain valid and need no data migration.
+- The media preparation script must run with permission to change ownership; the existing updater runs as root and satisfies that requirement.

@@ -23,3 +23,11 @@
 - [x] 4.2 Verify the editor workflow in desktop and mobile browser views.
 - [x] 4.3 Commit, synchronize, and push both repositories.
 - [x] 4.4 Refresh the manual-deployment archives.
+
+## 5. Production Upload Hotfix
+
+- [x] 5.1 Return structured JSON and roll back article changes when media storage is not writable.
+- [x] 5.2 Keep a successful image replacement successful when cleanup of the obsolete file fails.
+- [x] 5.3 Exclude runtime media from source archives and prepare writable media directories during deployment.
+- [x] 5.4 Show a useful Persian error when a proxy or server returns a non-JSON 5xx response.
+- [ ] 5.5 Run regression checks, synchronize GitHub, and rebuild the manual deployment archives.

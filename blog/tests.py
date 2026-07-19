@@ -317,6 +317,50 @@ class BlogAPITests(TestCase):
         self.assertIsNone(removed.data["thumbnail"])
         self.assertFalse(storage.exists(uploaded_name))
 
+    def test_featured_image_storage_failure_returns_json_and_rolls_back(self):
+        post = self.make_post(slug="featured-storage-failure")
+        original_name = post.thumbnail.name
+        self.client.force_authenticate(self.admin)
+
+        with patch(
+            "django.core.files.storage.FileSystemStorage.save",
+            side_effect=PermissionError("read-only media directory"),
+        ):
+            response = self.client.patch(
+                f"/api/blog/admin/posts/{post.id}/",
+                {
+                    "thumbnail": make_test_blog_image(),
+                    "thumbnail_alt": "تصویر اصلی بازار فولاد",
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 503, response.data)
+        self.assertIn("ذخیره تصویر", str(response.data["detail"]))
+        post.refresh_from_db()
+        self.assertEqual(post.thumbnail.name, original_name)
+        self.assertEqual(post.revisions.count(), 0)
+
+    def test_featured_image_success_is_not_lost_when_old_file_cleanup_fails(self):
+        post = self.make_post(slug="featured-cleanup-failure")
+        storage = post.thumbnail.storage
+        self.client.force_authenticate(self.admin)
+
+        with patch.object(storage, "delete", side_effect=PermissionError("cannot delete old file")):
+            response = self.client.patch(
+                f"/api/blog/admin/posts/{post.id}/",
+                {
+                    "thumbnail": make_test_blog_image("replacement.webp", "WEBP"),
+                    "thumbnail_alt": "تصویر جایگزین بازار فولاد",
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        post.refresh_from_db()
+        self.assertTrue(post.thumbnail.name.endswith(".webp"))
+        self.assertEqual(post.thumbnail_alt, "تصویر جایگزین بازار فولاد")
+
     def test_admin_media_upload_validates_format_and_size(self):
         self.client.force_authenticate(self.admin)
 

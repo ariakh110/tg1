@@ -18,3 +18,11 @@ The system SHALL use Editor.js blocks as the admin authoring format while retain
 #### Scenario: Author submits an unsafe or oversized blog image
 - **WHEN** an author submits a blog image that is larger than 5 MB or is not a verified PNG, JPEG, or WebP file
 - **THEN** the API SHALL reject the upload without changing the existing featured image or article content.
+
+#### Scenario: Production media storage is prepared during deployment
+- **WHEN** a backend source package is applied to production
+- **THEN** runtime media SHALL be preserved outside the source archive and the article image directories SHALL be writable by the backend service account before it restarts.
+
+#### Scenario: Media storage is temporarily unavailable
+- **WHEN** an otherwise valid image cannot be written to media storage
+- **THEN** the API SHALL return a structured service-unavailable response and SHALL leave the existing article image and revision history unchanged.

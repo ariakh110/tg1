@@ -1,9 +1,13 @@
 
+import logging
+
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.utils.text import slugify
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
 from rest_framework import serializers
+from rest_framework.exceptions import APIException
 
 from .editorjs import normalize_editor_data, render_editor_data
 from .models import Category, FAQItem, FeaturedLoad, FeaturedLoadAlert, HomepageSlide, Landing, MediaAsset, Post, PostRevision, SiteSEOSettings, SlugRedirect
@@ -12,6 +16,13 @@ from .seo import analyze_post, build_article_schema, snapshot_post
 
 MAX_BLOG_IMAGE_SIZE = 5 * 1024 * 1024
 ALLOWED_BLOG_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
+logger = logging.getLogger(__name__)
+
+
+class MediaStorageUnavailable(APIException):
+    status_code = 503
+    default_detail = "ذخیره تصویر روی سرور ممکن نشد. لطفاً مجوز پوشه رسانه را بررسی و دوباره تلاش کنید."
+    default_code = "media_storage_unavailable"
 
 
 def validate_blog_image(value, label="تصویر"):
@@ -326,30 +337,59 @@ class AdminPostSerializer(serializers.ModelSerializer):
         request = self.context['request']
         validated_data['author'] = request.user
         validated_data['slug'] = self._unique_slug(validated_data.get('title', ''), validated_data.get('slug', ''))
-        post = super().create(validated_data)
-        return self._update_score(post)
+        try:
+            with transaction.atomic():
+                post = super().create(validated_data)
+                return self._update_score(post)
+        except OSError as exc:
+            logger.exception("Could not store a blog image while creating a post")
+            raise MediaStorageUnavailable() from exc
 
     def update(self, instance, validated_data):
         request = self.context['request']
-        PostRevision.objects.create(post=instance, snapshot=snapshot_post(instance), created_by=request.user)
-        old_images = {
-            field: getattr(instance, field) if field in validated_data else None
-            for field in ('thumbnail', 'og_image')
-        }
-        old_slug = instance.slug
-        if 'slug' in validated_data or 'title' in validated_data:
-            validated_data['slug'] = self._unique_slug(
-                validated_data.get('title', instance.title),
-                validated_data.get('slug', instance.slug),
+        old_images = {}
+        for field in ('thumbnail', 'og_image'):
+            old_image = getattr(instance, field) if field in validated_data else None
+            old_images[field] = (
+                (old_image.storage, old_image.name)
+                if old_image and old_image.name
+                else None
             )
-        post = super().update(instance, validated_data)
-        if old_slug != post.slug:
-            SlugRedirect.objects.update_or_create(old_slug=old_slug, defaults={'post': post})
+        old_slug = instance.slug
+        try:
+            with transaction.atomic():
+                PostRevision.objects.create(post=instance, snapshot=snapshot_post(instance), created_by=request.user)
+                if 'slug' in validated_data or 'title' in validated_data:
+                    validated_data['slug'] = self._unique_slug(
+                        validated_data.get('title', instance.title),
+                        validated_data.get('slug', instance.slug),
+                    )
+                post = super().update(instance, validated_data)
+                if old_slug != post.slug:
+                    SlugRedirect.objects.update_or_create(old_slug=old_slug, defaults={'post': post})
+                post = self._update_score(post)
+        except OSError as exc:
+            logger.exception("Could not store a blog image while updating post %s", instance.pk)
+            raise MediaStorageUnavailable() from exc
+
         for field, old_image in old_images.items():
-            new_image = getattr(post, field)
-            if old_image and old_image.name != getattr(new_image, 'name', ''):
-                old_image.delete(save=False)
-        return self._update_score(post)
+            if not old_image:
+                continue
+            storage, old_name = old_image
+            new_name = getattr(getattr(post, field), 'name', '')
+            if old_name == new_name:
+                continue
+            try:
+                storage.delete(old_name)
+            except OSError:
+                logger.warning(
+                    "Post %s was updated, but old %s file %s could not be removed",
+                    post.pk,
+                    field,
+                    old_name,
+                    exc_info=True,
+                )
+        return post
 
 
 class PostRevisionSerializer(serializers.ModelSerializer):
@@ -371,11 +411,37 @@ class MediaAssetSerializer(serializers.ModelSerializer):
     def validate_file(self, value):
         return validate_blog_image(value, "تصویر داخل محتوا")
 
+    def create(self, validated_data):
+        try:
+            with transaction.atomic():
+                return super().create(validated_data)
+        except OSError as exc:
+            logger.exception("Could not store an inline blog image")
+            raise MediaStorageUnavailable() from exc
+
     def update(self, instance, validated_data):
         old_file = instance.file if 'file' in validated_data else None
-        asset = super().update(instance, validated_data)
-        if old_file and old_file.name != getattr(asset.file, 'name', ''):
-            old_file.delete(save=False)
+        old_file = (
+            (old_file.storage, old_file.name)
+            if old_file and old_file.name
+            else None
+        )
+        try:
+            with transaction.atomic():
+                asset = super().update(instance, validated_data)
+        except OSError as exc:
+            logger.exception("Could not store inline blog image %s", instance.pk)
+            raise MediaStorageUnavailable() from exc
+        if old_file and old_file[1] != getattr(asset.file, 'name', ''):
+            try:
+                old_file[0].delete(old_file[1])
+            except OSError:
+                logger.warning(
+                    "Inline image %s was updated, but old file %s could not be removed",
+                    asset.pk,
+                    old_file[1],
+                    exc_info=True,
+                )
         return asset
 
 
@@ -436,4 +502,3 @@ class SiteSEOSettingsSerializer(serializers.ModelSerializer):
         model = SiteSEOSettings
         fields = ['robots_txt', 'updated_at']
         read_only_fields = ['updated_at']
-
