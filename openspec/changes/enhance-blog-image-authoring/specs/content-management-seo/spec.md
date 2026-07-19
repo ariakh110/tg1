@@ -18,4 +18,3 @@ The system SHALL use Editor.js blocks as the admin authoring format while retain
 #### Scenario: Author submits an unsafe or oversized blog image
 - **WHEN** an author submits a blog image that is larger than 5 MB or is not a verified PNG, JPEG, or WebP file
 - **THEN** the API SHALL reject the upload without changing the existing featured image or article content.
-

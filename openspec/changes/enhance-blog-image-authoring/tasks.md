@@ -21,5 +21,5 @@
 
 - [x] 4.1 Run OpenSpec validation, Django checks/tests, frontend lint, and production build.
 - [x] 4.2 Verify the editor workflow in desktop and mobile browser views.
-- [ ] 4.3 Commit, synchronize, and push both repositories.
-- [ ] 4.4 Refresh the manual-deployment archives.
+- [x] 4.3 Commit, synchronize, and push both repositories.
+- [x] 4.4 Refresh the manual-deployment archives.

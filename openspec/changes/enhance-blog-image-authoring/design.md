@@ -24,4 +24,3 @@ Post revisions continue to cover article text and metadata. Historical image bin
 
 - An author who has not selected an Editor.js block will get end-of-document insertion; the UI reports the actual placement.
 - Existing image URLs remain valid and need no data migration.
-

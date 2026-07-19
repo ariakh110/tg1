@@ -18,4 +18,3 @@ The article model and public blog already support a featured image, but the cont
 - Affected backend: `blog/serializers.py`, `blog/editorjs.py`, `blog/tests.py`
 - Affected frontend: admin content editor, content API helpers, and public article rendering
 - Database migrations: none
-
