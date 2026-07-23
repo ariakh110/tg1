@@ -12,10 +12,11 @@ The production updater reused the live `node_modules` directory and ran `next bu
 - Activate a release only after a successful install and build.
 - Restore the previous release automatically if the frontend service cannot restart or become active.
 - Validate that the frontend archive contains its manifest, lockfile, and deployment helper before upload.
+- Keep the manual deployment wrappers versioned and support archive preparation without a server connection.
 
 ## Impact
 
 - Affected spec: `frontend-release-deployment`
 - Affected frontend: new versioned release helper and deployment regression test
-- Affected deployment tooling: `C:\Users\ariakh\deploy\update.sh` and `deploy.ps1`
+- Affected deployment tooling: versioned `ops/manual_deploy` scripts and their working copies under `C:\Users\ariakh\deploy`
 - Database migrations: none

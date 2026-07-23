@@ -17,6 +17,7 @@ The legacy updater retained production `node_modules` and built directly in the 
 - Swap staged/current directories and restart the existing systemd service.
 - Restore the previous release if the new service cannot become active.
 - Validate archive completeness before upload.
+- Keep deployment scripts in Git and support preparing files for manual upload without connecting to production.
 
 ## Out Of Scope
 
@@ -32,4 +33,5 @@ The legacy updater retained production `node_modules` and built directly in the 
 - A failed service restart restores the previous frontend directory.
 - Production `.env` files are available during the staged build but remain excluded from Git archives.
 - The local deployment command rejects archives missing the lockfile or release helper.
+- Prepare-only mode refreshes local deployment artifacts without invoking SCP or SSH.
 - Automated shell tests cover success, build failure, and restart rollback.

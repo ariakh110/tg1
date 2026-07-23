@@ -10,6 +10,7 @@
 - [x] 2.1 Update the server updater to invoke the versioned staged-release helper.
 - [x] 2.2 Validate required frontend archive entries before upload.
 - [x] 2.3 Keep deployment output readable in Windows PowerShell.
+- [x] 2.4 Version the manual deployment wrappers and add offline artifact preparation.
 
 ## 3. Verification And Delivery
 

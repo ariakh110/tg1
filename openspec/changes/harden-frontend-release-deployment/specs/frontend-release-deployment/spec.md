@@ -11,6 +11,10 @@ Every frontend production release SHALL install the exact dependency graph from 
 - **WHEN** a generated frontend archive lacks the manifest, lockfile, or versioned deployment helper
 - **THEN** the local deployment wrapper SHALL reject the archive before uploading it.
 
+#### Scenario: Operator prepares files for manual upload
+- **WHEN** the operator selects prepare-only mode
+- **THEN** the wrapper SHALL build and validate the requested committed archives, refresh the server updater, and SHALL NOT open an SCP or SSH connection.
+
 ### Requirement: Isolated Frontend Build And Activation
 The deployment SHALL install and build a frontend release outside the active frontend directory and SHALL activate it only after both operations succeed.
 

@@ -32,6 +32,8 @@ The helper copies `.env`, environment-specific variants, and `.npmrc` from the c
 
 The PowerShell deployment wrapper checks that `package.json`, `package-lock.json`, and `ops/deploy_frontend_release.sh` are present before upload. This prevents an old or incomplete branch archive from reaching the server.
 
+The canonical PowerShell wrapper and server updater live under backend `ops/manual_deploy`. The wrapper refreshes the working `C:\Users\ariakh\deploy\update.sh` from that versioned source. `-PrepareOnly` builds and validates manual-upload artifacts without opening an SSH or SCP connection.
+
 ## Risks / Trade-offs
 
 - `npm ci` makes frontend deployment slower and requires npm registry access. This is accepted in exchange for deterministic production dependencies; the server npm cache still reduces repeated download cost.
