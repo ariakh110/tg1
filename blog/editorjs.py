@@ -33,6 +33,29 @@ def _render_list_items(items, tag):
     return f"<{tag}>{''.join(rendered)}</{tag}>" if rendered else ""
 
 
+def _render_table(block_data):
+    content = block_data.get("content", [])
+    if not isinstance(content, list):
+        return ""
+    rows = [row for row in content if isinstance(row, list)]
+    if not rows:
+        return ""
+
+    def render_row(row, cell_tag):
+        cells = "".join(f"<{cell_tag}>{cell}</{cell_tag}>" for cell in row)
+        return f"<tr>{cells}</tr>"
+
+    with_headings = bool(block_data.get("withHeadings"))
+    heading = f"<thead>{render_row(rows[0], 'th')}</thead>" if with_headings else ""
+    body_rows = rows[1:] if with_headings else rows
+    body = "".join(render_row(row, "td") for row in body_rows)
+    return (
+        '<div class="content-table-wrap"><table>'
+        f"{heading}<tbody>{body}</tbody>"
+        "</table></div>"
+    )
+
+
 def render_editor_data(value):
     data = normalize_editor_data(value)
     rendered = []
@@ -58,6 +81,10 @@ def render_editor_data(value):
             rendered.append("<hr>")
         elif block_type == "raw":
             rendered.append(str(block_data.get("html", "")))
+        elif block_type == "table":
+            table = _render_table(block_data)
+            if table:
+                rendered.append(table)
         elif block_type == "image":
             file_data = block_data.get("file") if isinstance(block_data.get("file"), dict) else {}
             url = escape(str(file_data.get("url", "")), quote=True)

@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -24,6 +27,7 @@ from .serializers import (
     HomepageSlideSerializer,
     LandingSerializer,
     MediaAssetSerializer,
+    MediaStorageUnavailable,
     PostDetailSerializer,
     PostListSerializer,
     PostRevisionSerializer,
@@ -140,6 +144,38 @@ class AdminPostViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data)
 
+    @action(detail=True, methods=['post'], url_path='thumbnail-from-media')
+    def thumbnail_from_media(self, request, pk=None):
+        post = self.get_object()
+        media_id = request.data.get('media_id')
+        if not media_id:
+            return Response(
+                {'media_id': ['انتخاب تصویر از گالری الزامی است.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        asset = get_object_or_404(MediaAsset, pk=media_id)
+        alt_text = str(request.data.get('thumbnail_alt') or asset.alt_text or asset.title).strip()
+        if not alt_text:
+            return Response(
+                {'thumbnail_alt': ['متن جایگزین تصویر اصلی الزامی است.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with asset.file.open('rb') as source:
+                image = ContentFile(source.read(), name=Path(asset.file.name).name)
+        except (OSError, ValueError) as exc:
+            raise MediaStorageUnavailable() from exc
+
+        serializer = self.get_serializer(
+            post,
+            data={'thumbnail': image, 'thumbnail_alt': alt_text},
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
     @action(detail=False, methods=['post'], url_path='ai-suggestions')
     def ai_suggestions(self, request):
         title = str(request.data.get('title', '')).strip()
@@ -162,9 +198,22 @@ class AdminPostViewSet(viewsets.ModelViewSet):
 
 
 class MediaAssetViewSet(viewsets.ModelViewSet):
-    queryset = MediaAsset.objects.select_related('uploaded_by')
+    queryset = MediaAsset.objects.select_related('uploaded_by').order_by('-created_at')
     serializer_class = MediaAssetSerializer
+    pagination_class = StandardResultsSetPagination
     permission_classes = [IsAdminOrActiveAdminRole]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        query = str(self.request.query_params.get('q', '')).strip()
+        if query:
+            queryset = queryset.filter(
+                Q(alt_text__icontains=query)
+                | Q(title__icontains=query)
+                | Q(caption__icontains=query)
+                | Q(file__icontains=query)
+            )
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)

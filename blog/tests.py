@@ -240,6 +240,46 @@ class BlogAPITests(TestCase):
         self.assertNotIn("<script", post.content)
         self.assertEqual(post.content_blocks["blocks"][0]["type"], "header")
 
+    def test_admin_editor_table_is_preserved_and_sanitized(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/blog/admin/posts/",
+            {
+                "title": "مقایسه ورق‌ها",
+                "content_blocks": {
+                    "blocks": [
+                        {
+                            "type": "table",
+                            "data": {
+                                "withHeadings": True,
+                                "stretched": True,
+                                "content": [
+                                    ["معیار", "ST37", "ST52"],
+                                    [
+                                        "تنش تسلیم",
+                                        "<strong>235 MPa</strong>",
+                                        '<a href="https://example.com/st52">355 MPa</a><script>alert(1)</script>',
+                                    ],
+                                ],
+                            },
+                        },
+                    ],
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        post = Post.objects.get(pk=response.data["id"])
+        self.assertIn('<div class="content-table-wrap"><table><thead>', post.content)
+        self.assertIn("<th>معیار</th>", post.content)
+        self.assertIn("<tbody><tr><td>تنش تسلیم</td>", post.content)
+        self.assertIn("<strong>235 MPa</strong>", post.content)
+        self.assertIn('<a href="https://example.com/st52">355 MPa</a>', post.content)
+        self.assertNotIn("<script", post.content)
+        self.assertEqual(post.content_blocks["blocks"][0]["type"], "table")
+
     def test_admin_editor_preserves_inline_image_position_and_fallback_alt(self):
         self.client.force_authenticate(self.admin)
 
@@ -389,6 +429,62 @@ class BlogAPITests(TestCase):
         )
         self.assertEqual(oversized.status_code, 400, oversized.data)
         self.assertEqual(MediaAsset.objects.count(), 1)
+
+    def test_admin_media_library_lists_newest_first_and_searches_metadata(self):
+        first = MediaAsset.objects.create(
+            file=make_test_blog_image("black-sheet.png"),
+            alt_text="ورق سیاه انبار",
+            title="موجودی ورق",
+            uploaded_by=self.admin,
+        )
+        second = MediaAsset.objects.create(
+            file=make_test_blog_image("galvanized.webp", "WEBP"),
+            alt_text="ورق گالوانیزه",
+            caption="بار جدید کارخانه",
+            uploaded_by=self.admin,
+        )
+        self.client.force_authenticate(self.admin)
+
+        listed = self.client.get("/api/blog/admin/media/?page_size=24")
+        searched = self.client.get("/api/blog/admin/media/?q=گالوانیزه&page_size=24")
+
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual([item["id"] for item in listed.data["results"]], [second.id, first.id])
+        self.assertEqual(searched.status_code, 200, searched.data)
+        self.assertEqual(searched.data["count"], 1)
+        self.assertEqual(searched.data["results"][0]["id"], second.id)
+
+    def test_admin_can_copy_library_asset_to_featured_image_without_sharing_file(self):
+        post = self.make_post(slug="gallery-featured")
+        asset = MediaAsset.objects.create(
+            file=make_test_blog_image("shared-gallery.webp", "WEBP"),
+            alt_text="تصویر مشترک گالری",
+            uploaded_by=self.admin,
+        )
+        asset_name = asset.file.name
+        storage = asset.file.storage
+        self.client.force_authenticate(self.admin)
+
+        selected = self.client.post(
+            f"/api/blog/admin/posts/{post.id}/thumbnail-from-media/",
+            {"media_id": asset.id, "thumbnail_alt": "تصویر اصلی انتخاب‌شده"},
+            format="json",
+        )
+
+        self.assertEqual(selected.status_code, 200, selected.data)
+        post.refresh_from_db()
+        self.assertNotEqual(post.thumbnail.name, asset_name)
+        self.assertTrue(post.thumbnail.name.startswith("blog/thumbs/"))
+        self.assertTrue(storage.exists(asset_name))
+        self.assertTrue(storage.exists(post.thumbnail.name))
+
+        removed = self.client.patch(
+            f"/api/blog/admin/posts/{post.id}/",
+            {"thumbnail": None},
+            format="json",
+        )
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertTrue(storage.exists(asset_name))
 
     @override_settings(OPENAI_API_KEY="")
     def test_ai_suggestions_endpoint_reports_missing_api_key_in_persian(self):
