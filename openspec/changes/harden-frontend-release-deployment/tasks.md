@@ -16,6 +16,6 @@
 
 - [x] 3.1 Test successful activation, build isolation, and restart rollback.
 - [x] 3.2 Run frontend lint/build and strict OpenSpec validation.
-- [ ] 3.3 Commit, pull/rebase, push both repositories, and rebuild manual deployment archives.
+- [x] 3.3 Commit, pull/rebase, push both repositories, and rebuild manual deployment archives.
 
-Verification note: the production build and strict OpenSpec validation pass. The repository-wide standalone lint command still reports pre-existing hook-rule errors inside generated `ds-bundle` vendor files; application warnings are unchanged.
+Verification note: the production build, deployment regression tests, strict OpenSpec validation, PowerShell/Bash syntax checks, and prepare-only archive validation pass. The repository-wide standalone lint command still reports pre-existing hook-rule errors inside generated `ds-bundle` vendor files; application warnings are unchanged.
