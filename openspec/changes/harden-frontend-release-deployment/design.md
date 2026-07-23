@@ -34,11 +34,18 @@ The PowerShell deployment wrapper checks that `package.json`, `package-lock.json
 
 The canonical PowerShell wrapper and server updater live under backend `ops/manual_deploy`. The wrapper refreshes the working `C:\Users\ariakh\deploy\update.sh` from that versioned source. `-PrepareOnly` builds and validates manual-upload artifacts without opening an SSH or SCP connection.
 
+### Make shell line endings deterministic
+
+Git for Windows has global `core.autocrlf=true`, and its archive path converted a frontend shell helper from the LF Git blob to CRLF. Bash then parsed `pipefail\r` as an invalid option and stopped before dependency installation.
+
+Frontend `.gitattributes` now requires `eol=lf` for shell scripts, and the archive command explicitly disables `core.autocrlf`. The PowerShell wrapper reads the helper bytes directly from the generated tar archive and rejects any carriage return before upload. As a final recovery guard, the Linux updater strips trailing carriage returns from the extracted helper before executing it.
+
 ## Risks / Trade-offs
 
 - `npm ci` makes frontend deployment slower and requires npm registry access. This is accepted in exchange for deterministic production dependencies; the server npm cache still reduces repeated download cost.
 - A staged release temporarily consumes disk for a second source tree, dependencies, and build. The updater removes the previous release after successful activation.
 - Directory rollback cannot repair an unrelated systemd or host failure, but it guarantees that a release-specific startup failure restores the last source/build tree.
+- Line-ending normalization changes only shell-script record separators; scripts in this deployment contract are ASCII and do not use intentional carriage-return data.
 
 ## Migration Plan
 

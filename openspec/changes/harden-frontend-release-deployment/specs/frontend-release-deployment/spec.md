@@ -15,6 +15,14 @@ Every frontend production release SHALL install the exact dependency graph from 
 - **WHEN** the operator selects prepare-only mode
 - **THEN** the wrapper SHALL build and validate the requested committed archives, refresh the server updater, and SHALL NOT open an SCP or SSH connection.
 
+#### Scenario: Windows Git archive converts shell line endings
+- **WHEN** a generated frontend archive contains a carriage return in the deployment helper
+- **THEN** the local wrapper SHALL reject the archive before upload and identify the invalid line endings.
+
+#### Scenario: Staged helper contains legacy CRLF
+- **WHEN** the Linux updater extracts a helper with CRLF line endings
+- **THEN** it SHALL remove trailing carriage returns before asking Bash to execute the helper.
+
 ### Requirement: Isolated Frontend Build And Activation
 The deployment SHALL install and build a frontend release outside the active frontend directory and SHALL activate it only after both operations succeed.
 

@@ -41,6 +41,13 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
     exit 1
   fi
 
+  # Git for Windows can export shell scripts with CRLF when core.autocrlf is
+  # enabled. Normalize defensively before Bash parses strict-mode options.
+  if LC_ALL=C grep -q $'\r' "$DEPLOY_HELPER"; then
+    echo "==> Normalizing frontend deployment helper line endings..."
+    sed -i 's/\r$//' "$DEPLOY_HELPER"
+  fi
+
   bash "$DEPLOY_HELPER" \
     "$FRONTEND_RELEASE" \
     "/opt/tirexa/frontend" \

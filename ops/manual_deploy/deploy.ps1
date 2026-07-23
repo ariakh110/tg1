@@ -38,6 +38,41 @@ function Write-ArchiveHash {
   Write-Host "==> $([System.IO.Path]::GetFileName($Path)) SHA256: $hash" -ForegroundColor DarkGray
 }
 
+function Read-TarEntryBytes {
+  param(
+    [Parameter(Mandatory = $true)][string]$ArchivePath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = "tar.exe"
+  $startInfo.Arguments = "-xOzf `"$ArchivePath`" `"$EntryPath`""
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  $memory = New-Object System.IO.MemoryStream
+
+  try {
+    [void]$process.Start()
+    $process.StandardOutput.BaseStream.CopyTo($memory)
+    $errorOutput = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    if ($process.ExitCode -ne 0) {
+      throw "Could not read $EntryPath from archive: $errorOutput"
+    }
+
+    return ,$memory.ToArray()
+  }
+  finally {
+    $memory.Dispose()
+    $process.Dispose()
+  }
+}
+
 if (-not (Test-Path -LiteralPath $canonicalUpdater -PathType Leaf)) {
   throw "Canonical updater is missing: $canonicalUpdater"
 }
@@ -48,7 +83,7 @@ $files = @()
 
 if ($Target -eq "backend" -or $Target -eq "both") {
   Write-Host "==> Building backend archive from $branch..." -ForegroundColor Cyan
-  git -C $beRepo archive --format=tar.gz -o "$deployDir\backend.tar.gz" $branch
+  git -c core.autocrlf=false -C $beRepo archive --format=tar.gz -o "$deployDir\backend.tar.gz" $branch
   Assert-NativeCommand "Backend git archive" $LASTEXITCODE
   Write-ArchiveHash "$deployDir\backend.tar.gz"
   $files += "$deployDir\backend.tar.gz"
@@ -56,7 +91,7 @@ if ($Target -eq "backend" -or $Target -eq "both") {
 
 if ($Target -eq "frontend" -or $Target -eq "both") {
   Write-Host "==> Building frontend archive from $branch..." -ForegroundColor Cyan
-  git -C $feRepo archive --format=tar.gz -o "$deployDir\frontend.tar.gz" $branch
+  git -c core.autocrlf=false -C $feRepo archive --format=tar.gz -o "$deployDir\frontend.tar.gz" $branch
   Assert-NativeCommand "Frontend git archive" $LASTEXITCODE
 
   $requiredFrontendEntries = @(
@@ -71,6 +106,13 @@ if ($Target -eq "frontend" -or $Target -eq "both") {
   )
   if ($missingFrontendEntries.Count -gt 0) {
     throw "Frontend archive is incomplete. Missing: $($missingFrontendEntries -join ', ')"
+  }
+
+  $frontendHelperBytes = Read-TarEntryBytes `
+    -ArchivePath "$deployDir\frontend.tar.gz" `
+    -EntryPath "ops/deploy_frontend_release.sh"
+  if ([Array]::IndexOf($frontendHelperBytes, [byte]13) -ge 0) {
+    throw "Frontend archive helper contains CRLF line endings; deployment was stopped before upload."
   }
 
   Write-ArchiveHash "$deployDir\frontend.tar.gz"

@@ -18,6 +18,7 @@ The legacy updater retained production `node_modules` and built directly in the 
 - Restore the previous release if the new service cannot become active.
 - Validate archive completeness before upload.
 - Keep deployment scripts in Git and support preparing files for manual upload without connecting to production.
+- Guarantee Linux LF line endings for executable shell scripts across Windows archive creation.
 
 ## Out Of Scope
 
@@ -34,4 +35,5 @@ The legacy updater retained production `node_modules` and built directly in the 
 - Production `.env` files are available during the staged build but remain excluded from Git archives.
 - The local deployment command rejects archives missing the lockfile or release helper.
 - Prepare-only mode refreshes local deployment artifacts without invoking SCP or SSH.
+- A CRLF deployment helper is rejected locally, while the server updater also normalizes legacy archives before execution.
 - Automated shell tests cover success, build failure, and restart rollback.

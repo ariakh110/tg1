@@ -19,3 +19,9 @@
 - [x] 3.3 Commit, pull/rebase, push both repositories, and rebuild manual deployment archives.
 
 Verification note: the production build, deployment regression tests, strict OpenSpec validation, PowerShell/Bash syntax checks, and prepare-only archive validation pass. The repository-wide standalone lint command still reports pre-existing hook-rule errors inside generated `ds-bundle` vendor files; application warnings are unchanged.
+
+## 4. Windows Archive Line Endings
+
+- [x] 4.1 Reproduce and confirm LF Git blob to CRLF archive conversion.
+- [x] 4.2 Force LF export, add archive-byte validation, and normalize defensively on the server.
+- [ ] 4.3 Validate the real committed archive, synchronize GitHub, and rebuild deployment files.

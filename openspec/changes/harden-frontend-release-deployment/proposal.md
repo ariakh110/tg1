@@ -13,6 +13,8 @@ The production updater reused the live `node_modules` directory and ran `next bu
 - Restore the previous release automatically if the frontend service cannot restart or become active.
 - Validate that the frontend archive contains its manifest, lockfile, and deployment helper before upload.
 - Keep the manual deployment wrappers versioned and support archive preparation without a server connection.
+- Force LF line endings for archived shell scripts and reject CRLF helpers before upload.
+- Normalize the staged helper defensively on Linux before Bash executes it.
 
 ## Impact
 
