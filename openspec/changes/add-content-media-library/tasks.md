@@ -16,4 +16,4 @@
 
 - [x] 3.1 Update the content-management PRD and validate OpenSpec strictly.
 - [x] 3.2 Run backend tests/checks and frontend lint/build.
-- [ ] 3.3 Commit, pull/rebase, push both repositories, and rebuild manual deploy archives.
+- [x] 3.3 Commit, pull/rebase, push both repositories, and rebuild manual deploy archives.

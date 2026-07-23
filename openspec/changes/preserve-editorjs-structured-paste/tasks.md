@@ -16,4 +16,4 @@
 - [x] 3.1 Verify both supplied tab-separated content and rich HTML paste in a real browser.
 - [x] 3.2 Update the PRD and validate OpenSpec strictly.
 - [x] 3.3 Run backend checks/tests and frontend lint/build.
-- [ ] 3.4 Commit, pull/rebase, push both repositories, and rebuild manual deploy archives.
+- [x] 3.4 Commit, pull/rebase, push both repositories, and rebuild manual deploy archives.
