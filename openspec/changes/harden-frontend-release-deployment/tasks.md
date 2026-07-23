@@ -24,4 +24,4 @@ Verification note: the production build, deployment regression tests, strict Ope
 
 - [x] 4.1 Reproduce and confirm LF Git blob to CRLF archive conversion.
 - [x] 4.2 Force LF export, add archive-byte validation, and normalize defensively on the server.
-- [ ] 4.3 Validate the real committed archive, synchronize GitHub, and rebuild deployment files.
+- [x] 4.3 Validate the real committed archive, synchronize GitHub, and rebuild deployment files.
