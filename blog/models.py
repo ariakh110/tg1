@@ -274,7 +274,7 @@ class SlugRedirect(models.Model):
 
 class SiteSEOSettings(models.Model):
     robots_txt = models.TextField(
-        default="User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /api/\n"
+        default="User-agent: *\nAllow: /\nDisallow: /api/\n"
     )
     updated_at = models.DateTimeField(auto_now=True)
 
