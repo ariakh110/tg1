@@ -4,6 +4,9 @@
 set -Eeo pipefail
 
 TARGET="${1:-both}"
+CANONICAL_HOST="${CANONICAL_HOST:-kavex.ir}"
+CANONICAL_ORIGIN="${CANONICAL_ORIGIN:-https://kavex.ir}"
+ORIGIN_IP_HOST="${ORIGIN_IP_HOST:-130.185.75.68}"
 if [[ "$TARGET" != "both" && "$TARGET" != "backend" && "$TARGET" != "frontend" ]]; then
   echo "ERROR: target must be one of: both, backend, frontend" >&2
   exit 2
@@ -57,9 +60,24 @@ fi
 echo
 echo "===== SMOKE TESTS ====="
 sleep 3
-curl -s -o /dev/null -w "home:          %{http_code}\n" http://127.0.0.1/
+curl -s -o /dev/null -w "home:          %{http_code}\n" \
+  -H "Host: $CANONICAL_HOST" http://127.0.0.1/
 curl -s -o /dev/null -w "api:           %{http_code}\n" http://127.0.0.1/api/site-settings/
 curl -s -o /dev/null -w "admin:         %{http_code}\n" http://127.0.0.1/django-admin/
+
+if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
+  IP_REDIRECT_RESULT="$(
+    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      -H "Host: $ORIGIN_IP_HOST" http://127.0.0.1/
+  )"
+  IFS='|' read -r IP_REDIRECT_STATUS IP_REDIRECT_URL <<< "$IP_REDIRECT_RESULT"
+  echo "origin IP:     $IP_REDIRECT_STATUS -> $IP_REDIRECT_URL"
+
+  if [[ "$IP_REDIRECT_STATUS" != "301" || "$IP_REDIRECT_URL" != "$CANONICAL_ORIGIN/" ]]; then
+    echo "ERROR: origin IP did not redirect permanently to $CANONICAL_ORIGIN/" >&2
+    exit 1
+  fi
+fi
 
 SETTINGS="$(curl -s http://127.0.0.1/api/site-settings/)"
 if grep -q google_tag_manager_id <<< "$SETTINGS"; then
