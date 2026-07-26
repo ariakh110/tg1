@@ -25,4 +25,4 @@
 - [x] 4.2 Verify canonical, robots, and H1 values against production-build HTML.
 - [x] 4.3 Run the targeted Django test, system checks, migration checks, frontend lint, and production build.
 - [x] 4.4 Validate this OpenSpec change in strict mode.
-- [ ] 4.5 Pull, commit, push both repositories, and rebuild manual deployment archives.
+- [x] 4.5 Pull, commit, push both repositories, and rebuild manual deployment archives.
