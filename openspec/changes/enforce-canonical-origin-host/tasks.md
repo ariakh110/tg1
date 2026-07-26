@@ -9,4 +9,4 @@
 - [x] 2.1 Add unit coverage for canonical, IP, `www`, arbitrary, spoofed-forwarded, and local-development Hosts.
 - [x] 2.2 Add an origin-IP redirect assertion to the manual post-deploy smoke tests.
 - [x] 2.3 Exclude the ignored design-sync bundle from source lint, then run frontend tests, lint/build, live production-server Host probes, shell validation, and strict OpenSpec validation.
-- [ ] 2.4 Pull/rebase, commit, push both repositories, and rebuild manual deployment artifacts.
+- [x] 2.4 Pull/rebase, commit, push both repositories, and rebuild manual deployment artifacts.
