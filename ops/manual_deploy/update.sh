@@ -77,6 +77,19 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
     echo "ERROR: origin IP did not redirect permanently to $CANONICAL_ORIGIN/" >&2
     exit 1
   fi
+
+  ST52_REDIRECT_RESULT="$(
+    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      -H "Host: $CANONICAL_HOST" \
+      "http://127.0.0.1/category/sheet/ST52?source=deploy-smoke"
+  )"
+  IFS='|' read -r ST52_REDIRECT_STATUS ST52_REDIRECT_URL <<< "$ST52_REDIRECT_RESULT"
+  echo "ST52 legacy:   $ST52_REDIRECT_STATUS -> $ST52_REDIRECT_URL"
+
+  if [[ "$ST52_REDIRECT_STATUS" != "301" || "$ST52_REDIRECT_URL" != "$CANONICAL_ORIGIN/category/sheet/st52?source=deploy-smoke" ]]; then
+    echo "ERROR: uppercase ST52 did not redirect permanently to the lowercase canonical URL" >&2
+    exit 1
+  fi
 fi
 
 SETTINGS="$(curl -s http://127.0.0.1/api/site-settings/)"
