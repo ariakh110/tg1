@@ -9,5 +9,5 @@
 
 - [x] 2.1 Run frontend SEO tests, lint, and production build.
 - [x] 2.2 Run shell syntax and strict OpenSpec validation.
-- [ ] 2.3 Pull/rebase, commit, push both repositories, and rebuild manual deployment artifacts.
+- [x] 2.3 Pull/rebase, commit, push both repositories, and rebuild manual deployment artifacts.
 - [ ] 2.4 Upload and apply the frontend release, then verify the public redirect.
