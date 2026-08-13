@@ -17,8 +17,8 @@
 
 ## 4. Verification And Release
 - [x] 4.1 Run migration checks, backend checks/tests, frontend tests/lint/build, and OpenSpec validation.
-- [ ] 4.2 Commit, synchronize, and push both repositories without staging unrelated changes.
-- [ ] 4.3 Rebuild deploy archives and document the backend-first deployment and price-refresh sequence.
+- [x] 4.2 Commit, synchronize, and push both repositories without staging unrelated changes.
+- [x] 4.3 Rebuild deploy archives and document the backend-first deployment and price-refresh sequence.
 
 ## Verification Record
 - `manage.py check --settings=tg1.settings_test`: passed.
@@ -28,3 +28,11 @@
 - `npm run test:seo`: 18 passed.
 - Targeted ESLint: passed.
 - `npm run build`: passed; existing unrelated image/effect warnings remain.
+
+## Release Record
+- Frontend feature commit: `1c0cda3` on `dev-ariakhayer` (`ariakh110/kvm`).
+- Backend and OpenSpec feature commit: `c91d0be` on `dev-ariakhayer` (`ariakh110/tg1`).
+- Both repositories were synchronized with `pull --rebase` and pushed successfully.
+- `C:\Users\ariakh\deploy\backend.tar.gz`: 981116 bytes, SHA-256 `9855E4AC34CB759F9BBAD44751DAEDE286E99637568EDD4DE0FCBC50997E9B4D`.
+- `C:\Users\ariakh\deploy\frontend.tar.gz`: 514285 bytes, SHA-256 `AF95CC865DD71B1A2E0563AE2B891384FF9D36D58690897C193A06176043CD90`.
+- `update.sh` applies `both` in backend-first order, including migrations, followed by the frontend release. Current prices must then be refreshed through the normal price workflow before they are shown as verified prices.
