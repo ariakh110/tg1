@@ -33,7 +33,7 @@ class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
             Product.objects.annotate(
                 min_price=Min("offers__pricing_tiers__unit_price")
             )
-            .select_related("specifications")
+            .select_related("category", "specifications")
             .prefetch_related("offers", "images", "offers__delivery_options")
         )
 

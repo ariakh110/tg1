@@ -3,6 +3,8 @@ import re
 
 from rest_framework import serializers
 from django.conf import settings
+from django.utils import timezone
+from .content_sanitizer import sanitize_plain_text, sanitize_product_content_html
 from .models import (
     Product, ProductCategory, ProductImage, ProductSpecification,
     ProductStandard, SpecificationAttribute, SpecificationValue,
@@ -489,8 +491,14 @@ class PricingTierSerializer(serializers.ModelSerializer):
             "dimension_width_mm",
             "dimension_length_mm",
             "is_negotiable",
+            "price_verified_at",
         )
-        read_only_fields = ("offer",)  # اگر بخوای API جدا برای PricingTier بذاریم، offer لازم است؛ در Offer nested creation انجام نمی‌شود فعلاً.
+        read_only_fields = ("offer", "price_verified_at")
+
+    def update(self, instance, validated_data):
+        if "unit_price" in validated_data:
+            instance.price_verified_at = timezone.now()
+        return super().update(instance, validated_data)
 
 
 class DeliveryLocationSerializer(serializers.ModelSerializer):
@@ -530,6 +538,12 @@ class OfferWriteSerializer(serializers.ModelSerializer):
 # -------------------------
 # Product (main serializer)
 # -------------------------
+class RelatedProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ("id", "name", "slug", "short_description", "availability_status", "is_active")
+
+
 class ProductListSerializer(serializers.ModelSerializer):
     # نمایش خلاصه محصول (لیست)
     category = ProductCategorySerializer(read_only=True)
@@ -537,7 +551,9 @@ class ProductListSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     documents = ProductDocumentSerializer(many=True, read_only=True)
     offers = OfferReadSerializer(many=True, read_only=True)
+    related_products = RelatedProductSerializer(many=True, read_only=True)
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    description = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -547,6 +563,12 @@ class ProductListSerializer(serializers.ModelSerializer):
             "slug",
             "short_description",
             "description",
+            "seo_title",
+            "meta_description",
+            "page_h1",
+            "seo_faqs",
+            "seo_index_mode",
+            "related_products",
             "category",
             "is_active",
             "availability_status",
@@ -560,10 +582,30 @@ class ProductListSerializer(serializers.ModelSerializer):
             "min_price",
         )
 
+    def get_description(self, obj):
+        return sanitize_product_content_html(obj.description)
+
 
 class ProductDetailSerializer(ProductListSerializer):
-    # اگر خواستی فیلدهای بیشتری در جزییات اضافه کن
-    pass
+    suggested_products = serializers.SerializerMethodField()
+
+    class Meta(ProductListSerializer.Meta):
+        fields = ProductListSerializer.Meta.fields + ("suggested_products",)
+
+    def get_suggested_products(self, obj):
+        explicit_ids = set(obj.related_products.values_list("id", flat=True))
+        queryset = Product.objects.filter(is_active=True).exclude(pk=obj.pk).exclude(pk__in=explicit_ids)
+        if obj.category_id:
+            queryset = queryset.filter(category_id=obj.category_id)
+        try:
+            grade = (obj.specifications.steel_grade or "").strip()
+        except ProductSpecification.DoesNotExist:
+            grade = ""
+        if grade:
+            grade_matches = queryset.filter(specifications__steel_grade__iexact=grade)
+            if grade_matches.exists():
+                queryset = grade_matches
+        return RelatedProductSerializer(queryset.order_by("name")[:4], many=True).data
 
 
 # -------------------------
@@ -590,6 +632,12 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
         extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
 
+    def validate_short_description(self, value):
+        return sanitize_plain_text(value, 500)
+
+    def validate_description(self, value):
+        return sanitize_product_content_html(value)
+
     def validate_category(self, value):
         if value is not None and not value.is_active:
             raise serializers.ValidationError("این دسته‌بندی غیرفعال است.")
@@ -607,15 +655,87 @@ class ProductWriteSerializer(serializers.ModelSerializer):
                 normalized.append(text[:500])
         return normalized
 
+
+class ProductPageContentWriteSerializer(serializers.ModelSerializer):
+    related_product_ids = serializers.PrimaryKeyRelatedField(
+        source="related_products",
+        many=True,
+        queryset=Product.objects.all(),
+        required=False,
+    )
+
+    class Meta:
+        model = Product
+        fields = (
+            "short_description",
+            "description",
+            "seo_title",
+            "meta_description",
+            "page_h1",
+            "seo_faqs",
+            "seo_index_mode",
+            "related_product_ids",
+        )
+        extra_kwargs = {
+            "short_description": {"required": False, "allow_blank": True},
+            "description": {"required": False, "allow_blank": True},
+            "seo_title": {"required": False, "allow_blank": True},
+            "meta_description": {"required": False, "allow_blank": True},
+            "page_h1": {"required": False, "allow_blank": True},
+            "seo_faqs": {"required": False},
+            "seo_index_mode": {"required": False},
+        }
+
+    def validate_short_description(self, value):
+        return sanitize_plain_text(value, 500)
+
+    def validate_description(self, value):
+        return sanitize_product_content_html(value)
+
+    def validate_seo_title(self, value):
+        return sanitize_plain_text(value, 255)
+
+    def validate_meta_description(self, value):
+        return sanitize_plain_text(value, 320)
+
+    def validate_page_h1(self, value):
+        return sanitize_plain_text(value, 255)
+
+    def validate_seo_faqs(self, value):
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("FAQ must be a list of question and answer objects.")
+        if len(value) > 20:
+            raise serializers.ValidationError("A product can have at most 20 FAQ entries.")
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise serializers.ValidationError("Each FAQ entry must contain question and answer.")
+            question = sanitize_plain_text(item.get("question"), 300)
+            answer = sanitize_plain_text(item.get("answer"), 2000)
+            if not question and not answer:
+                continue
+            if not question or not answer:
+                raise serializers.ValidationError("Both question and answer are required for each FAQ entry.")
+            normalized.append({"question": question, "answer": answer})
+        return normalized
+
+    def validate_related_product_ids(self, value):
+        if self.instance and any(product.pk == self.instance.pk for product in value):
+            raise serializers.ValidationError("A product cannot be related to itself.")
+        return value
+
 class ProductSummarySerializer(serializers.ModelSerializer):
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     thumbnail = serializers.SerializerMethodField()
     steel_grade = serializers.SerializerMethodField()
     city = serializers.SerializerMethodField()
+    is_indexable = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = ["id", "name", "slug", "min_price", "thumbnail", "steel_grade", "city"]
+        fields = ["id", "name", "slug", "min_price", "thumbnail", "steel_grade", "city", "is_indexable"]
 
     def get_thumbnail(self, obj):
         first_image = obj.images.first()
@@ -633,6 +753,9 @@ class ProductSummarySerializer(serializers.ModelSerializer):
                 if delivery.city:
                     return delivery.city
         return ""
+
+    def get_is_indexable(self, obj):
+        return obj.is_search_indexable()
 # -------------------------
 # Utility: small factory mapping for views
 # -------------------------

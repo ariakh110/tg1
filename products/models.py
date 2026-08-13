@@ -1,8 +1,11 @@
 import datetime
+import re
 
 from django.db import models
 from django.conf import settings
 from mptt.models import MPTTModel, TreeForeignKey
+from django.utils import timezone
+from django.utils.html import strip_tags
 from django.utils.text import slugify
 
 # Optional Jalali support using the `jdatetime` package
@@ -147,12 +150,35 @@ class Product(models.Model):
         (AVAILABILITY_INQUIRY, "Price inquiry"),
         (AVAILABILITY_OUT_OF_STOCK, "Out of stock"),
     ]
+    SEO_INDEX_AUTO = "auto"
+    SEO_INDEX_INDEX = "index"
+    SEO_INDEX_NOINDEX = "noindex"
+    SEO_INDEX_CHOICES = [
+        (SEO_INDEX_AUTO, "Automatic"),
+        (SEO_INDEX_INDEX, "Index"),
+        (SEO_INDEX_NOINDEX, "No index"),
+    ]
 
     category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, related_name='products')
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=500,blank=True)
-    short_description = models.CharField(max_length=500, default="")
-    description = models.TextField()
+    short_description = models.CharField(max_length=500, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    seo_title = models.CharField(max_length=255, blank=True, default="")
+    meta_description = models.CharField(max_length=320, blank=True, default="")
+    page_h1 = models.CharField(max_length=255, blank=True, default="")
+    seo_faqs = models.JSONField(default=list, blank=True)
+    seo_index_mode = models.CharField(
+        max_length=16,
+        choices=SEO_INDEX_CHOICES,
+        default=SEO_INDEX_AUTO,
+    )
+    related_products = models.ManyToManyField(
+        "self",
+        symmetrical=False,
+        blank=True,
+        related_name="related_by_products",
+    )
     is_active = models.BooleanField(default=True)
     availability_status = models.CharField(
         max_length=32,
@@ -176,6 +202,60 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+    def is_search_indexable(self):
+        """Resolve the effective index state used by feeds such as Sitemap."""
+        if not self.is_active:
+            return False
+        if self.seo_index_mode == self.SEO_INDEX_INDEX:
+            return True
+        if self.seo_index_mode == self.SEO_INDEX_NOINDEX:
+            return False
+
+        try:
+            specifications = self.specifications
+        except ProductSpecification.DoesNotExist:
+            specifications = None
+
+        category = self.category
+        family = ""
+        if specifications and specifications.material_type:
+            family = specifications.material_type
+        elif category:
+            family = category.product_kind or category.code or ""
+
+        fact_values = [family]
+        if specifications:
+            fact_values.extend(
+                [
+                    specifications.steel_grade,
+                    specifications.thickness_mm,
+                    specifications.width_mm,
+                    specifications.length_mm,
+                    specifications.diameter_mm,
+                    specifications.factory,
+                    specifications.manufacturing_process,
+                    specifications.surface_finish,
+                ]
+            )
+        fact_count = sum(value is not None and str(value).strip() != "" for value in fact_values)
+
+        description_html = self.description or ""
+        description_text = re.sub(r"\s+", " ", strip_tags(description_html)).strip()
+        comparisons = {
+            re.sub(r"\s+", " ", strip_tags(value or "")).strip().casefold()
+            for value in (self.name, self.short_description)
+            if value
+        }
+        has_structured_content = bool(re.search(r"<(p|h2|h3|table|ul|ol)\b", description_html, re.I))
+        has_substantive_content = has_structured_content or (
+            len(description_text) >= 120 and description_text.casefold() not in comparisons
+        )
+
+        score = (2 if len((self.name or "").strip()) >= 8 else 0) + fact_count
+        score += 3 if has_substantive_content else 0
+        score += 1 if self.images.exists() else 0
+        return score >= 6
 
 
 class ProductAuditLog(models.Model):
@@ -336,6 +416,21 @@ class PricingTier(models.Model):
     dimension_width_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     dimension_length_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     is_negotiable = models.BooleanField(default=False)
+    price_verified_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        price_changed = self._state.adding
+        if not self._state.adding and update_fields is not None:
+            price_changed = "unit_price" in update_fields
+        elif not self._state.adding:
+            previous_price = type(self).objects.filter(pk=self.pk).values_list("unit_price", flat=True).first()
+            price_changed = previous_price != self.unit_price
+        if price_changed:
+            self.price_verified_at = timezone.now()
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"price_verified_at"}
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.offer.product.name} - {self.tier_name}"

@@ -26,7 +26,7 @@ from .serializers import (
     ProductStandardSerializer, SpecificationAttributeSerializer, ProductAttributeOptionSerializer,
     SpecificationValueSerializer,
     OfferReadSerializer, OfferWriteSerializer, PricingTierSerializer, DeliveryLocationSerializer,
-    ProductDocumentSerializer, SellerSerializer
+    ProductDocumentSerializer, ProductPageContentWriteSerializer, SellerSerializer
 )
 
 # فیلترها و مجوزها (permissions)
@@ -239,6 +239,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "offers__pricing_tiers",
         "offers__delivery_options",
         "dynamic_specs",
+        "related_products",
     ).annotate(min_price=Min('offers__pricing_tiers__unit_price'))  # حداقل قیمت از بین offers -> pricing_tiers
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -435,11 +436,28 @@ class ProductViewSet(viewsets.ModelViewSet):
                     create_missing=True,
                 )
                 product = Product.objects.get(pk=result["product_id"])
+                page_content = request.data.get("page_content")
+                if page_content is not None:
+                    if result["created_product"]:
+                        raise ValueError("Page content can only be edited after the product has been created.")
+                    if not isinstance(page_content, dict):
+                        raise ValueError("page_content must be an object.")
+                    content_serializer = ProductPageContentWriteSerializer(
+                        product,
+                        data=page_content,
+                        partial=True,
+                    )
+                    content_serializer.is_valid(raise_exception=True)
+                    content_serializer.save()
                 log_product_activity(
                     product,
                     "PRODUCT_UPSERTED",
                     request.user,
-                    {"result": result, "source": "admin_dashboard"},
+                    {
+                        "result": result,
+                        "page_content_updated": page_content is not None,
+                        "source": "admin_dashboard",
+                    },
                 )
         except Exception as exc:
             detail = getattr(exc, "detail", None)

@@ -61,6 +61,7 @@ class ProductAdmin(admin.ModelAdmin):
     search_fields = ("name", "slug", "short_description")
     prepopulated_fields = {"slug": ("name",)}
     ordering = ("-created_at",)
+    filter_horizontal = ("related_products",)
 
     inlines = [ProductImageInline, ProductDocumentInline, ProductSpecificationInline, SpecificationValueInline]
 

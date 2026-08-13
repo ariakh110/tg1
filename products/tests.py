@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from io import BytesIO
+import datetime
 import shutil
 import tempfile
 
@@ -22,7 +23,7 @@ from .models import (
     ProductSpecification,
     Seller,
 )
-from .serializers import ProductSpecificationSerializer
+from .serializers import ProductPageContentWriteSerializer, ProductSpecificationSerializer
 
 User = get_user_model()
 
@@ -515,12 +516,196 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(product.specifications.factory, "mobarakeh")
         offer = product.offers.get(seller=self.seller)
         tier = offer.pricing_tiers.get()
+        self.assertIsNotNone(tier.price_verified_at)
         self.assertEqual(tier.price_basis, "kg")
         self.assertEqual(tier.condition_label, "عرض 1000 طول 6000")
         self.assertEqual(str(tier.dimension_width_mm), "1000.00")
         self.assertEqual(str(tier.dimension_length_mm), "6000.00")
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
         self.assertEqual(offer.delivery_options.get().city, "مبارکه")
+
+    def test_admin_can_save_product_page_content_and_related_products(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        product = Product.objects.create(category=category, name="SEO product")
+        related = Product.objects.create(category=category, name="Related product")
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "product_id": product.id,
+                "name": product.name,
+                "page_content": {
+                    "seo_title": "  Dedicated SEO title  ",
+                    "meta_description": "Dedicated meta description",
+                    "page_h1": "Dedicated H1",
+                    "short_description": "Dedicated short description",
+                    "description": (
+                        '<h1 onclick="alert(1)">Unsafe heading</h1>'
+                        '<script>alert(1)</script>'
+                        '<p><a href="javascript:alert(1)">Safe text</a></p>'
+                    ),
+                    "seo_faqs": [{"question": "Question?", "answer": "Answer."}],
+                    "seo_index_mode": "index",
+                    "related_product_ids": [related.id],
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product.refresh_from_db()
+        self.assertEqual(product.seo_title, "Dedicated SEO title")
+        self.assertEqual(product.page_h1, "Dedicated H1")
+        self.assertEqual(product.seo_index_mode, Product.SEO_INDEX_INDEX)
+        self.assertEqual(product.seo_faqs, [{"question": "Question?", "answer": "Answer."}])
+        self.assertEqual(list(product.related_products.values_list("id", flat=True)), [related.id])
+        self.assertIn("<h2>Unsafe heading</h2>", product.description)
+        self.assertNotIn("script", product.description.lower())
+        self.assertNotIn("javascript", product.description.lower())
+        self.assertNotIn("onclick", product.description.lower())
+
+        image_serializer = ProductPageContentWriteSerializer(
+            product,
+            data={
+                "description": (
+                    '<figure><img src="/media/products/sheet.webp" alt="Sheet" '
+                    'onerror="alert(1)" loading="lazy"><figcaption>Product image</figcaption></figure>'
+                ),
+            },
+            partial=True,
+        )
+        self.assertTrue(image_serializer.is_valid(), image_serializer.errors)
+        image_serializer.save()
+        self.assertIn('src="/media/products/sheet.webp"', product.description)
+        self.assertIn("<figcaption>Product image</figcaption>", product.description)
+        self.assertNotIn("onerror", product.description)
+
+        Product.objects.filter(pk=product.pk).update(
+            description='<h1>Legacy H1</h1><script>alert(1)</script><p>Legacy safe content</p>',
+        )
+        legacy_detail = self.client.get(f"/api/products/{product.slug}/")
+        self.assertEqual(legacy_detail.status_code, status.HTTP_200_OK, legacy_detail.data)
+        self.assertIn("<h2>Legacy H1</h2>", legacy_detail.data["description"])
+        self.assertNotIn("script", legacy_detail.data["description"].lower())
+
+        detail = self.client.get(f"/api/products/{product.slug}/")
+        self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.data)
+        self.assertEqual(detail.data["seo_title"], "Dedicated SEO title")
+        self.assertEqual(detail.data["related_products"][0]["id"], related.id)
+        self.assertIn("suggested_products", detail.data)
+
+    def test_page_content_serializer_rejects_self_relation_and_incomplete_faq(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        product = Product.objects.create(category=category, name="Validation product")
+
+        serializer = ProductPageContentWriteSerializer(
+            product,
+            data={
+                "related_product_ids": [product.id],
+                "seo_faqs": [{"question": "Only question", "answer": ""}],
+            },
+            partial=True,
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("related_product_ids", serializer.errors)
+        self.assertIn("seo_faqs", serializer.errors)
+
+    def test_price_only_update_preserves_all_page_content_fields(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        related = Product.objects.create(category=category, name="Preserved related")
+        product = Product.objects.create(
+            category=category,
+            name="Preserved content product",
+            short_description="Keep short",
+            description="<p>Keep full content</p>",
+            seo_title="Keep SEO title",
+            meta_description="Keep meta",
+            page_h1="Keep H1",
+            seo_faqs=[{"question": "Keep question?", "answer": "Keep answer."}],
+            seo_index_mode=Product.SEO_INDEX_NOINDEX,
+        )
+        product.related_products.add(related)
+        offer = Offer.objects.create(product=product, seller=self.seller)
+        tier = PricingTier.objects.create(
+            offer=offer,
+            tier_name="Daily price",
+            unit_price="100000",
+            minimum_quantity=1,
+        )
+        previous_verified_at = tier.price_verified_at
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "product_id": product.id,
+                "seller_id": self.seller.id,
+                "price": "110000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product.refresh_from_db()
+        tier.refresh_from_db()
+        self.assertEqual(product.short_description, "Keep short")
+        self.assertEqual(product.description, "<p>Keep full content</p>")
+        self.assertEqual(product.seo_title, "Keep SEO title")
+        self.assertEqual(product.meta_description, "Keep meta")
+        self.assertEqual(product.page_h1, "Keep H1")
+        self.assertEqual(product.seo_faqs, [{"question": "Keep question?", "answer": "Keep answer."}])
+        self.assertEqual(product.seo_index_mode, Product.SEO_INDEX_NOINDEX)
+        self.assertEqual(list(product.related_products.values_list("id", flat=True)), [related.id])
+        self.assertGreaterEqual(tier.price_verified_at, previous_verified_at)
+
+    def test_pricing_tier_api_reconfirms_an_unchanged_price(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        product = Product.objects.create(category=category, name="Seller price verification product")
+        offer = Offer.objects.create(product=product, seller=self.seller)
+        tier = PricingTier.objects.create(
+            offer=offer,
+            tier_name="Daily price",
+            unit_price="100000",
+            minimum_quantity=1,
+        )
+        old_verified_at = timezone.now() - datetime.timedelta(days=2)
+        PricingTier.objects.filter(pk=tier.pk).update(price_verified_at=old_verified_at)
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.patch(
+            f"/api/pricing-tiers/{tier.id}/",
+            {"unit_price": "100000"},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        tier.refresh_from_db()
+        self.assertGreater(tier.price_verified_at, old_verified_at)
+
+    def test_product_summary_exposes_effective_index_state(self):
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        low_information = Product.objects.create(category=category, name="Low")
+        forced_index = Product.objects.create(
+            category=category,
+            name="Forced index product",
+            seo_index_mode=Product.SEO_INDEX_INDEX,
+        )
+        inactive = Product.objects.create(
+            category=category,
+            name="Inactive forced index product",
+            seo_index_mode=Product.SEO_INDEX_INDEX,
+            is_active=False,
+        )
+
+        res = self.client.get("/api/products-summary/", {"page_size": 1000})
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        index_states = {item["id"]: item["is_indexable"] for item in res.data["results"]}
+        self.assertFalse(index_states[low_information.id])
+        self.assertTrue(index_states[forced_index.id])
+        self.assertFalse(index_states[inactive.id])
 
     def test_admin_can_manage_category_visual_and_navigation_visibility(self):
         media_root = tempfile.mkdtemp(prefix="category-icons-")
@@ -933,6 +1118,65 @@ class AdminProductImportTests(APITestCase):
         product.refresh_from_db()
         self.assertEqual(product.name, "ورق سیاه فایل اکسل")
         self.assertNotEqual(product.name, "محصول فولادی")
+
+    def test_admin_bulk_xlsx_price_update_preserves_product_page_content(self):
+        from openpyxl import Workbook
+
+        category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
+        related = Product.objects.create(category=category, name="Excel related product")
+        product = Product.objects.create(
+            category=category,
+            name="Excel SEO preservation product",
+            short_description="Preserve Excel short description",
+            description="<p>Preserve Excel full product content.</p>",
+            seo_title="Preserve Excel SEO title",
+            meta_description="Preserve Excel meta description",
+            page_h1="Preserve Excel H1",
+            seo_faqs=[{"question": "Preserve question?", "answer": "Preserve answer."}],
+            seo_index_mode=Product.SEO_INDEX_NOINDEX,
+        )
+        product.related_products.add(related)
+        offer = Offer.objects.create(product=product, seller=self.seller)
+        tier = PricingTier.objects.create(
+            offer=offer,
+            tier_name="Daily price",
+            unit_price="41000",
+            minimum_quantity=1,
+        )
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["product_id", "seller_id", "price", "tier_name"])
+        sheet.append([product.id, self.seller.id, 47000, "Daily price"])
+        payload = BytesIO()
+        workbook.save(payload)
+        payload.seek(0)
+        upload = SimpleUploadedFile(
+            "prices.xlsx",
+            payload.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(
+            "/api/products/admin-bulk-upsert/",
+            {"file": upload},
+            format="multipart",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product.refresh_from_db()
+        tier.refresh_from_db()
+        self.assertEqual(str(tier.unit_price), "47000.00")
+        self.assertIsNotNone(tier.price_verified_at)
+        self.assertEqual(product.short_description, "Preserve Excel short description")
+        self.assertEqual(product.description, "<p>Preserve Excel full product content.</p>")
+        self.assertEqual(product.seo_title, "Preserve Excel SEO title")
+        self.assertEqual(product.meta_description, "Preserve Excel meta description")
+        self.assertEqual(product.page_h1, "Preserve Excel H1")
+        self.assertEqual(product.seo_faqs, [{"question": "Preserve question?", "answer": "Preserve answer."}])
+        self.assertEqual(product.seo_index_mode, Product.SEO_INDEX_NOINDEX)
+        self.assertEqual(list(product.related_products.values_list("id", flat=True)), [related.id])
 
     def test_admin_bulk_price_update_preserves_name_without_name_column(self):
         from openpyxl import Workbook

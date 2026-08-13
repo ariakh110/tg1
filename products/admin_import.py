@@ -3,7 +3,9 @@ import io
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.utils import timezone
 
+from .content_sanitizer import sanitize_plain_text, sanitize_product_content_html
 from .models import (
     DeliveryLocation,
     Offer,
@@ -418,8 +420,10 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
         product = Product.objects.create(
             name=generated_name,
             category=category,
-            short_description=row.get("short_description") or generated_name,
-            description=row.get("description") or row.get("short_description") or generated_name,
+            short_description=sanitize_plain_text(row.get("short_description") or generated_name, 500),
+            description=sanitize_product_content_html(
+                row.get("description") or row.get("short_description") or generated_name,
+            ),
             availability_status=row.get("availability_status") or Product.AVAILABILITY_IN_STOCK,
             purchase_terms=parse_terms(row.get("purchase_terms")),
             is_active=True,
@@ -436,10 +440,10 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
             product.category = category
             changed_fields.append("category")
         if row.get("short_description"):
-            product.short_description = row["short_description"]
+            product.short_description = sanitize_plain_text(row["short_description"], 500)
             changed_fields.append("short_description")
         if row.get("description"):
-            product.description = row["description"]
+            product.description = sanitize_product_content_html(row["description"])
             changed_fields.append("description")
         if row.get("availability_status") and product.availability_status != row["availability_status"]:
             product.availability_status = row["availability_status"]
@@ -496,14 +500,16 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
                 dimension_width_mm=dimension_width,
                 dimension_length_mm=dimension_length,
                 is_negotiable=False,
+                price_verified_at=timezone.now(),
             )
         else:
             # فقط قیمت/واحد را همیشه به‌روزرسانی کن؛ شرط و ابعادِ tier را تنها
             # وقتی ردیف مقدار غیرخالی بدهد عوض کن تا آپلودِ «فقط قیمت» داده‌های موجود را پاک نکند.
             tier.unit_price = price
+            tier.price_verified_at = timezone.now()
             tier.price_basis = price_basis
             tier.minimum_quantity = tier.minimum_quantity or 1
-            update_fields = ["unit_price", "price_basis", "minimum_quantity"]
+            update_fields = ["unit_price", "price_basis", "minimum_quantity", "price_verified_at"]
             if row.get("condition_label") not in ("", None):
                 tier.condition_label = condition_label
                 update_fields.append("condition_label")
