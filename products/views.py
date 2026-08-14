@@ -1,4 +1,6 @@
 # products/views.py
+import logging
+
 from rest_framework import viewsets, permissions, filters, status, generics
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -11,6 +13,8 @@ from django.db import transaction
 from django.db.models import Min, Q
 from django.http import HttpResponse
 from accounts.permissions import IsAdminOrActiveAdminRole
+
+logger = logging.getLogger(__name__)
 
 # مدل‌ها
 from .models import (
@@ -831,6 +835,22 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         if not can_manage:
             raise PermissionDenied("You are not allowed to upload image for this product.")
         serializer.save()
+
+    def perform_destroy(self, instance):
+        product_id = instance.product_id
+        was_featured = instance.is_featured
+        image_file = instance.image
+        with transaction.atomic():
+            instance.delete()
+            if was_featured:
+                replacement = ProductImage.objects.filter(product_id=product_id).first()
+                if replacement:
+                    ProductImage.objects.filter(pk=replacement.pk).update(is_featured=True)
+        if image_file:
+            try:
+                image_file.delete(save=False)
+            except Exception:
+                logger.warning("Unable to delete product image file %s", image_file.name, exc_info=True)
 
 
 # ---------------- ProductDocumentViewSet ----------------

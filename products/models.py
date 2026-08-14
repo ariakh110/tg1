@@ -456,6 +456,9 @@ class ProductImage(models.Model):
     image = models.ImageField(upload_to='products/images/')
     is_featured = models.BooleanField(default=False)
 
+    class Meta:
+        ordering = ('-is_featured', 'id')
+
 class ProductDocument(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='documents')
     title = models.CharField(max_length=255)

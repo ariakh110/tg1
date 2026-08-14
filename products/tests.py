@@ -20,6 +20,7 @@ from .models import (
     ProductAuditLog,
     ProductAttributeOption,
     ProductCategory,
+    ProductImage,
     ProductSpecification,
     Seller,
 )
@@ -99,32 +100,60 @@ class ProductAssetPermissionTests(APITestCase):
         Offer.objects.create(product=self.product, seller=self.owner_seller, is_active=True)
 
     def test_only_offer_owner_can_upload_product_image(self):
-        image = SimpleUploadedFile(
-            "sample.jpg",
-            b"\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b",
-            content_type="image/jpeg",
-        )
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            self.client.force_authenticate(self.seller_other_user)
+            forbidden = self.client.post(
+                "/api/product-images/",
+                {"product": self.product.id, "image": make_test_category_icon("forbidden.png")},
+                format="multipart",
+            )
+            self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
 
-        self.client.force_authenticate(self.seller_other_user)
-        forbidden = self.client.post(
-            "/api/product-images/",
-            {"product": self.product.id, "image": image},
-            format="multipart",
-        )
-        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+            self.client.force_authenticate(self.seller_owner_user)
+            allowed = self.client.post(
+                "/api/product-images/",
+                {"product": self.product.id, "image": make_test_category_icon("allowed.png")},
+                format="multipart",
+            )
+            self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+            self.assertTrue(allowed.data["is_featured"])
 
-        image_ok = SimpleUploadedFile(
-            "sample2.jpg",
-            b"\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b",
-            content_type="image/jpeg",
-        )
-        self.client.force_authenticate(self.seller_owner_user)
-        allowed = self.client.post(
-            "/api/product-images/",
-            {"product": self.product.id, "image": image_ok},
-            format="multipart",
-        )
-        self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+    def test_featured_product_image_lifecycle_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            self.client.force_authenticate(self.seller_owner_user)
+            first = self.client.post(
+                "/api/product-images/",
+                {"product": self.product.id, "image": make_test_category_icon("first.png")},
+                format="multipart",
+            )
+            second = self.client.post(
+                "/api/product-images/",
+                {"product": self.product.id, "image": make_test_category_icon("second.png")},
+                format="multipart",
+            )
+
+            self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.data)
+            self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.data)
+            self.assertTrue(first.data["is_featured"])
+            self.assertFalse(second.data["is_featured"])
+
+            selected = self.client.patch(
+                f"/api/product-images/{second.data['id']}/",
+                {"is_featured": True},
+                format="json",
+            )
+            self.assertEqual(selected.status_code, status.HTTP_200_OK, selected.data)
+            self.assertFalse(ProductImage.objects.get(pk=first.data["id"]).is_featured)
+            self.assertTrue(ProductImage.objects.get(pk=second.data["id"]).is_featured)
+
+            listing = self.client.get("/api/product-images/", {"product": self.product.id})
+            self.assertEqual(listing.status_code, status.HTTP_200_OK, listing.data)
+            listed_images = listing.data.get("results", listing.data)
+            self.assertEqual(listed_images[0]["id"], second.data["id"])
+
+            deleted = self.client.delete(f"/api/product-images/{second.data['id']}/")
+            self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+            self.assertTrue(ProductImage.objects.get(pk=first.data["id"]).is_featured)
 
 
 class ProductTaxonomyTests(APITestCase):

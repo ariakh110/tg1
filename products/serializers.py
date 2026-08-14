@@ -3,6 +3,7 @@ import re
 
 from rest_framework import serializers
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from .content_sanitizer import sanitize_plain_text, sanitize_product_content_html
 from .models import (
@@ -450,6 +451,37 @@ class ProductImageSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(url)
             return url
         return None
+
+    @transaction.atomic
+    def create(self, validated_data):
+        product = validated_data["product"]
+        should_feature = bool(validated_data.get("is_featured")) or not ProductImage.objects.filter(
+            product=product,
+            is_featured=True,
+        ).exists()
+        if should_feature:
+            ProductImage.objects.filter(product=product, is_featured=True).update(is_featured=False)
+        validated_data["is_featured"] = should_feature
+        return super().create(validated_data)
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        requested_product = validated_data.pop("product", None)
+        if requested_product and requested_product.pk != instance.product_id:
+            raise serializers.ValidationError({"product": "انتقال تصویر به محصول دیگر مجاز نیست."})
+
+        if validated_data.get("is_featured") is True:
+            ProductImage.objects.filter(
+                product_id=instance.product_id,
+                is_featured=True,
+            ).exclude(pk=instance.pk).update(is_featured=False)
+        elif validated_data.get("is_featured") is False and instance.is_featured:
+            replacement = ProductImage.objects.filter(product_id=instance.product_id).exclude(pk=instance.pk).first()
+            if replacement:
+                ProductImage.objects.filter(pk=replacement.pk).update(is_featured=True)
+            else:
+                validated_data["is_featured"] = True
+        return super().update(instance, validated_data)
 
 
 class ProductDocumentSerializer(serializers.ModelSerializer):
