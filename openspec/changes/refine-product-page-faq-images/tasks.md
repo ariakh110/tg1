@@ -15,7 +15,7 @@
 - [x] 3.1 Run backend tests and migration checks.
 - [x] 3.2 Run frontend tests, lint, and production build.
 - [x] 3.3 Validate this OpenSpec change in strict mode.
-- [ ] 3.4 Commit and push both repositories and rebuild deployment archives.
+- [x] 3.4 Commit and push both repositories and rebuild deployment archives.
 
 ## Verification
 
@@ -26,3 +26,5 @@
 - `npm run build`: passed; only existing unrelated warnings remain.
 - Local production SSR smoke: product route returned 200 with four initially open FAQ disclosures and rendered chevrons.
 - `openspec validate refine-product-page-faq-images --strict`: passed.
+- GitHub: frontend `aee5796` and backend `84468f1` were pulled/rebased and pushed to `dev-ariakhayer`.
+- Deployment archives were rebuilt with the product-image migration, image manager, and FAQ changes present.
