@@ -16,7 +16,7 @@
 - [x] 3.1 Run frontend SEO tests, lint, and production build.
 - [x] 3.2 Run Django checks, migrations check, focused tests, and migration tests.
 - [x] 3.3 Run shell syntax, strict OpenSpec, and diff validation.
-- [ ] 3.4 Commit and push both repositories, then rebuild the manual deployment files.
+- [x] 3.4 Commit and push both repositories, then rebuild the manual deployment files.
 - [ ] 3.5 After production cutover, verify live redirects, canonical tags, sitemap, robots, API, admin, and webhook URLs.
 
 ## Verification Notes
@@ -25,3 +25,4 @@
 - Backend: Django check, migration drift check, and all 58 focused messaging/SEO assistant tests passed.
 - Full backend suite: 263 of 265 tests passed. Two existing `sales.tests.LoadingVehicleWeighbridgeTests` error because their fixture still supplies removed `StoreOrderItem.unit_price` and `total_price` arguments; this migration does not touch that workflow.
 - Operations: Bash and PowerShell syntax checks, local production Host probes, diff checks, and all affected strict OpenSpec validations passed.
+- Delivery: frontend commit `0e50a74` and backend changes through `08fdc2f` were rebased, pushed, and used to regenerate the manual release files successfully.
