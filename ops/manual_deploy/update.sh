@@ -4,17 +4,63 @@
 set -Eeo pipefail
 
 TARGET="${1:-both}"
-CANONICAL_HOST="${CANONICAL_HOST:-kavex.ir}"
-CANONICAL_ORIGIN="${CANONICAL_ORIGIN:-https://kavex.ir}"
+CANONICAL_HOST="${CANONICAL_HOST:-kavehmetal.com}"
+CANONICAL_ORIGIN="${CANONICAL_ORIGIN:-https://kavehmetal.com}"
+LEGACY_CANONICAL_HOST="${LEGACY_CANONICAL_HOST:-kavex.ir}"
 ORIGIN_IP_HOST="${ORIGIN_IP_HOST:-130.185.75.68}"
+FRONTEND_API_URL="${FRONTEND_API_URL:-$CANONICAL_ORIGIN/api}"
 if [[ "$TARGET" != "both" && "$TARGET" != "backend" && "$TARGET" != "frontend" ]]; then
   echo "ERROR: target must be one of: both, backend, frontend" >&2
   exit 2
 fi
 
+upsert_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+
+  mkdir -p -- "$(dirname -- "$file")"
+  touch -- "$file"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*$|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+backup_domain_env_once() {
+  local file="$1"
+  local backup="${file}.pre-kavehmetal"
+
+  if [[ -f "$file" && ! -f "$backup" ]]; then
+    cp -a -- "$file" "$backup"
+  fi
+}
+
+configure_backend_domain() {
+  local env_file="/opt/tirexa/backend/.env"
+  backup_domain_env_once "$env_file"
+  upsert_env_value "$env_file" "DJANGO_ALLOWED_HOSTS" \
+    "$CANONICAL_HOST,www.$CANONICAL_HOST,127.0.0.1,localhost"
+  upsert_env_value "$env_file" "CORS_ALLOWED_ORIGINS" \
+    "$CANONICAL_ORIGIN,https://www.$CANONICAL_HOST"
+  upsert_env_value "$env_file" "CSRF_TRUSTED_ORIGINS" \
+    "$CANONICAL_ORIGIN,https://www.$CANONICAL_HOST"
+}
+
+configure_frontend_domain() {
+  local env_file="/opt/tirexa/frontend/.env.production.local"
+  backup_domain_env_once "$env_file"
+  upsert_env_value "$env_file" "NEXT_PUBLIC_SITE_URL" "$CANONICAL_ORIGIN"
+  upsert_env_value "$env_file" "CANONICAL_SITE_URL" "$CANONICAL_ORIGIN"
+  upsert_env_value "$env_file" "NEXT_PUBLIC_API_URL" "$FRONTEND_API_URL"
+}
+
 cd /opt/tirexa
 
 if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
+  echo "==> Configuring backend domain environment..."
+  configure_backend_domain
   echo "==> Extracting backend..."
   tar -xzf backend.tar.gz -C backend
   echo "==> Running migrations and collectstatic..."
@@ -32,6 +78,8 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
 fi
 
 if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
+  echo "==> Configuring frontend domain environment..."
+  configure_frontend_domain
   FRONTEND_RELEASE="/opt/tirexa/frontend_release"
   echo "==> Extracting frontend into staging..."
   rm -rf -- "$FRONTEND_RELEASE"
@@ -51,6 +99,9 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
     sed -i 's/\r$//' "$DEPLOY_HELPER"
   fi
 
+  CANONICAL_SITE_URL="$CANONICAL_ORIGIN" \
+  NEXT_PUBLIC_SITE_URL="$CANONICAL_ORIGIN" \
+  NEXT_PUBLIC_API_URL="$FRONTEND_API_URL" \
   bash "$DEPLOY_HELPER" \
     "$FRONTEND_RELEASE" \
     "/opt/tirexa/frontend" \
@@ -78,6 +129,19 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
     exit 1
   fi
 
+  LEGACY_REDIRECT_RESULT="$(
+    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      -H "Host: $LEGACY_CANONICAL_HOST" \
+      "http://127.0.0.1/products?family=sheet&source=legacy-host"
+  )"
+  IFS='|' read -r LEGACY_REDIRECT_STATUS LEGACY_REDIRECT_URL <<< "$LEGACY_REDIRECT_RESULT"
+  echo "legacy host:   $LEGACY_REDIRECT_STATUS -> $LEGACY_REDIRECT_URL"
+
+  if [[ "$LEGACY_REDIRECT_STATUS" != "301" || "$LEGACY_REDIRECT_URL" != "$CANONICAL_ORIGIN/products?family=sheet&source=legacy-host" ]]; then
+    echo "ERROR: legacy Host did not redirect permanently to the canonical origin" >&2
+    exit 1
+  fi
+
   ST52_REDIRECT_RESULT="$(
     curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
       -H "Host: $CANONICAL_HOST" \
@@ -88,6 +152,14 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
 
   if [[ "$ST52_REDIRECT_STATUS" != "301" || "$ST52_REDIRECT_URL" != "$CANONICAL_ORIGIN/category/sheet/st52?source=deploy-smoke" ]]; then
     echo "ERROR: uppercase ST52 did not redirect permanently to the lowercase canonical URL" >&2
+    exit 1
+  fi
+
+  ROBOTS="$(curl -sS -H "Host: $CANONICAL_HOST" http://127.0.0.1/robots.txt)"
+  if grep -Fq "Sitemap: $CANONICAL_ORIGIN/sitemap.xml" <<< "$ROBOTS"; then
+    echo "canonical sitemap: present in robots.txt"
+  else
+    echo "ERROR: robots.txt does not advertise the canonical sitemap" >&2
     exit 1
   fi
 fi

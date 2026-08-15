@@ -7,12 +7,12 @@ The production storefront SHALL serve page content only on its configured canoni
 #### Scenario: Origin IP homepage request
 - **WHEN** a client requests `/` with the production origin IP as the Host
 - **THEN** the response status is HTTP 301
-- **AND** the Location is `https://kavex.ir/`
+- **AND** the Location is `https://kavehmetal.com/`
 
 #### Scenario: Deep link on an unexpected Host
 - **WHEN** a client requests `/products?family=sheet` with `www` or an unexpected Host
 - **THEN** the response status is HTTP 301
-- **AND** the Location is `https://kavex.ir/products?family=sheet`
+- **AND** the Location is `https://kavehmetal.com/products?family=sheet`
 
 #### Scenario: Unsafe method on an unexpected Host
 - **WHEN** a client sends a non-idempotent request with a non-canonical Host

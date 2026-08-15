@@ -135,4 +135,4 @@ Write-Host "==> Applying release on the server..." -ForegroundColor Cyan
 ssh $server "bash /opt/tirexa/update.sh $Target"
 Assert-NativeCommand "Remote deployment" $LASTEXITCODE
 
-Write-Host "==> Deployment complete: https://kavex.ir" -ForegroundColor Green
+Write-Host "==> Deployment complete: https://kavehmetal.com" -ForegroundColor Green

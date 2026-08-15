@@ -7,12 +7,12 @@ The storefront SHALL permanently consolidate the previously published uppercase 
 #### Scenario: Legacy URL without trailing slash
 - **WHEN** a client requests `/category/sheet/ST52`
 - **THEN** the response status is HTTP 301
-- **AND** the Location is `https://kavex.ir/category/sheet/st52`
+- **AND** the Location is `https://kavehmetal.com/category/sheet/st52`
 
 #### Scenario: Legacy URL with query string
 - **WHEN** a client requests `/category/sheet/ST52?source=legacy`
 - **THEN** the response status is HTTP 301
-- **AND** the Location is `https://kavex.ir/category/sheet/st52?source=legacy`
+- **AND** the Location is `https://kavehmetal.com/category/sheet/st52?source=legacy`
 
 #### Scenario: Canonical lowercase URL
 - **WHEN** a client requests `/category/sheet/st52`

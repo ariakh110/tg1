@@ -64,7 +64,7 @@ class MessagingSettings(models.Model):
         help_text="userIdهای مجاز برای دستورهای مدیریتی در چتِ خصوصی (با کاما). در گروهِ تنظیم‌شده خودبه‌خود مجاز است.",
     )
     site_base_url = models.CharField(
-        max_length=200, blank=True, default="https://kavex.ir", verbose_name="آدرسِ سایت",
+        max_length=200, blank=True, default="https://kavehmetal.com", verbose_name="آدرسِ سایت",
         help_text="برای ساختِ لینکِ محصول در پاسخِ ربات قیمت.",
     )
 

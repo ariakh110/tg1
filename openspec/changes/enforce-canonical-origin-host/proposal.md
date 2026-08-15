@@ -6,7 +6,7 @@ The public origin IP and arbitrary Host headers currently return the storefront 
 
 ## What Changes
 
-- Add a production request guard that permanently redirects safe requests from the origin IP, `www`, and any unexpected Host to `https://kavex.ir`.
+- Add a production request guard that permanently redirects safe requests from the origin IP, `www`, the legacy domain, and any unexpected Host to the configured canonical origin (currently `https://kavehmetal.com`).
 - Preserve the requested path and query string during host consolidation.
 - Reject non-idempotent requests sent to an unexpected Host instead of forwarding their body through a redirect.
 - Add automated policy tests and a post-deploy smoke test for the origin-IP redirect.

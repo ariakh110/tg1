@@ -1,3 +1,4 @@
+from importlib import import_module
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -14,6 +15,29 @@ from .models import (
     SeoMessage,
 )
 from .serializers import SeoAssistantSettingsSerializer
+
+
+class SeoAssistantDomainMigrationTests(TestCase):
+    def test_domain_replacement_preserves_custom_context(self):
+        cfg = SeoAssistantSettings.load()
+        cfg.site_context = "راهنمای اختصاصی برای kavex.ir؛ این جمله باید باقی بماند."
+        cfg.save(update_fields=["site_context"])
+
+        migration = import_module(
+            "seo_assistant.migrations.0005_alter_seoassistantsettings_site_context"
+        )
+
+        class CurrentApps:
+            @staticmethod
+            def get_model(app_label, model_name):
+                return SeoAssistantSettings
+
+        migration.migrate_site_context(CurrentApps(), None)
+        cfg.refresh_from_db()
+        self.assertEqual(
+            cfg.site_context,
+            "راهنمای اختصاصی برای kavehmetal.com؛ این جمله باید باقی بماند.",
+        )
 
 
 class SeoAssistantTimeoutTests(TestCase):

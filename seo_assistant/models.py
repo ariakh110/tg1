@@ -19,9 +19,9 @@ DEFAULT_PERSONA = (
 )
 
 DEFAULT_SITE_CONTEXT = (
-    "سایت هدف: کاوکس (kavex.ir) — بازار آنلاین آهن و فولاد، پایگاه اصفهان، فروش عمدهٔ ورق و مقاطع.\n"
+    "سایت هدف: کاوکس (kavehmetal.com) — بازار آنلاین آهن و فولاد، پایگاه اصفهان، فروش عمدهٔ ورق و مقاطع.\n"
     "استک: بک‌اند Django/DRF + فرانت‌اند Next.js (SSR/SSG)، سرور اوبونتو (systemd: gunicorn + next + nginx).\n"
-    "✅ دامنه + HTTPS + CDN حل شده: سایت روی دامنهٔ kavex.ir پشتِ Cloudflare با HTTPS لبه فعال است. پس بلاکرِ قدیمیِ "
+    "✅ دامنه + HTTPS + CDN حل شده: سایت روی دامنهٔ kavehmetal.com پشتِ Cloudflare با HTTPS لبه فعال است. پس بلاکرِ قدیمیِ "
     "«IP ایران → صفحهٔ سفید / عدم crawl» دیگر برقرار نیست؛ آن را به‌عنوان بلاکر مطرح نکن مگر شواهدِ زندهٔ صفحه خلافش را نشان دهد.\n"
     "زیرساختِ سئوی پیاده‌شده (قبل از پیشنهادِ افزودن، با schema_types ابزار تطبیق بده): sitemap.xml + robots.txt؛ "
     "صفحاتِ محصول و لندینگ SSR با generateMetadata؛ و اسکیماهای خودکار: Organization (layout)، BreadcrumbList (همه‌جا)، "

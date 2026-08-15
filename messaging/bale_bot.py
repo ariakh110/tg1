@@ -320,7 +320,7 @@ def _price_text(query, cfg):
     products = found.get("products") or []
     if not products:
         return "محصولی با این مشخصات پیدا نشد. لطفاً دقیق‌تر بنویسید (نوع، گرید، ضخامت)."
-    base = (cfg.site_base_url or "https://kavex.ir").rstrip("/")
+    base = (cfg.site_base_url or "https://kavehmetal.com").rstrip("/")
     lines = ["🔎 نتایج:"]
     for p in products:
         price = p.get("price_toman")

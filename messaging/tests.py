@@ -1,4 +1,5 @@
 import json
+from importlib import import_module
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -11,6 +12,32 @@ from .providers.kavenegar import SendResult
 from .providers.telegram import SendResult as TelegramSendResult
 
 User = get_user_model()
+
+
+class MessagingDomainMigrationTests(APITestCase):
+    def test_only_legacy_site_base_url_is_migrated(self):
+        cfg = MessagingSettings.load()
+        cfg.site_base_url = "https://kavex.ir/"
+        cfg.save(update_fields=["site_base_url"])
+
+        migration = import_module(
+            "messaging.migrations.0008_alter_messagingsettings_site_base_url"
+        )
+
+        class CurrentApps:
+            @staticmethod
+            def get_model(app_label, model_name):
+                return MessagingSettings
+
+        migration.migrate_site_base_url(CurrentApps(), None)
+        cfg.refresh_from_db()
+        self.assertEqual(cfg.site_base_url, "https://kavehmetal.com")
+
+        cfg.site_base_url = "https://shop.example.com"
+        cfg.save(update_fields=["site_base_url"])
+        migration.migrate_site_base_url(CurrentApps(), None)
+        cfg.refresh_from_db()
+        self.assertEqual(cfg.site_base_url, "https://shop.example.com")
 
 
 class PhoneNormalizationTests(APITestCase):
@@ -335,7 +362,7 @@ class MessagingApiTests(APITestCase):
              patch("messaging.providers.telegram.get_webhook_info", return_value=ok):
             response = self.client.post(
                 "/api/messaging/bale/set-webhook/",
-                {"url": "https://kavex.ir/api/messaging/bale/webhook/secret/"},
+                {"url": "https://kavehmetal.com/api/messaging/bale/webhook/secret/"},
                 format="json",
             )
 

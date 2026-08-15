@@ -4,7 +4,7 @@
 
 ## Goals / Non-Goals
 
-- Goals: make `https://kavex.ir` the only storefront origin, preserve deep links, prevent unsafe cross-host request replay, and detect a regression during deployment.
+- Goals: make the configured canonical domain (currently `https://kavehmetal.com`) the only storefront origin, preserve deep links, prevent unsafe cross-host request replay, and detect a regression during deployment.
 - Non-goals: change DNS/CDN configuration, install an origin TLS certificate, or rewrite the unknown production Nginx virtual-host files automatically.
 
 ## Decisions
@@ -19,7 +19,7 @@ GET and HEAD requests receive HTTP 301 and retain both path and query. Other met
 
 ### Deployment verification
 
-The updater sends one request to the local Nginx listener with `Host: 130.185.75.68`. A frontend deployment fails its smoke phase unless the response is exactly HTTP 301 with `https://kavex.ir/` as the redirect target. This verifies the complete Nginx-to-Next request path without assuming the location of the server's Nginx configuration.
+The updater sends one request to the local Nginx listener with `Host: 130.185.75.68`. A frontend deployment fails its smoke phase unless the response is exactly HTTP 301 with the configured canonical origin as the redirect target. This verifies the complete Nginx-to-Next request path without assuming the location of the server's Nginx configuration.
 
 ## Risks / Trade-offs
 

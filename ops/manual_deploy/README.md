@@ -14,4 +14,6 @@ For manual server upload, run:
 
 Then upload the generated archive files and `update.sh` from `C:\Users\ariakh\deploy`. The `-PrepareOnly` option never connects to the server.
 
-For frontend releases, the updater also verifies that a request carrying the public origin IP as its Host receives `301` to `https://kavex.ir/`. The defaults can be overridden together with `CANONICAL_HOST`, `CANONICAL_ORIGIN`, and `ORIGIN_IP_HOST` if the production domain or origin changes.
+The updater migrates only the public-domain keys in the existing backend and frontend environment files. It preserves all secrets and writes a one-time `.pre-kavehmetal` backup beside each changed environment file.
+
+For frontend releases, the updater verifies that requests carrying the public origin IP or legacy `kavex.ir` Host receive `301` to `https://kavehmetal.com`, with path and query preserved. It also verifies the lowercase ST52 redirect and the canonical sitemap directive in `robots.txt`. The defaults can be overridden with `CANONICAL_HOST`, `CANONICAL_ORIGIN`, `LEGACY_CANONICAL_HOST`, `ORIGIN_IP_HOST`, and `FRONTEND_API_URL`.
