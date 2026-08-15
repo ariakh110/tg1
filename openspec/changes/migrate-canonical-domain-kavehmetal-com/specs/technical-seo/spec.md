@@ -30,7 +30,7 @@ The manual production updater SHALL configure the backend and frontend public-do
 
 #### Scenario: Post-deploy smoke validation
 - **WHEN** a frontend release is activated
-- **THEN** the updater verifies origin-IP and legacy-Host HTTP 301 responses
+- **THEN** the updater probes the local Nginx HTTPS listener and verifies origin-IP and legacy-Host HTTP 301 responses
 - **AND** it verifies the lowercase ST52 redirect and canonical sitemap directive
 - **AND** it exits non-zero if any assertion fails
 

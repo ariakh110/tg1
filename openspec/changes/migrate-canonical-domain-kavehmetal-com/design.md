@@ -13,6 +13,7 @@
 - Keep Host consolidation in application middleware so path/query preservation and unsafe-method rejection remain identical for the IP, old domain, and arbitrary Hosts.
 - Run Cloudflare records as DNS-only until Nginx serves the new Host and Let's Encrypt has issued a valid certificate. Enable the proxy only after HTTPS works directly.
 - Let `update.sh` upsert only six public-domain environment keys. Existing secrets are untouched and each environment file receives a one-time `.pre-kavehmetal` backup.
+- Run post-deploy probes against the local Nginx HTTPS listener with explicit local address overrides. This validates the certificate-enabled virtual-host path without depending on Cloudflare and remains correct when Nginx redirects port 80 to HTTPS.
 - Migrate persisted application data conservatively: exact legacy Bale base URLs and occurrences of `kavex.ir` in the singleton SEO context are replaced; other custom values remain unchanged.
 
 ## Risks / Trade-offs

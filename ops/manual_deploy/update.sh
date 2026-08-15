@@ -111,15 +111,21 @@ fi
 echo
 echo "===== SMOKE TESTS ====="
 sleep 3
-curl -s -o /dev/null -w "home:          %{http_code}\n" \
-  -H "Host: $CANONICAL_HOST" http://127.0.0.1/
-curl -s -o /dev/null -w "api:           %{http_code}\n" http://127.0.0.1/api/site-settings/
-curl -s -o /dev/null -w "admin:         %{http_code}\n" http://127.0.0.1/django-admin/
+LOCAL_CANONICAL_CURL=(
+  curl -k -sS --resolve "$CANONICAL_HOST:443:127.0.0.1"
+)
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "home:          %{http_code}\n" \
+  "$CANONICAL_ORIGIN/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "api:           %{http_code}\n" \
+  "$CANONICAL_ORIGIN/api/site-settings/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "admin:         %{http_code}\n" \
+  "$CANONICAL_ORIGIN/django-admin/"
 
 if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   IP_REDIRECT_RESULT="$(
-    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
-      -H "Host: $ORIGIN_IP_HOST" http://127.0.0.1/
+    curl -k -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      --connect-to "$ORIGIN_IP_HOST:443:127.0.0.1:443" \
+      "https://$ORIGIN_IP_HOST/"
   )"
   IFS='|' read -r IP_REDIRECT_STATUS IP_REDIRECT_URL <<< "$IP_REDIRECT_RESULT"
   echo "origin IP:     $IP_REDIRECT_STATUS -> $IP_REDIRECT_URL"
@@ -130,9 +136,9 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   fi
 
   LEGACY_REDIRECT_RESULT="$(
-    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
-      -H "Host: $LEGACY_CANONICAL_HOST" \
-      "http://127.0.0.1/products?family=sheet&source=legacy-host"
+    curl -k -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      --resolve "$LEGACY_CANONICAL_HOST:443:127.0.0.1" \
+      "https://$LEGACY_CANONICAL_HOST/products?family=sheet&source=legacy-host"
   )"
   IFS='|' read -r LEGACY_REDIRECT_STATUS LEGACY_REDIRECT_URL <<< "$LEGACY_REDIRECT_RESULT"
   echo "legacy host:   $LEGACY_REDIRECT_STATUS -> $LEGACY_REDIRECT_URL"
@@ -143,9 +149,8 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   fi
 
   ST52_REDIRECT_RESULT="$(
-    curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' \
-      -H "Host: $CANONICAL_HOST" \
-      "http://127.0.0.1/category/sheet/ST52?source=deploy-smoke"
+    "${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w '%{http_code}|%{redirect_url}' \
+      "$CANONICAL_ORIGIN/category/sheet/ST52?source=deploy-smoke"
   )"
   IFS='|' read -r ST52_REDIRECT_STATUS ST52_REDIRECT_URL <<< "$ST52_REDIRECT_RESULT"
   echo "ST52 legacy:   $ST52_REDIRECT_STATUS -> $ST52_REDIRECT_URL"
@@ -155,7 +160,7 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
     exit 1
   fi
 
-  ROBOTS="$(curl -sS -H "Host: $CANONICAL_HOST" http://127.0.0.1/robots.txt)"
+  ROBOTS="$("${LOCAL_CANONICAL_CURL[@]}" "$CANONICAL_ORIGIN/robots.txt")"
   if grep -Fq "Sitemap: $CANONICAL_ORIGIN/sitemap.xml" <<< "$ROBOTS"; then
     echo "canonical sitemap: present in robots.txt"
   else
@@ -164,7 +169,7 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   fi
 fi
 
-SETTINGS="$(curl -s http://127.0.0.1/api/site-settings/)"
+SETTINGS="$("${LOCAL_CANONICAL_CURL[@]}" "$CANONICAL_ORIGIN/api/site-settings/")"
 if grep -q google_tag_manager_id <<< "$SETTINGS"; then
   echo "GTM field: present"
 else
