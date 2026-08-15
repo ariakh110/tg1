@@ -68,5 +68,7 @@
 
 - In the admin messaging settings, confirm Site Base URL is `https://kavehmetal.com`.
 - Re-register the Bale webhook so its URL uses the new domain.
+- In the Kavenegar developer panel, replace any configured delivery-status and incoming-message callbacks with `https://kavehmetal.com/api/messaging/kavenegar/status/<secret>/` and `https://kavehmetal.com/api/messaging/kavenegar/incoming/<secret>/`.
+- Update allowed origins or callback URLs in any enabled OAuth or payment provider before testing those flows.
 - Add `https://kavehmetal.com/sitemap.xml` as a new property/sitemap in Search Console.
 - Do not request indexing for account, authentication, checkout, buy-intent, or API URLs.
