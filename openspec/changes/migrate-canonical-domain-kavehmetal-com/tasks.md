@@ -19,6 +19,11 @@
 - [x] 3.4 Commit and push both repositories, then rebuild the manual deployment files.
 - [ ] 3.5 After production cutover, verify live redirects, canonical tags, sitemap, robots, API, admin, and webhook URLs.
 
+## 4. Post-cutover remediation
+
+- [x] 4.1 Replace persisted and runtime legacy `Sitemap` directives with one canonical `kavehmetal.com` directive.
+- [x] 4.2 Configure backend `FRONTEND_BASE` during deployment and reject duplicate or non-canonical robots sitemap directives in smoke tests.
+
 ## Verification Notes
 
 - Frontend: 19 SEO tests passed; lint and production build passed. Six pre-existing lint warnings remain outside this change.
@@ -26,3 +31,4 @@
 - Full backend suite: 263 of 265 tests passed. Two existing `sales.tests.LoadingVehicleWeighbridgeTests` error because their fixture still supplies removed `StoreOrderItem.unit_price` and `total_price` arguments; this migration does not touch that workflow.
 - Operations: Bash and PowerShell syntax checks, local production Host probes, diff checks, and all affected strict OpenSpec validations passed.
 - Delivery: frontend commit `0e50a74` and backend changes through `08fdc2f` were rebased, pushed, and used to regenerate the manual release files successfully.
+- Robots remediation (2026-09-01): all 20 frontend SEO tests, lint, and the production build passed; the built robots artifact contains only the `kavehmetal.com` Sitemap directive. Two focused Django endpoint tests passed against a temporary SQLite database, Django reported no model drift, Bash syntax passed, and strict OpenSpec validation passed.

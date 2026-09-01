@@ -18,20 +18,25 @@ The production application SHALL publish `https://kavehmetal.com` as its canonic
 - **WHEN** a non-idempotent request reaches the application through a non-canonical Host
 - **THEN** the request is rejected without replaying its body to the canonical origin
 
+#### Scenario: Legacy robots settings
+- **WHEN** persisted robots content contains one or more Sitemap directives, including a legacy `kavex.ir` URL
+- **THEN** the public robots response contains exactly one Sitemap directive for `https://kavehmetal.com/sitemap.xml`
+- **AND** no legacy or duplicate Sitemap directive is published
+
 ### Requirement: Domain-Aware Release Configuration
 
 The manual production updater SHALL configure the backend and frontend public-domain environment keys for `kavehmetal.com` before service restart, SHALL preserve unrelated environment values and secrets, and SHALL retain one-time backups of the prior environment files.
 
 #### Scenario: Existing production environment
 - **WHEN** the release updater runs against existing backend and frontend environment files
-- **THEN** only Host, CORS, CSRF, canonical site, public site, and public API URL keys are upserted
+- **THEN** only Host, CORS, CSRF, backend frontend-base, canonical site, public site, and public API URL keys are upserted
 - **AND** all unrelated keys remain unchanged
 - **AND** a `.pre-kavehmetal` backup is retained for each pre-existing file
 
 #### Scenario: Post-deploy smoke validation
 - **WHEN** a frontend release is activated
 - **THEN** the updater probes the local Nginx HTTPS listener and verifies origin-IP and legacy-Host HTTP 301 responses
-- **AND** it verifies the lowercase ST52 redirect and canonical sitemap directive
+- **AND** it verifies the lowercase ST52 redirect and exactly one canonical sitemap directive
 - **AND** it exits non-zero if any assertion fails
 
 ### Requirement: Persisted Integration URL Migration

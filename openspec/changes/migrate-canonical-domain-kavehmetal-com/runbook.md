@@ -42,7 +42,7 @@
 5. Inspect the configured public-domain keys without displaying secrets:
 
    ```bash
-   grep -E '^(DJANGO_ALLOWED_HOSTS|CORS_ALLOWED_ORIGINS|CSRF_TRUSTED_ORIGINS)=' /opt/tirexa/backend/.env
+   grep -E '^(DJANGO_ALLOWED_HOSTS|CORS_ALLOWED_ORIGINS|CSRF_TRUSTED_ORIGINS|FRONTEND_BASE)=' /opt/tirexa/backend/.env
    grep -E '^(NEXT_PUBLIC_SITE_URL|CANONICAL_SITE_URL|NEXT_PUBLIC_API_URL)=' /opt/tirexa/frontend/.env.production.local
    ```
 
@@ -54,6 +54,12 @@
    curl -s https://kavehmetal.com/robots.txt
    curl -I https://kavehmetal.com/sitemap.xml
    curl -I https://kavehmetal.com/api/site-settings/
+   ```
+
+   The robots output must contain exactly this one Sitemap directive and no `kavex.ir` reference:
+
+   ```text
+   Sitemap: https://kavehmetal.com/sitemap.xml
    ```
 
 ## Cloudflare completion

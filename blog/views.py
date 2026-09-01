@@ -323,17 +323,30 @@ class SitemapView(APIView):
         return Response({'results': results})
 
 
+def canonicalize_robots_sitemap(robots, base_url):
+    base = (base_url or "").rstrip("/")
+    if not base or "localhost" in base or "127.0.0.1" in base:
+        return robots
+
+    kept_lines = []
+    for line in (robots or "").splitlines():
+        key, separator, _value = line.partition(":")
+        if separator and key.strip().lower() == "sitemap":
+            continue
+        kept_lines.append(line)
+    kept_lines.append(f"Sitemap: {base}/sitemap.xml")
+    return "\n".join(kept_lines).strip() + "\n"
+
+
 class RobotsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
         robots = SiteSEOSettings.load().robots_txt or ""
-        # خط Sitemap را خودکار اضافه کن تا موتورها آدرس sitemap را از robots پیدا کنند
-        # (فقط اگر دامنهٔ واقعی ست شده باشد؛ روی localhost/پیش‌فرض چیزی اضافه نمی‌شود)
-        if "sitemap:" not in robots.lower():
-            base = (getattr(settings, "FRONTEND_BASE", "") or "").rstrip("/")
-            if base and "localhost" not in base and "127.0.0.1" not in base:
-                robots = robots.rstrip() + f"\nSitemap: {base}/sitemap.xml\n"
+        robots = canonicalize_robots_sitemap(
+            robots,
+            getattr(settings, "FRONTEND_BASE", ""),
+        )
         return HttpResponse(robots, content_type='text/plain; charset=utf-8')
 
 

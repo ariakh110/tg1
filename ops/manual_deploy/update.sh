@@ -46,6 +46,7 @@ configure_backend_domain() {
     "$CANONICAL_ORIGIN,https://www.$CANONICAL_HOST"
   upsert_env_value "$env_file" "CSRF_TRUSTED_ORIGINS" \
     "$CANONICAL_ORIGIN,https://www.$CANONICAL_HOST"
+  upsert_env_value "$env_file" "FRONTEND_BASE" "$CANONICAL_ORIGIN"
 }
 
 configure_frontend_domain() {
@@ -161,10 +162,15 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   fi
 
   ROBOTS="$("${LOCAL_CANONICAL_CURL[@]}" "$CANONICAL_ORIGIN/robots.txt")"
-  if grep -Fq "Sitemap: $CANONICAL_ORIGIN/sitemap.xml" <<< "$ROBOTS"; then
-    echo "canonical sitemap: present in robots.txt"
+  mapfile -t ROBOTS_SITEMAP_LINES < <(
+    grep -iE '^[[:space:]]*sitemap[[:space:]]*:' <<< "$ROBOTS" || true
+  )
+  EXPECTED_SITEMAP_LINE="Sitemap: $CANONICAL_ORIGIN/sitemap.xml"
+  if [[ ${#ROBOTS_SITEMAP_LINES[@]} -eq 1 && "${ROBOTS_SITEMAP_LINES[0]}" == "$EXPECTED_SITEMAP_LINE" ]]; then
+    echo "canonical sitemap: exactly one directive in robots.txt"
   else
-    echo "ERROR: robots.txt does not advertise the canonical sitemap" >&2
+    echo "ERROR: robots.txt must contain exactly: $EXPECTED_SITEMAP_LINE" >&2
+    printf 'Found sitemap directives:\n%s\n' "${ROBOTS_SITEMAP_LINES[*]:-(none)}" >&2
     exit 1
   fi
 fi

@@ -570,3 +570,27 @@ class BlogAPITests(TestCase):
         self.assertNotIn("Disallow: /admin/", robots_text)
         self.assertNotIn("Disallow: /account/", robots_text)
         self.assertNotIn("Disallow: /auth/", robots_text)
+
+    @override_settings(FRONTEND_BASE="https://kavehmetal.com")
+    def test_robots_replaces_legacy_and_duplicate_sitemap_directives(self):
+        seo_settings = SiteSEOSettings.load()
+        seo_settings.robots_txt = (
+            "User-agent: *\n"
+            "Allow: /\n"
+            "Disallow: /api/\n"
+            "Sitemap: https://kavex.ir/sitemap.xml\n"
+            "sItEmAp: https://example.com/duplicate.xml\n"
+        )
+        seo_settings.save(update_fields=["robots_txt"])
+
+        response = self.client.get("/api/blog/robots.txt")
+
+        self.assertEqual(response.status_code, 200)
+        robots_text = response.content.decode("utf-8")
+        self.assertNotIn("kavex.ir", robots_text)
+        self.assertNotIn("example.com", robots_text)
+        self.assertEqual(robots_text.lower().count("sitemap:"), 1)
+        self.assertIn(
+            "Sitemap: https://kavehmetal.com/sitemap.xml",
+            robots_text,
+        )
