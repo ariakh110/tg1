@@ -1341,7 +1341,7 @@ class LoadingVehicleWeighbridgeTests(APITestCase):
             order=order, product=product, offer=offer, pricing_tier=tier,
             product_name="Heavy", seller_name="S",
             quantity=50, quantity_unit="TON",
-            unit_price=1000000, total_price=50000000,
+            unit_price_amount=1000000, total_price_amount=50000000,
             estimated_weight_kg="50000.000", final_weight_kg="50000.000",
         )
         return order

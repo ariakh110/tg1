@@ -20,3 +20,8 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local development data
+db.local.sqlite3
+db.local.sqlite3-*
+media-local/
