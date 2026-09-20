@@ -9,7 +9,9 @@ param(
   [ValidateSet("both", "backend", "frontend")]
   [string]$Target = "both",
   [switch]$PrepareOnly,
-  [string]$DeployDir = ""
+  [string]$DeployDir = "",
+  [ValidateRange(1, 65535)]
+  [int]$SshPort = 22
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +20,12 @@ $server = if ($env:KAVEHMETAL_DEPLOY_SERVER) {
   $env:KAVEHMETAL_DEPLOY_SERVER
 } else {
   "deploy@130.185.75.68"
+}
+if ($env:KAVEHMETAL_DEPLOY_SSH_PORT -and -not $PSBoundParameters.ContainsKey("SshPort")) {
+  $SshPort = [int]$env:KAVEHMETAL_DEPLOY_SSH_PORT
+}
+if ($SshPort -lt 1 -or $SshPort -gt 65535) {
+  throw "SSH port must be between 1 and 65535."
 }
 $beRepo = if ($env:KAVEHMETAL_BACKEND_REPO) {
   (Resolve-Path -LiteralPath $env:KAVEHMETAL_BACKEND_REPO).Path
@@ -149,11 +157,11 @@ if ($PrepareOnly) {
 }
 
 Write-Host "==> Uploading release files..." -ForegroundColor Cyan
-scp $files "${server}:/opt/tirexa/"
+scp -P $SshPort $files "${server}:/opt/tirexa/"
 Assert-NativeCommand "Release upload" $LASTEXITCODE
 
 Write-Host "==> Applying release on the server..." -ForegroundColor Cyan
-ssh $server "bash /opt/tirexa/update.sh $Target"
+ssh -p $SshPort $server "bash /opt/tirexa/update.sh $Target"
 Assert-NativeCommand "Remote deployment" $LASTEXITCODE
 
 Write-Host "==> Deployment complete: https://kavehmetal.com" -ForegroundColor Green

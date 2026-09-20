@@ -12,7 +12,7 @@ For manual server upload, run:
 .\ops\manual_deploy\deploy.ps1 both -PrepareOnly
 ```
 
-Then upload the generated archive files and `update.sh` from `%USERPROFILE%\deploy`. The `-PrepareOnly` option never connects to the server. Use `-DeployDir` to choose another output folder. Advanced overrides are available through `KAVEHMETAL_BACKEND_REPO`, `KAVEHMETAL_FRONTEND_REPO`, `KAVEHMETAL_DEPLOY_DIR`, and `KAVEHMETAL_DEPLOY_SERVER`.
+Then upload the generated archive files and `update.sh` from `%USERPROFILE%\deploy`. The `-PrepareOnly` option never connects to the server. Use `-DeployDir` to choose another output folder and `-SshPort` for a nonstandard SSH port. Advanced overrides are available through `KAVEHMETAL_BACKEND_REPO`, `KAVEHMETAL_FRONTEND_REPO`, `KAVEHMETAL_DEPLOY_DIR`, `KAVEHMETAL_DEPLOY_SERVER`, and `KAVEHMETAL_DEPLOY_SSH_PORT`.
 
 The updater migrates only the public-domain keys in the existing backend and frontend environment files, including the backend `FRONTEND_BASE`. It preserves all secrets and writes a one-time `.pre-kavehmetal` backup beside each changed environment file.
 
