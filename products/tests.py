@@ -553,6 +553,76 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(str(offer.pricing_tiers.get(tier_name="قیمت روز").unit_price), "45000.00")
         self.assertEqual(offer.delivery_options.get().city, "مبارکه")
 
+    def test_admin_product_accepts_legacy_lowercase_sheet_grade(self):
+        oiled = ProductAttributeOption.objects.get(group="surface_finish", value="oiled")
+        ProductAttributeOption.objects.create(
+            group="steel_grade",
+            value="sec",
+            label="SEC",
+            product_kind="sheet",
+            parent=oiled,
+            sort_order=999,
+            is_active=True,
+        )
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "ورق روغنی SEC تست",
+                "category_code": "sheet",
+                "steel_grade": "sec",
+                "manufacturing_process": "sheet",
+                "surface_finish": "oiled",
+                "factory": "mobarakeh",
+                "cut_type": "cut",
+                "thickness_mm": "0.4",
+                "width_mm": "1200",
+                "length_mm": "6000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        product = Product.objects.get(id=res.data["product_id"])
+        self.assertEqual(product.specifications.steel_grade, "SEC")
+
+    def test_taxonomy_normalizes_grade_code_and_returns_persian_duplicate_error(self):
+        self.client.force_authenticate(self.admin)
+        oiled = ProductAttributeOption.objects.get(group="surface_finish", value="oiled")
+        created = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "steel_grade",
+                "value": " sec ",
+                "label": "SEC",
+                "product_kind": "sheet",
+                "parent": oiled.id,
+                "sort_order": 999,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        duplicate = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "steel_grade",
+                "value": "sec",
+                "label": "SEC دوم",
+                "product_kind": "sheet",
+                "parent": oiled.id,
+                "sort_order": 1000,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+        self.assertEqual(created.data["value"], "SEC")
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST, duplicate.data)
+        self.assertIn("قبلاً ثبت شده", str(duplicate.data))
+
     def test_admin_can_save_product_page_content_and_related_products(self):
         category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
         product = Product.objects.create(category=category, name="SEO product")

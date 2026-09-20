@@ -188,6 +188,9 @@ class ProductAttributeOptionSerializer(serializers.ModelSerializer):
             "product_count",
             "active_product_count",
         )
+        # Validate uniqueness below so the admin gets a clear Persian error and
+        # steel-grade codes can be compared without case differences.
+        validators = []
 
     SPEC_FIELD_BY_GROUP = {
         "manufacturing_process": "manufacturing_process",
@@ -226,6 +229,24 @@ class ProductAttributeOptionSerializer(serializers.ModelSerializer):
         group = attrs.get("group", getattr(self.instance, "group", ""))
         product_kind = attrs.get("product_kind", getattr(self.instance, "product_kind", ""))
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
+
+        value = str(attrs.get("value", getattr(self.instance, "value", "")) or "").strip()
+        if group == "steel_grade":
+            value = value.upper().replace(" ", "")
+        if "value" in attrs or self.instance is None:
+            attrs["value"] = value
+
+        duplicate_options = ProductAttributeOption.objects.filter(
+            group=group,
+            value__iexact=value,
+            parent=parent,
+        )
+        if self.instance is not None:
+            duplicate_options = duplicate_options.exclude(pk=self.instance.pk)
+        if duplicate_options.exists():
+            raise serializers.ValidationError(
+                {"non_field_errors": ["گزینه‌ای با همین نوع، کد داخلی و والد قبلاً ثبت شده است."]}
+            )
 
         def require_parent(expected_group, message):
             if not parent:
@@ -300,7 +321,7 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
             return ""
         option = ProductAttributeOption.objects.filter(
             group=group,
-            value=value,
+            value__iexact=value,
             is_active=True,
         ).first()
         return option.label if option else str(value)
@@ -377,12 +398,12 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
                     if parent_option:
                         scoped_queryset = queryset.filter(parent=parent_option)
                         if scoped_queryset.exists():
-                            if not scoped_queryset.filter(value=value).exists():
+                            if not scoped_queryset.filter(value__iexact=value).exists():
                                 raise serializers.ValidationError(
                                     {field: "این گزینه برای انتخاب قبلی مجاز نیست."}
                                 )
                             return
-            if not queryset.filter(value=value).exists():
+            if not queryset.filter(value__iexact=value).exists():
                 raise serializers.ValidationError({field: "این گزینه در مدیریت تعریف نشده است."})
 
         for field, group in (

@@ -195,7 +195,7 @@ PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "0123
 def option_label(group, value):
     if value in ("", None):
         return ""
-    option = ProductAttributeOption.objects.filter(group=group, value=value, is_active=True).first()
+    option = ProductAttributeOption.objects.filter(group=group, value__iexact=value, is_active=True).first()
     return option.label if option else str(value)
 
 
