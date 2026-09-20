@@ -57,6 +57,48 @@ configure_frontend_domain() {
   upsert_env_value "$env_file" "NEXT_PUBLIC_API_URL" "$FRONTEND_API_URL"
 }
 
+resolve_backend_python() {
+  local service_exec_path=""
+  local candidate=""
+
+  service_exec_path="$(
+    systemctl show tirexa-backend --property=ExecStart --value 2>/dev/null \
+      | sed -n 's/.*path=\([^ ;}]*\).*/\1/p' \
+      | head -n 1
+  )"
+  if [[ "$service_exec_path" == /opt/tirexa/* ]]; then
+    candidate="$(dirname -- "$service_exec_path")/python"
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  for candidate in \
+    /opt/tirexa/backend/.venv/bin/python \
+    /opt/tirexa/backend/venv/bin/python \
+    /opt/tirexa/.venv/bin/python \
+    /opt/tirexa/venv/bin/python
+  do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is not installed on the server." >&2
+    return 1
+  fi
+
+  echo "==> No backend virtual environment found; creating /opt/tirexa/backend/.venv..." >&2
+  if ! python3 -m venv /opt/tirexa/backend/.venv; then
+    echo "ERROR: could not create the backend virtual environment. Install python3-venv and retry." >&2
+    return 1
+  fi
+  printf '%s\n' /opt/tirexa/backend/.venv/bin/python
+}
+
 cd /opt/tirexa
 
 if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
@@ -71,8 +113,12 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   # shellcheck disable=SC1091
   source ./.env
   set +a
-  .venv/bin/python manage.py migrate --noinput
-  .venv/bin/python manage.py collectstatic --noinput | tail -1
+  BACKEND_PYTHON="$(resolve_backend_python)"
+  echo "==> Backend Python: $BACKEND_PYTHON"
+  echo "==> Installing backend dependencies..."
+  "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
+  "$BACKEND_PYTHON" manage.py migrate --noinput
+  "$BACKEND_PYTHON" manage.py collectstatic --noinput | tail -1
   cd /opt/tirexa
   systemctl restart tirexa-backend
   echo "==> tirexa-backend: $(systemctl is-active tirexa-backend)"

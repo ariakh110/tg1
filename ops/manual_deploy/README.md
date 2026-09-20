@@ -8,6 +8,8 @@ These files are the version-controlled source for the Kavex manual deployment wo
 
 The remote upload first stages files under the `deploy` user's home directory. The apply step then requests `sudo`, installs the release files under `/opt/tirexa`, and runs the updater as root. This avoids requiring direct write access to `/opt/tirexa` for the SSH account.
 
+For backend releases, the updater discovers the Python environment used by the systemd service or a conventional `/opt/tirexa` virtual-environment path. It creates `.venv` only when no existing environment is available, synchronizes `requirements.txt`, and then runs migrations and `collectstatic`.
+
 For manual server upload, run:
 
 ```powershell
