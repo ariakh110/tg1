@@ -2,7 +2,7 @@
 
 These files are the version-controlled source for the Kavex manual deployment workflow.
 
-- `deploy.ps1` builds archives from committed `dev-ariakhayer` branches, validates the frontend archive, copies the canonical updater to `C:\Users\ariakh\deploy`, and optionally uploads/applies the release.
+- `deploy.ps1` discovers the backend from its own location and the sibling `kavehmetal front` repository, builds archives from the committed `dev-ariakhayer` branches, validates the frontend archive, copies the canonical updater to the current user's `deploy` folder, and optionally uploads/applies the release.
 - `update.sh` is uploaded to `/opt/tirexa/update.sh` beside the release archives.
 - `frontend/ops/deploy_frontend_release.sh` is carried inside `frontend.tar.gz` and performs the isolated install, build, activation, and rollback.
 
@@ -12,7 +12,7 @@ For manual server upload, run:
 .\ops\manual_deploy\deploy.ps1 both -PrepareOnly
 ```
 
-Then upload the generated archive files and `update.sh` from `C:\Users\ariakh\deploy`. The `-PrepareOnly` option never connects to the server.
+Then upload the generated archive files and `update.sh` from `%USERPROFILE%\deploy`. The `-PrepareOnly` option never connects to the server. Use `-DeployDir` to choose another output folder. Advanced overrides are available through `KAVEHMETAL_BACKEND_REPO`, `KAVEHMETAL_FRONTEND_REPO`, `KAVEHMETAL_DEPLOY_DIR`, and `KAVEHMETAL_DEPLOY_SERVER`.
 
 The updater migrates only the public-domain keys in the existing backend and frontend environment files, including the backend `FRONTEND_BASE`. It preserves all secrets and writes a one-time `.pre-kavehmetal` backup beside each changed environment file.
 

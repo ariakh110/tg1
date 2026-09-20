@@ -8,15 +8,36 @@
 param(
   [ValidateSet("both", "backend", "frontend")]
   [string]$Target = "both",
-  [switch]$PrepareOnly
+  [switch]$PrepareOnly,
+  [string]$DeployDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$server = "root@130.185.75.68"
-$deployDir = "C:\Users\ariakh\deploy"
-$beRepo = "C:\Users\ariakh\DEV\PY\tg1"
-$feRepo = "C:\Users\ariakh\DEV\JS\kavehmetal"
+$server = if ($env:KAVEHMETAL_DEPLOY_SERVER) {
+  $env:KAVEHMETAL_DEPLOY_SERVER
+} else {
+  "root@130.185.75.68"
+}
+$beRepo = if ($env:KAVEHMETAL_BACKEND_REPO) {
+  (Resolve-Path -LiteralPath $env:KAVEHMETAL_BACKEND_REPO).Path
+} else {
+  (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+}
+$platformRoot = Split-Path -Parent (Split-Path -Parent $beRepo)
+$feRepo = if ($env:KAVEHMETAL_FRONTEND_REPO) {
+  (Resolve-Path -LiteralPath $env:KAVEHMETAL_FRONTEND_REPO).Path
+} else {
+  (Resolve-Path -LiteralPath (Join-Path $platformRoot "kavehmetal front")).Path
+}
+if ([string]::IsNullOrWhiteSpace($DeployDir)) {
+  $DeployDir = if ($env:KAVEHMETAL_DEPLOY_DIR) {
+    $env:KAVEHMETAL_DEPLOY_DIR
+  } else {
+    Join-Path ([Environment]::GetFolderPath("UserProfile")) "deploy"
+  }
+}
+$deployDir = [System.IO.Path]::GetFullPath($DeployDir)
 $branch = "dev-ariakhayer"
 $canonicalUpdater = Join-Path $beRepo "ops\manual_deploy\update.sh"
 
