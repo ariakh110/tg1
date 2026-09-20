@@ -6,6 +6,8 @@ These files are the version-controlled source for the Kavex manual deployment wo
 - `update.sh` is uploaded to `/opt/tirexa/update.sh` beside the release archives.
 - `frontend/ops/deploy_frontend_release.sh` is carried inside `frontend.tar.gz` and performs the isolated install, build, activation, and rollback.
 
+The remote upload first stages files under the `deploy` user's home directory. The apply step then requests `sudo`, installs the release files under `/opt/tirexa`, and runs the updater as root. This avoids requiring direct write access to `/opt/tirexa` for the SSH account.
+
 For manual server upload, run:
 
 ```powershell

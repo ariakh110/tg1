@@ -156,12 +156,30 @@ if ($PrepareOnly) {
   return
 }
 
-Write-Host "==> Uploading release files..." -ForegroundColor Cyan
-scp -P $SshPort $files "${server}:/opt/tirexa/"
+$remoteStageDir = "kavehmetal-release"
+
+Write-Host "==> Preparing remote staging directory..." -ForegroundColor Cyan
+ssh -p $SshPort $server "rm -rf '$remoteStageDir' && mkdir -p '$remoteStageDir'"
+Assert-NativeCommand "Remote staging preparation" $LASTEXITCODE
+
+Write-Host "==> Uploading release files to the deploy account..." -ForegroundColor Cyan
+scp -P $SshPort $files "${server}:${remoteStageDir}/"
 Assert-NativeCommand "Release upload" $LASTEXITCODE
 
 Write-Host "==> Applying release on the server..." -ForegroundColor Cyan
-ssh -p $SshPort $server "bash /opt/tirexa/update.sh $Target"
+$remoteCommands = @(
+  "sudo -v",
+  "sudo install -d -m 0755 '/opt/tirexa'"
+)
+foreach ($file in $files) {
+  $fileName = [System.IO.Path]::GetFileName($file)
+  $mode = if ($fileName -eq "update.sh") { "0755" } else { "0644" }
+  $remoteCommands += "sudo install -m $mode '$remoteStageDir/$fileName' '/opt/tirexa/$fileName'"
+}
+$remoteCommands += "sudo bash '/opt/tirexa/update.sh' '$Target'"
+$remoteCommands += "rm -rf '$remoteStageDir'"
+$remoteCommand = $remoteCommands -join " && "
+ssh -t -p $SshPort $server $remoteCommand
 Assert-NativeCommand "Remote deployment" $LASTEXITCODE
 
 Write-Host "==> Deployment complete: https://kavehmetal.com" -ForegroundColor Green
