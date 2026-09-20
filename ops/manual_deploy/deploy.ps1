@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $server = if ($env:KAVEHMETAL_DEPLOY_SERVER) {
   $env:KAVEHMETAL_DEPLOY_SERVER
 } else {
-  "root@130.185.75.68"
+  "deploy@130.185.75.68"
 }
 $beRepo = if ($env:KAVEHMETAL_BACKEND_REPO) {
   (Resolve-Path -LiteralPath $env:KAVEHMETAL_BACKEND_REPO).Path

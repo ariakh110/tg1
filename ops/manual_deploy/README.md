@@ -2,7 +2,7 @@
 
 These files are the version-controlled source for the Kavex manual deployment workflow.
 
-- `deploy.ps1` discovers the backend from its own location and the sibling `kavehmetal front` repository, builds archives from the committed `dev-ariakhayer` branches, validates the frontend archive, copies the canonical updater to the current user's `deploy` folder, and optionally uploads/applies the release.
+- `deploy.ps1` discovers the backend from its own location and the sibling `kavehmetal front` repository, builds archives from the committed `dev-ariakhayer` branches, validates the frontend archive, copies the canonical updater to the current user's `deploy` folder, and optionally uploads/applies the release as `deploy@130.185.75.68` by default.
 - `update.sh` is uploaded to `/opt/tirexa/update.sh` beside the release archives.
 - `frontend/ops/deploy_frontend_release.sh` is carried inside `frontend.tar.gz` and performs the isolated install, build, activation, and rollback.
 
