@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -265,11 +266,13 @@ class StoreOrderWeighbridgeSlipSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         request = self.context.get("request")
-        if obj.file and request:
-            return request.build_absolute_uri(obj.file.url)
-        if obj.file:
-            return obj.file.url
-        return None
+        if not obj.file:
+            return None
+        url = reverse(
+            "store-order-weighbridge-slip-file",
+            kwargs={"pk": obj.order_id, "slip_pk": obj.pk},
+        )
+        return request.build_absolute_uri(url) if request else url
 
     class Meta:
         model = StoreOrderWeighbridgeSlip
@@ -1167,7 +1170,10 @@ class StoreDeliveryDocumentSerializer(serializers.ModelSerializer):
         if not obj.file:
             return ""
         request = self.context.get("request")
-        url = obj.file.url
+        url = reverse(
+            "store-driver-assignment-document-file",
+            kwargs={"pk": obj.assignment_id, "document_pk": obj.pk},
+        )
         return request.build_absolute_uri(url) if request else url
 
 

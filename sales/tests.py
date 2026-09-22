@@ -1082,6 +1082,8 @@ class StoreOrderCheckoutTests(APITestCase):
 
         self.assertEqual(upload_res.status_code, status.HTTP_201_CREATED, upload_res.data)
         self.assertEqual(upload_res.data["document_type"], "delivery_receipt")
+        self.assertIn("/api/v1/store/driver/assignments/", upload_res.data["file_url"])
+        self.assertEqual(self.client.get(upload_res.data["file_url"]).status_code, status.HTTP_200_OK)
         self.assertEqual(StoreDeliveryDocument.objects.count(), 1)
         self.assertTrue(StoreDeliveryEvent.objects.filter(event="DELIVERY_DOCUMENT_UPLOADED").exists())
 
@@ -1383,6 +1385,8 @@ class LoadingVehicleWeighbridgeTests(APITestCase):
         )
         self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
         self.assertTrue(StoreOrderWeighbridgeSlip.objects.filter(order=self.order).exists())
+        self.assertIn("/api/v1/store/orders/", res.data["file_url"])
+        self.assertEqual(self.client.get(res.data["file_url"]).status_code, status.HTTP_200_OK)
 
         list_res = self.client.get(f"{self.base_url}/weighbridge-slips/")
         self.assertEqual(list_res.status_code, status.HTTP_200_OK)

@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from rest_framework import serializers
 
 from accounts.models import RoleCode
@@ -204,6 +205,7 @@ class OrderOfferCreateSerializer(serializers.ModelSerializer):
 
 
 class OrderRequestDocumentSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(write_only=True, required=True)
     uploaded_by = UserSummarySerializer(read_only=True)
     file_url = serializers.SerializerMethodField()
 
@@ -216,10 +218,7 @@ class OrderRequestDocumentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if not obj.file:
             return None
-        try:
-            url = obj.file.url
-        except ValueError:
-            return None
+        url = reverse("order-request-document-file", kwargs={"pk": obj.pk})
         return request.build_absolute_uri(url) if request else url
 
 

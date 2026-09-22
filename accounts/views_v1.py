@@ -3,12 +3,15 @@ import os
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .models import KYCDocument, KYCRequest, KYCStatus, RoleCode, UserRole
 from .permissions import IsAdminOrActiveAdminRole
@@ -26,6 +29,27 @@ from .serializers import (
 from .services import activate_roles, ensure_user_role
 
 User = get_user_model()
+
+
+class KYCDocumentFileAPIView(APIView):
+    """Serve KYC files only to their owner or an authorized administrator."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        document = get_object_or_404(
+            KYCDocument.objects.select_related("kyc_request"), pk=pk
+        )
+        is_admin = IsAdminOrActiveAdminRole().has_permission(request, self)
+        if document.kyc_request.user_id != request.user.id and not is_admin:
+            raise PermissionDenied("You are not allowed to access this document.")
+        if not document.file:
+            return Response({"detail": "file_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(
+            document.file.open("rb"),
+            as_attachment=True,
+            filename=document.name or document.file.name.rsplit("/", 1)[-1],
+        )
 
 
 class UserMeAPIView(viewsets.ViewSet):

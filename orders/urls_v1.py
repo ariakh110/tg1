@@ -8,6 +8,7 @@ from .views import (
     MarketplaceFeedAPIView,
     MyOrderRequestViewSet,
     OrderOfferViewSet,
+    OrderRequestDocumentFileAPIView,
     OrderViewSet,
     WarehousePendingRequestListAPIView,
     WarehouseVerifyAPIView,
@@ -24,6 +25,7 @@ router.register(
 )
 
 urlpatterns = [
+    path("my/requests/documents/<int:pk>/file/", OrderRequestDocumentFileAPIView.as_view(), name="order-request-document-file"),
     path("admin/dashboard/summary/", AdminDashboardSummaryAPIView.as_view(), name="admin-dashboard-summary"),
     path("admin/dashboard/activities/", AdminActivityFeedAPIView.as_view(), name="admin-dashboard-activities"),
     path("marketplace/feed/", MarketplaceFeedAPIView.as_view(), name="marketplace-feed"),

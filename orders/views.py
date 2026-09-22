@@ -3,6 +3,7 @@ import os
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
@@ -291,6 +292,33 @@ class MyOrderRequestViewSet(viewsets.ModelViewSet):
             context={"request": request},
         )
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class OrderRequestDocumentFileAPIView(APIView):
+    """Serve request documents to the owner, warehouse reviewer, or admin."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        document = get_object_or_404(
+            OrderRequestDocument.objects.select_related("order_request", "order_request__owner"),
+            pk=pk,
+        )
+        is_admin = IsAdminOrActiveAdminRole().has_permission(request, self)
+        is_warehouse_manager = IsWarehouseManager().has_permission(request, self)
+        if (
+            document.order_request.owner_id != request.user.id
+            and not is_admin
+            and not is_warehouse_manager
+        ):
+            return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if not document.file:
+            return Response({"detail": "file_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(
+            document.file.open("rb"),
+            as_attachment=True,
+            filename=document.name or document.file.name.rsplit("/", 1)[-1],
+        )
 
 
 class WarehousePendingRequestListAPIView(generics.ListAPIView):

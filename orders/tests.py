@@ -372,6 +372,14 @@ class OrderRequestFlowTests(APITestCase):
         )
         self.assertEqual(valid_resp.status_code, status.HTTP_201_CREATED)
         self.assertEqual(len(valid_resp.data), 2)
+        self.assertNotIn("file", valid_resp.data[0])
+        file_url = valid_resp.data[0]["file_url"]
+        self.assertIn("/api/v1/my/requests/documents/", file_url)
+        self.assertEqual(self.client.get(file_url).status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(self.buyer_viewer)
+        self.assertEqual(self.client.get(file_url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.seller)
 
         txt_file = SimpleUploadedFile(
             "stock.txt", b"text", content_type="text/plain"

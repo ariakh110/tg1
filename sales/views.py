@@ -1,6 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
 from django.db.models import Q
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.views import APIView
@@ -20,6 +21,7 @@ from .models import (
     FreightBidStatus,
     FreightRateSettings,
     StoreDeliveryAssignment,
+    StoreDeliveryDocument,
     StoreDeliveryOffer,
     StoreDeliveryRequest,
     StoreDriverOperationalProfile,
@@ -541,6 +543,26 @@ class DriverAssignmentDocumentAPIView(APIView):
         return Response(output.data, status=status.HTTP_201_CREATED)
 
 
+class DriverAssignmentDocumentFileAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    admin_sections = ("direct-sales", "delivery-logistics")
+
+    def get(self, request, pk, document_pk):
+        document = get_object_or_404(
+            StoreDeliveryDocument.objects.select_related("assignment", "assignment__driver"),
+            pk=document_pk,
+            assignment_id=pk,
+        )
+        is_admin = IsAdminOrActiveAdminRole().has_permission(request, self)
+        if document.assignment.driver_id != request.user.id and not is_admin:
+            return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        return FileResponse(
+            document.file.open("rb"),
+            as_attachment=True,
+            filename=document.file.name.rsplit("/", 1)[-1],
+        )
+
+
 class AdminStoreOrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrActiveAdminRole]
     admin_section = "direct-sales"
@@ -765,6 +787,26 @@ class AdminStoreOrderWeighbridgeSlipDestroyAPIView(APIView):
         slip.file.delete(save=False)
         slip.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class StoreOrderWeighbridgeSlipFileAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    admin_section = "direct-sales"
+
+    def get(self, request, pk, slip_pk):
+        slip = get_object_or_404(
+            StoreOrderWeighbridgeSlip.objects.select_related("order", "order__buyer"),
+            pk=slip_pk,
+            order_id=pk,
+        )
+        is_admin = IsAdminOrActiveAdminRole().has_permission(request, self)
+        if slip.order.buyer_id != request.user.id and not is_admin:
+            return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        return FileResponse(
+            slip.file.open("rb"),
+            as_attachment=True,
+            filename=slip.file.name.rsplit("/", 1)[-1],
+        )
 
 
 # ── Freight Rate Settings & Cost Estimation (ton-km) ─────────────────────────

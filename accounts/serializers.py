@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from rest_framework import serializers
 
 from products.serializers import SellerSerializer
@@ -30,6 +31,7 @@ class UserRoleSerializer(serializers.ModelSerializer):
 
 
 class KYCDocumentSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(write_only=True, required=True)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -39,13 +41,10 @@ class KYCDocumentSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         request = self.context.get("request")
-        if obj.file:
-            try:
-                url = obj.file.url
-            except ValueError:
-                return None
-            return request.build_absolute_uri(url) if request else url
-        return None
+        if not obj.file:
+            return None
+        url = reverse("kyc-document-file", kwargs={"pk": obj.pk})
+        return request.build_absolute_uri(url) if request else url
 
 
 class KYCRequestSerializer(serializers.ModelSerializer):

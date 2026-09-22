@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -31,6 +32,26 @@ class KYCFlowTests(APITestCase):
 
         role = UserRole.objects.get(user=self.user, role=RoleCode.SELLER)
         self.assertTrue(role.is_active)
+
+    def test_kyc_file_uses_authenticated_download_endpoint(self):
+        self.client.force_authenticate(self.user)
+        create_resp = self.client.post(
+            "/api/v1/kyc/", {"requested_roles": [RoleCode.SELLER]}, format="json"
+        )
+        self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
+        upload_resp = self.client.post(
+            f"/api/v1/kyc/{create_resp.data['id']}/documents/",
+            {"file": SimpleUploadedFile("identity.pdf", b"%PDF-1.4", content_type="application/pdf")},
+            format="multipart",
+        )
+        self.assertEqual(upload_resp.status_code, status.HTTP_201_CREATED, upload_resp.data)
+        self.assertNotIn("file", upload_resp.data)
+        self.assertIn("/api/v1/kyc/documents/", upload_resp.data["file_url"])
+        self.assertEqual(self.client.get(upload_resp.data["file_url"]).status_code, status.HTTP_200_OK)
+
+        other = User.objects.create_user(username="kyc_other", password="pass1234")
+        self.client.force_authenticate(other)
+        self.assertEqual(self.client.get(upload_resp.data["file_url"]).status_code, status.HTTP_403_FORBIDDEN)
 
 
 class AdminUsersAndKycReadTests(APITestCase):
