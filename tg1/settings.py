@@ -176,7 +176,10 @@ DATABASES = {
         'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql_psycopg2'),
         'NAME': os.environ.get('DB_NAME', 'alibackend_db'),
         'USER': os.environ.get('DB_USER', 'ariakh'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', '123456'),
+        # A password must always be provided by the environment. Production
+        # settings reject an empty value explicitly; keeping no fallback here
+        # avoids accidentally connecting with a known development password.
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
     }
