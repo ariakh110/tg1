@@ -1,2 +1,4 @@
 /media export-ignore
+*.sqlite3 export-ignore
+*.dump export-ignore
 *.sh text eol=lf

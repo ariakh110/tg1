@@ -35,6 +35,14 @@ ALLOWED_HOSTS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    "authentication": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "authentication-throttle",
+    },
+}
+
 # Application definition
 
 INSTALLED_APPS = [

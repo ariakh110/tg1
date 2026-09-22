@@ -7,7 +7,9 @@
 import re
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .safe_fetch import open_trusted_page
 
 from django.conf import settings as dj_settings
 
@@ -93,7 +95,7 @@ def fetch_page_seo(url):
 
     request = Request(url, headers={"User-Agent": "Mozilla/5.0 (SEO-Assistant; +tirexa)"}, method="GET")
     try:
-        with urlopen(request, timeout=_timeout()) as response:
+        with open_trusted_page(request, timeout=_timeout()) as response:
             status_code = getattr(response, "status", None) or response.getcode()
             final_url = response.geturl()
             ctype = response.headers.get("Content-Type", "")

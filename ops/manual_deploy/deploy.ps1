@@ -176,6 +176,26 @@ foreach ($file in $files) {
   $mode = if ($fileName -eq "update.sh") { "0755" } else { "0644" }
   $remoteCommands += "sudo install -m $mode '$remoteStageDir/$fileName' '/opt/tirexa/$fileName'"
 }
+
+# Archives use a committed branch, not the working directory. Never silently
+# discard local security patches or package a different checked-out revision.
+$selectedRepos = @()
+if ($Target -in @("both", "backend")) { $selectedRepos += $beRepo }
+if ($Target -in @("both", "frontend")) { $selectedRepos += $feRepo }
+foreach ($repo in $selectedRepos) {
+  $changes = @(git -C $repo status --porcelain)
+  Assert-NativeCommand "Repository status" $LASTEXITCODE
+  if ($changes.Count -gt 0) { throw "Commit and review local changes before packaging: $repo" }
+  $head = git -C $repo rev-parse HEAD
+  Assert-NativeCommand "HEAD lookup" $LASTEXITCODE
+  $releaseCommit = git -C $repo rev-parse $branch
+  Assert-NativeCommand "Release branch lookup" $LASTEXITCODE
+  if ($head -ne $releaseCommit) { throw "HEAD differs from release branch $branch in $repo" }
+}
+if ($Target -in @("both", "frontend")) {
+  node (Join-Path $feRepo "ops\check_release_security.mjs") $feRepo
+  Assert-NativeCommand "Frontend security version policy" $LASTEXITCODE
+}
 $remoteCommands += "sudo bash '/opt/tirexa/update.sh' '$Target'"
 $remoteCommands += "rm -rf '$remoteStageDir'"
 $remoteCommand = $remoteCommands -join " && "

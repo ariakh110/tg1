@@ -14,6 +14,18 @@ if [[ "$TARGET" != "both" && "$TARGET" != "backend" && "$TARGET" != "frontend" ]
   exit 2
 fi
 
+# This is the legacy /opt layout. Refuse to touch it if the running services
+# use the rebuilt /srv layout; a restart would otherwise load unrelated code.
+for component in backend frontend; do
+  if [[ "$TARGET" == "both" || "$TARGET" == "$component" ]]; then
+    working_dir="$(systemctl show "tirexa-$component" -p WorkingDirectory --value)"
+    if [[ "$working_dir" != "/opt/tirexa/$component" ]]; then
+      echo "ERROR: service runs from '$working_dir'; legacy updater expects /opt/tirexa/$component. No release applied." >&2
+      exit 1
+    fi
+  fi
+done
+
 upsert_env_value() {
   local file="$1"
   local key="$2"

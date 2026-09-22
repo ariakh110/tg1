@@ -3,6 +3,8 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.shortcuts import redirect
@@ -16,6 +18,7 @@ from products.serializers import SellerSerializer
 
 from .models import Profile, VerificationResend
 from .serializers import ProfileSerializer
+from .throttles import AuthenticationThrottle
 
 User = get_user_model()
 
@@ -47,6 +50,7 @@ def _send_verification_email(user, verify_url):
 
 class RegisterAPIView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthenticationThrottle]
 
     def post(self, request, *args, **kwargs):
         username = (request.data.get("username") or "").strip()
@@ -81,6 +85,11 @@ class RegisterAPIView(APIView):
 
         # با ایمیل: همان جریان غیرفعال + ایمیل تأیید. بدون ایمیل: چون کانال
         # تأیید دیگری نیست، حساب فوراً فعال می‌شود تا کاربر بتواند وارد شود.
+        try:
+            validate_password(password, User(username=username, email=email))
+        except ValidationError as exc:
+            return Response({"password": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
         has_email = bool(email)
         user = User.objects.create_user(
             username=username,
@@ -126,6 +135,7 @@ class GoogleAuthAPIView(APIView):
     """ورود/ثبت‌نام با گوگل: ID token را تأیید و JWT برمی‌گرداند."""
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthenticationThrottle]
 
     def post(self, request, *args, **kwargs):
         from core.models import SiteSettings
@@ -160,6 +170,15 @@ class GoogleAuthAPIView(APIView):
         email = (info.get("email") or "").strip()
         sub = info.get("sub") or ""
 
+        # An email claim alone must not grant access to an existing account.
+        # Third-party email ownership needs a separate linking/verification flow.
+        authoritative_email = email.lower().endswith("@gmail.com") or bool(info.get("hd"))
+        if not sub or not email or info.get("email_verified") is not True or not authoritative_email:
+            return Response(
+                {"detail": "google_email_requires_verification"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         user = User.objects.filter(email__iexact=email).first() if email else None
 
         if user is None:
@@ -180,8 +199,7 @@ class GoogleAuthAPIView(APIView):
             except Exception:  # noqa: BLE001
                 pass
         elif not user.is_active:
-            user.is_active = True
-            user.save(update_fields=["is_active"])
+            return Response({"detail": "inactive_account"}, status=status.HTTP_403_FORBIDDEN)
 
         from rest_framework_simplejwt.tokens import RefreshToken
 

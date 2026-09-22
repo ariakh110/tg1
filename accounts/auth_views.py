@@ -3,6 +3,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework import status
 from rest_framework.response import Response
+from .throttles import AuthenticationThrottle
 
 
 class ActiveUserTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -16,6 +17,7 @@ class ActiveUserTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class ActiveUserTokenObtainPairView(TokenObtainPairView):
     serializer_class = ActiveUserTokenObtainPairSerializer
+    throttle_classes = [AuthenticationThrottle]
 
     def post(self, request, *args, **kwargs):
         try:
