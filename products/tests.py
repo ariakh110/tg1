@@ -509,6 +509,58 @@ class AdminProductImportTests(APITestCase):
             is_verified=True,
         )
 
+    def test_admin_can_create_and_use_rebar_factory_without_parent(self):
+        self.client.force_authenticate(self.admin)
+
+        option_res = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "factory",
+                "value": "zobahan_rebar",
+                "label": "ذوب‌آهن میلگرد",
+                "product_kind": "rebar",
+                "sort_order": 999,
+                "is_active": True,
+            },
+            format="json",
+        )
+        product_res = self.client.post(
+            "/api/products/admin-upsert/",
+            {
+                "name": "میلگرد A3 ذوب‌آهن تست",
+                "category_code": "rebar",
+                "steel_grade": "A3",
+                "factory": "zobahan_rebar",
+                "diameter_mm": "12",
+            },
+            format="json",
+        )
+
+        self.assertEqual(option_res.status_code, status.HTTP_201_CREATED, option_res.data)
+        self.assertIsNone(option_res.data["parent"])
+        self.assertEqual(product_res.status_code, status.HTTP_200_OK, product_res.data)
+        product = Product.objects.get(pk=product_res.data["product_id"])
+        self.assertEqual(product.specifications.factory, "zobahan_rebar")
+
+    def test_sheet_factory_still_requires_manufacturing_process_parent(self):
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.post(
+            "/api/attribute-options/",
+            {
+                "group": "factory",
+                "value": "sheet_factory_without_parent",
+                "label": "کارخانه ورق بدون والد",
+                "product_kind": "sheet",
+                "sort_order": 999,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, res.data)
+        self.assertIn("parent", res.data)
+
     def test_admin_can_create_product_with_price_and_origin(self):
         self.client.force_authenticate(self.admin)
 

@@ -254,7 +254,9 @@ class ProductAttributeOptionSerializer(serializers.ModelSerializer):
             if parent.group != expected_group:
                 raise serializers.ValidationError({"parent": f"والد باید از گروه {expected_group} باشد."})
 
-        if group == "factory":
+        # Sheet factories are scoped to sheet/coil. Other product families
+        # (billet, rebar, pipe, beam, etc.) can define a factory directly.
+        if group == "factory" and product_kind == "sheet":
             require_parent("manufacturing_process", "برای کارخانه باید ورق یا رول را به عنوان والد انتخاب کنید.")
         if group == "city":
             require_parent("province", "برای شهر باید استان را به عنوان والد انتخاب کنید.")
