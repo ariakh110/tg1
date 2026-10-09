@@ -48,6 +48,14 @@ if ([string]::IsNullOrWhiteSpace($DeployDir)) {
 $deployDir = [System.IO.Path]::GetFullPath($DeployDir)
 $branch = "dev-ariakhayer"
 $canonicalUpdater = Join-Path $beRepo "ops\manual_deploy\update.sh"
+$appRoot = if ($env:KAVEHMETAL_APP_ROOT) {
+  $env:KAVEHMETAL_APP_ROOT
+} else {
+  "/srv/tirexa"
+}
+if ($appRoot -notmatch '^/[A-Za-z0-9._/-]+$' -or $appRoot -eq "/") {
+  throw "KAVEHMETAL_APP_ROOT must be an absolute server directory other than /."
+}
 
 function Assert-NativeCommand {
   param(
@@ -169,12 +177,12 @@ Assert-NativeCommand "Release upload" $LASTEXITCODE
 Write-Host "==> Applying release on the server..." -ForegroundColor Cyan
 $remoteCommands = @(
   "sudo -v",
-  "sudo install -d -m 0755 '/opt/tirexa'"
+  "sudo install -d -m 0755 '$appRoot'"
 )
 foreach ($file in $files) {
   $fileName = [System.IO.Path]::GetFileName($file)
   $mode = if ($fileName -eq "update.sh") { "0755" } else { "0644" }
-  $remoteCommands += "sudo install -m $mode '$remoteStageDir/$fileName' '/opt/tirexa/$fileName'"
+  $remoteCommands += "sudo install -m $mode '$remoteStageDir/$fileName' '$appRoot/$fileName'"
 }
 
 # Archives use a committed branch, not the working directory. Never silently
@@ -196,7 +204,7 @@ if ($Target -in @("both", "frontend")) {
   node (Join-Path $feRepo "ops\check_release_security.mjs") $feRepo
   Assert-NativeCommand "Frontend security version policy" $LASTEXITCODE
 }
-$remoteCommands += "sudo bash '/opt/tirexa/update.sh' '$Target'"
+$remoteCommands += "sudo env APP_ROOT='$appRoot' bash '$appRoot/update.sh' '$Target'"
 $remoteCommands += "rm -rf '$remoteStageDir'"
 $remoteCommand = $remoteCommands -join " && "
 ssh -t -p $SshPort $server $remoteCommand

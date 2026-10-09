@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Apply committed Kavex release archives on the production server.
-# Usage: bash /opt/tirexa/update.sh [both|backend|frontend]
+# Usage: bash /srv/tirexa/update.sh [both|backend|frontend]
 set -Eeo pipefail
 
 TARGET="${1:-both}"
@@ -9,18 +9,17 @@ CANONICAL_ORIGIN="${CANONICAL_ORIGIN:-https://kavehmetal.com}"
 LEGACY_CANONICAL_HOST="${LEGACY_CANONICAL_HOST:-kavex.ir}"
 ORIGIN_IP_HOST="${ORIGIN_IP_HOST:-130.185.75.68}"
 FRONTEND_API_URL="${FRONTEND_API_URL:-$CANONICAL_ORIGIN/api}"
+APP_ROOT="${APP_ROOT:-/srv/tirexa}"
 if [[ "$TARGET" != "both" && "$TARGET" != "backend" && "$TARGET" != "frontend" ]]; then
   echo "ERROR: target must be one of: both, backend, frontend" >&2
   exit 2
 fi
 
-# This is the legacy /opt layout. Refuse to touch it if the running services
-# use the rebuilt /srv layout; a restart would otherwise load unrelated code.
 for component in backend frontend; do
   if [[ "$TARGET" == "both" || "$TARGET" == "$component" ]]; then
     working_dir="$(systemctl show "tirexa-$component" -p WorkingDirectory --value)"
-    if [[ "$working_dir" != "/opt/tirexa/$component" ]]; then
-      echo "ERROR: service runs from '$working_dir'; legacy updater expects /opt/tirexa/$component. No release applied." >&2
+    if [[ "$working_dir" != "$APP_ROOT/$component" ]]; then
+      echo "ERROR: service runs from '$working_dir'; updater expects $APP_ROOT/$component. No release applied." >&2
       exit 1
     fi
   fi
@@ -50,7 +49,7 @@ backup_domain_env_once() {
 }
 
 configure_backend_domain() {
-  local env_file="/opt/tirexa/backend/.env"
+  local env_file="$APP_ROOT/backend/.env"
   backup_domain_env_once "$env_file"
   upsert_env_value "$env_file" "DJANGO_ALLOWED_HOSTS" \
     "$CANONICAL_HOST,www.$CANONICAL_HOST,127.0.0.1,localhost"
@@ -62,7 +61,7 @@ configure_backend_domain() {
 }
 
 configure_frontend_domain() {
-  local env_file="/opt/tirexa/frontend/.env.production.local"
+  local env_file="$APP_ROOT/frontend/.env.production.local"
   backup_domain_env_once "$env_file"
   upsert_env_value "$env_file" "NEXT_PUBLIC_SITE_URL" "$CANONICAL_ORIGIN"
   upsert_env_value "$env_file" "CANONICAL_SITE_URL" "$CANONICAL_ORIGIN"
@@ -78,7 +77,7 @@ resolve_backend_python() {
       | sed -n 's/.*path=\([^ ;}]*\).*/\1/p' \
       | head -n 1
   )"
-  if [[ "$service_exec_path" == /opt/tirexa/* ]]; then
+  if [[ "$service_exec_path" == "$APP_ROOT/"* ]]; then
     candidate="$(dirname -- "$service_exec_path")/python"
     if [[ -x "$candidate" ]]; then
       printf '%s\n' "$candidate"
@@ -87,10 +86,10 @@ resolve_backend_python() {
   fi
 
   for candidate in \
-    /opt/tirexa/backend/.venv/bin/python \
-    /opt/tirexa/backend/venv/bin/python \
-    /opt/tirexa/.venv/bin/python \
-    /opt/tirexa/venv/bin/python
+    "$APP_ROOT/backend/.venv/bin/python" \
+    "$APP_ROOT/backend/venv/bin/python" \
+    "$APP_ROOT/.venv/bin/python" \
+    "$APP_ROOT/venv/bin/python"
   do
     if [[ -x "$candidate" ]]; then
       printf '%s\n' "$candidate"
@@ -103,15 +102,46 @@ resolve_backend_python() {
     return 1
   fi
 
-  echo "==> No backend virtual environment found; creating /opt/tirexa/backend/.venv..." >&2
-  if ! python3 -m venv /opt/tirexa/backend/.venv; then
+  echo "==> No backend virtual environment found; creating $APP_ROOT/backend/.venv..." >&2
+  if ! python3 -m venv "$APP_ROOT/backend/.venv"; then
     echo "ERROR: could not create the backend virtual environment. Install python3-venv and retry." >&2
     return 1
   fi
-  printf '%s\n' /opt/tirexa/backend/.venv/bin/python
+  printf '%s\n' "$APP_ROOT/backend/.venv/bin/python"
 }
 
-cd /opt/tirexa
+load_running_backend_db_environment() {
+  local main_pid=""
+  local entry=""
+  local key=""
+  local db_password_loaded=0
+
+  main_pid="$(systemctl show tirexa-backend --property=MainPID --value)"
+  if [[ ! "$main_pid" =~ ^[1-9][0-9]*$ || ! -r "/proc/$main_pid/environ" ]]; then
+    echo "ERROR: tirexa-backend must be running to safely obtain its database credentials for migrations." >&2
+    return 1
+  fi
+
+  while IFS= read -r -d '' entry; do
+    key="${entry%%=*}"
+    case "$key" in
+      DB_ENGINE|DB_NAME|DB_USER|DB_HOST|DB_PORT)
+        export "$entry"
+        ;;
+      DB_PASSWORD)
+        export "$entry"
+        db_password_loaded=1
+        ;;
+    esac
+  done < "/proc/$main_pid/environ"
+
+  if [[ "$db_password_loaded" != "1" ]]; then
+    echo "ERROR: DB_PASSWORD was not found in the running tirexa-backend service." >&2
+    return 1
+  fi
+}
+
+cd "$APP_ROOT"
 
 if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   echo "==> Configuring backend domain environment..."
@@ -120,18 +150,19 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   tar -xzf backend.tar.gz -C backend
   echo "==> Running migrations and collectstatic..."
   cd backend
-  bash ops/prepare_media.sh /opt/tirexa/backend tirexa-backend
+  bash ops/prepare_media.sh "$APP_ROOT/backend" tirexa-backend
   set -a
   # shellcheck disable=SC1091
   source ./.env
   set +a
+  load_running_backend_db_environment
   BACKEND_PYTHON="$(resolve_backend_python)"
   echo "==> Backend Python: $BACKEND_PYTHON"
   echo "==> Installing backend dependencies..."
   "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
   "$BACKEND_PYTHON" manage.py migrate --noinput
   "$BACKEND_PYTHON" manage.py collectstatic --noinput | tail -1
-  cd /opt/tirexa
+  cd "$APP_ROOT"
   systemctl restart tirexa-backend
   echo "==> tirexa-backend: $(systemctl is-active tirexa-backend)"
 fi
@@ -139,7 +170,7 @@ fi
 if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   echo "==> Configuring frontend domain environment..."
   configure_frontend_domain
-  FRONTEND_RELEASE="/opt/tirexa/frontend_release"
+  FRONTEND_RELEASE="$APP_ROOT/frontend_release"
   echo "==> Extracting frontend into staging..."
   rm -rf -- "$FRONTEND_RELEASE"
   mkdir -p "$FRONTEND_RELEASE"
@@ -163,7 +194,7 @@ if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then
   NEXT_PUBLIC_API_URL="$FRONTEND_API_URL" \
   bash "$DEPLOY_HELPER" \
     "$FRONTEND_RELEASE" \
-    "/opt/tirexa/frontend" \
+    "$APP_ROOT/frontend" \
     "tirexa-frontend"
 fi
 
