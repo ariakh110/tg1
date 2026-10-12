@@ -189,6 +189,11 @@ class Landing(models.Model):
     intro = models.TextField(blank=True, default="")
     body = models.TextField(blank=True, default="")  # HTML دست‌نویس ادمین
     steel_grade = models.CharField(max_length=80, blank=True, default="")  # فیلتر اختیاری محصولات بر اساس گرید
+    expert_name = models.CharField(max_length=160, blank=True, default="")
+    expert_role = models.CharField(max_length=160, blank=True, default="")
+    expert_image = models.ImageField(upload_to="landings/experts/", blank=True, null=True)
+    expert_mobile = models.CharField(max_length=32, blank=True, default="")
+    expert_extension = models.CharField(max_length=20, blank=True, default="")
     meta_title = models.CharField(max_length=200, blank=True, default="")
     meta_description = models.CharField(max_length=300, blank=True, default="")
     sort_order = models.PositiveSmallIntegerField(default=0)

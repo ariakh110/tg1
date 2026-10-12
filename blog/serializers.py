@@ -472,12 +472,48 @@ class FAQItemSerializer(serializers.ModelSerializer):
 
 
 class LandingSerializer(serializers.ModelSerializer):
+    remove_expert_image = serializers.BooleanField(write_only=True, required=False, default=False)
+
     class Meta:
         model = Landing
         fields = ['id', 'family', 'slug', 'title', 'tagline', 'intro', 'body',
-                  'steel_grade', 'meta_title', 'meta_description', 'sort_order',
+                  'steel_grade', 'expert_name', 'expert_role', 'expert_image',
+                  'expert_mobile', 'expert_extension', 'remove_expert_image',
+                  'meta_title', 'meta_description', 'sort_order',
                   'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+    def validate_expert_image(self, value):
+        return validate_blog_image(value, "تصویر کارشناس")
+
+    def create(self, validated_data):
+        validated_data.pop('remove_expert_image', None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        remove_image = validated_data.pop('remove_expert_image', False)
+        image_is_replaced = 'expert_image' in validated_data
+        old_image = instance.expert_image if remove_image or image_is_replaced else None
+        old_image = (
+            (old_image.storage, old_image.name)
+            if old_image and old_image.name
+            else None
+        )
+        if remove_image:
+            validated_data['expert_image'] = None
+
+        landing = super().update(instance, validated_data)
+        if old_image and old_image[1] != getattr(landing.expert_image, 'name', ''):
+            try:
+                old_image[0].delete(old_image[1])
+            except OSError:
+                logger.warning(
+                    "Landing %s was updated, but old expert image %s could not be removed",
+                    landing.pk,
+                    old_image[1],
+                    exc_info=True,
+                )
+        return landing
 
 
 class FeaturedLoadAlertSerializer(serializers.ModelSerializer):

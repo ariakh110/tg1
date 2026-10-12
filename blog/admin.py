@@ -39,10 +39,10 @@ class FAQItemAdmin(admin.ModelAdmin):
 
 @admin.register(Landing)
 class LandingAdmin(admin.ModelAdmin):
-    list_display = ('title', 'family', 'slug', 'steel_grade', 'sort_order', 'is_active', 'updated_at')
+    list_display = ('title', 'family', 'slug', 'steel_grade', 'expert_name', 'sort_order', 'is_active', 'updated_at')
     list_filter = ('family', 'is_active')
     list_editable = ('sort_order', 'is_active')
-    search_fields = ('title', 'slug', 'family', 'steel_grade')
+    search_fields = ('title', 'slug', 'family', 'steel_grade', 'expert_name', 'expert_mobile')
     prepopulated_fields = {'slug': ('title',)}
 
 
