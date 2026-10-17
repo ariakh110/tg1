@@ -23,5 +23,5 @@
 - [x] 4.1 Run backend migrations/checks/tests and focused frontend lint/tests.
 - [x] 4.2 Run the production frontend build and review desktop/mobile RTL layouts.
 - [x] 4.3 Add deployment sync/health checks and document IME/global provider configuration.
-- [ ] 4.4 Commit, push and prepare reviewed deployment archives.
+- [x] 4.4 Commit, push and prepare reviewed deployment archives.
 
