@@ -162,6 +162,12 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
   "$BACKEND_PYTHON" manage.py migrate --noinput
   "$BACKEND_PYTHON" manage.py seed_market_price_snapshots
+  if ! "$BACKEND_PYTHON" manage.py sync_ime_market; then
+    echo "WARNING: IME sync failed; the last successful market data remains available." >&2
+  fi
+  if ! "$BACKEND_PYTHON" manage.py sync_global_metals; then
+    echo "WARNING: global-metals sync failed; verify provider configuration." >&2
+  fi
   "$BACKEND_PYTHON" manage.py collectstatic --noinput | tail -1
   cd "$APP_ROOT"
   systemctl restart tirexa-backend
@@ -211,6 +217,14 @@ LOCAL_CANONICAL_CURL=(
   "$CANONICAL_ORIGIN/api/site-settings/"
 "${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "market API:    %{http_code}\n" \
   "$CANONICAL_ORIGIN/api/market/summary/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "IME API:       %{http_code}\n" \
+  "$CANONICAL_ORIGIN/api/commodity-exchange/summary/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "global API:    %{http_code}\n" \
+  "$CANONICAL_ORIGIN/api/global-metals/summary/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "IME page:      %{http_code}\n" \
+  "$CANONICAL_ORIGIN/commodity-exchange"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "global page:   %{http_code}\n" \
+  "$CANONICAL_ORIGIN/global-metals"
 "${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "admin:         %{http_code}\n" \
   "$CANONICAL_ORIGIN/django-admin/"
 

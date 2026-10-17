@@ -10,6 +10,14 @@ from .views import (
 )
 from .api_views import ProductSummaryViewSet
 from .market_views import MarketProductHistoryAPIView, MarketProductListAPIView, MarketSummaryAPIView
+from .external_market_views import (
+    CommodityExchangeHistoryAPIView,
+    CommodityExchangeSummaryAPIView,
+    CommodityExchangeTradeListAPIView,
+    GlobalMetalCSVImportAPIView,
+    GlobalMetalHistoryAPIView,
+    GlobalMetalSummaryAPIView,
+)
 
 
 router = DefaultRouter()
@@ -31,5 +39,11 @@ urlpatterns = [
     path('market/summary/', MarketSummaryAPIView.as_view(), name='market-summary'),
     path('market/products/', MarketProductListAPIView.as_view(), name='market-products'),
     path('market/products/<int:product_id>/history/', MarketProductHistoryAPIView.as_view(), name='market-product-history'),
+    path('commodity-exchange/summary/', CommodityExchangeSummaryAPIView.as_view(), name='commodity-exchange-summary'),
+    path('commodity-exchange/trades/', CommodityExchangeTradeListAPIView.as_view(), name='commodity-exchange-trades'),
+    path('commodity-exchange/symbols/<path:symbol>/history/', CommodityExchangeHistoryAPIView.as_view(), name='commodity-exchange-history'),
+    path('global-metals/summary/', GlobalMetalSummaryAPIView.as_view(), name='global-metals-summary'),
+    path('global-metals/instruments/<slug:code>/history/', GlobalMetalHistoryAPIView.as_view(), name='global-metals-history'),
+    path('admin/global-metals/import/', GlobalMetalCSVImportAPIView.as_view(), name='global-metals-import'),
     path('', include(router.urls)),
 ]

@@ -477,6 +477,121 @@ class ProductPriceSnapshot(models.Model):
         return f"{self.product_id}:{self.pricing_basis}:{self.observed_on}"
 
 
+class MarketDataSyncState(models.Model):
+    class Status(models.TextChoices):
+        NEVER = "never", "Never"
+        RUNNING = "running", "Running"
+        SUCCESS = "success", "Success"
+        ERROR = "error", "Error"
+
+    key = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.NEVER)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    record_count = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("key",)
+
+    def __str__(self):
+        return f"{self.key}: {self.status}"
+
+
+class CommodityExchangeTrade(models.Model):
+    source_report_id = models.PositiveBigIntegerField(unique=True)
+    symbol = models.CharField(max_length=160, db_index=True)
+    goods_name = models.CharField(max_length=255, db_index=True)
+    product_group = models.CharField(max_length=80, db_index=True)
+    producer_name = models.CharField(max_length=255, blank=True, db_index=True)
+    hall = models.CharField(max_length=160, blank=True)
+    contract_type = models.CharField(max_length=80, blank=True)
+    base_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    min_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    weighted_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    max_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    offered_volume = models.DecimalField(max_digits=20, decimal_places=3, null=True, blank=True)
+    demand_volume = models.DecimalField(max_digits=20, decimal_places=3, null=True, blank=True)
+    traded_volume = models.DecimalField(max_digits=20, decimal_places=3, null=True, blank=True)
+    transaction_value_thousand_rial = models.DecimalField(
+        max_digits=24, decimal_places=2, null=True, blank=True
+    )
+    currency = models.CharField(max_length=32, default="ریال")
+    unit = models.CharField(max_length=32, blank=True)
+    trade_date = models.DateField(db_index=True)
+    trade_date_jalali = models.CharField(max_length=10)
+    delivery_date_jalali = models.CharField(max_length=10, blank=True)
+    source_url = models.URLField(default="https://www.ime.co.ir/deals_statistics.html")
+    fetched_at = models.DateTimeField(auto_now=True)
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-trade_date", "goods_name", "symbol")
+        indexes = [
+            models.Index(fields=("trade_date", "symbol"), name="ime_date_symbol_idx"),
+            models.Index(fields=("product_group", "trade_date"), name="ime_group_date_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.goods_name} - {self.trade_date_jalali}"
+
+
+class GlobalMetalInstrument(models.Model):
+    code = models.SlugField(max_length=64, unique=True)
+    name_fa = models.CharField(max_length=120)
+    name_en = models.CharField(max_length=120)
+    exchange = models.CharField(max_length=80)
+    currency = models.CharField(max_length=12, default="USD")
+    unit = models.CharField(max_length=32, default="metric_ton")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "name_fa")
+
+    def __str__(self):
+        return f"{self.name_fa} ({self.code})"
+
+
+class GlobalMetalObservation(models.Model):
+    instrument = models.ForeignKey(
+        GlobalMetalInstrument, on_delete=models.CASCADE, related_name="observations"
+    )
+    provider = models.CharField(max_length=80)
+    price = models.DecimalField(max_digits=20, decimal_places=6)
+    open_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    high_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    low_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    bid_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    ask_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    observed_at = models.DateTimeField(db_index=True)
+    observed_on = models.DateField(db_index=True)
+    source_url = models.URLField()
+    fetched_at = models.DateTimeField(auto_now=True)
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-observed_on", "instrument__sort_order")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("instrument", "provider", "observed_on"),
+                name="uniq_global_metal_observation_day",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(price__gt=0),
+                name="global_metal_observation_positive_price",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("instrument", "-observed_on"), name="global_metal_hist_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.instrument.code}:{self.provider}:{self.observed_on}"
+
+
 # ----------- شرایط تحویل (Delivery / Incoterm) -----------
 class DeliveryLocation(models.Model):
     offer = models.ForeignKey(Offer, on_delete=models.CASCADE, related_name='delivery_options')

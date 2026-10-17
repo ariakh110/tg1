@@ -277,6 +277,9 @@ CKEDITOR_5_FILE_STORAGE = "tg1.storage_backends.CKEditor5Storage"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_CONTENT_MODEL = os.environ.get("OPENAI_CONTENT_MODEL", "gpt-5-mini")
 OPENAI_API_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_API_TIMEOUT_SECONDS", "30"))
+MARKET_HTTP_TIMEOUT_SECONDS = int(os.environ.get("MARKET_HTTP_TIMEOUT_SECONDS", "15"))
+METALS_DEV_API_KEY = os.environ.get("METALS_DEV_API_KEY", "")
+GLOBAL_METALS_MIN_REFRESH_HOURS = int(os.environ.get("GLOBAL_METALS_MIN_REFRESH_HOURS", "20"))
 OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON = os.environ.get("OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON", "[]")
 OFFLINE_PAYMENT_PRIMARY_IBAN_ID = os.environ.get("OFFLINE_PAYMENT_PRIMARY_IBAN_ID", "IBAN_01")
 OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB = int(os.environ.get("OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB", "5"))
@@ -296,6 +299,14 @@ CELERY_BEAT_SCHEDULE = {
     "sales-expire-delivery-offers": {
         "task": "sales.tasks.expire_delivery_offers",
         "schedule": 60.0,
+    },
+    "products-sync-ime-market-daily": {
+        "task": "products.tasks.sync_ime_market",
+        "schedule": 86400.0,
+    },
+    "products-sync-global-metals-daily": {
+        "task": "products.tasks.sync_global_metals",
+        "schedule": 86400.0,
     },
 }
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"
