@@ -172,6 +172,12 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   cd "$APP_ROOT"
   systemctl restart tirexa-backend
   echo "==> tirexa-backend: $(systemctl is-active tirexa-backend)"
+  for celery_service in tirexa-celery tirexa-celery-worker tirexa-celery-beat; do
+    if systemctl cat "$celery_service.service" >/dev/null 2>&1; then
+      systemctl restart "$celery_service"
+      echo "==> $celery_service: $(systemctl is-active "$celery_service")"
+    fi
+  done
 fi
 
 if [[ "$TARGET" == "frontend" || "$TARGET" == "both" ]]; then

@@ -12,6 +12,8 @@ For backend releases, the updater discovers the Python environment used by the s
 
 After migrations, `update.sh` runs the idempotent catalog baseline and market synchronization commands. IME synchronization reads the official physical-trade service with a bounded request and keeps the last successful rows if that service is unavailable. Global synchronization is skipped with a warning until a provider key is configured. The post-deploy checks request all three market APIs and both new pages.
 
+The updater restarts any installed `tirexa-celery`, `tirexa-celery-worker`, or `tirexa-celery-beat` systemd units so the daily schedules load the new tasks. If no beat unit is installed, run the two sync management commands from cron or add a Celery beat service before relying on unattended updates.
+
 Optional global-market configuration belongs only in `/srv/tirexa/backend/.env`:
 
 ```dotenv
