@@ -161,6 +161,7 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   echo "==> Installing backend dependencies..."
   "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
   "$BACKEND_PYTHON" manage.py migrate --noinput
+  "$BACKEND_PYTHON" manage.py seed_market_price_snapshots
   "$BACKEND_PYTHON" manage.py collectstatic --noinput | tail -1
   cd "$APP_ROOT"
   systemctl restart tirexa-backend
@@ -208,6 +209,8 @@ LOCAL_CANONICAL_CURL=(
   "$CANONICAL_ORIGIN/"
 "${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "api:           %{http_code}\n" \
   "$CANONICAL_ORIGIN/api/site-settings/"
+"${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "market API:    %{http_code}\n" \
+  "$CANONICAL_ORIGIN/api/market/summary/"
 "${LOCAL_CANONICAL_CURL[@]}" -o /dev/null -w "admin:         %{http_code}\n" \
   "$CANONICAL_ORIGIN/django-admin/"
 

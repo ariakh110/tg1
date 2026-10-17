@@ -10,6 +10,8 @@ The remote upload first stages files under the `deploy` user's home directory. T
 
 For backend releases, the updater discovers the Python environment used by the systemd service or a conventional `/srv/tirexa` virtual-environment path. It creates `.venv` only when no existing environment is available, synchronizes `requirements.txt`, and then runs migrations and `collectstatic`.
 
+After migrations, `update.sh` runs `manage.py seed_market_price_snapshots`. The command is idempotent: it writes only the current Tehran day's catalog baseline and never fabricates older market history. The post-deploy checks request `/api/market/summary/` alongside the existing home, settings, and admin probes. A successful release reports HTTP `200` for `market API`.
+
 For manual server upload, run:
 
 ```powershell

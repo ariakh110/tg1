@@ -5,6 +5,7 @@ import shutil
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.utils import timezone
 from PIL import Image
 from rest_framework import status
@@ -21,8 +22,10 @@ from .models import (
     ProductAttributeOption,
     ProductCategory,
     ProductImage,
+    ProductPriceSnapshot,
     ProductSpecification,
     Seller,
+    PricingBasis,
 )
 from .serializers import ProductPageContentWriteSerializer, ProductSpecificationSerializer
 
@@ -1725,3 +1728,117 @@ class AdminProductImportTests(APITestCase):
         )
 
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+class SteelMarketDashboardTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="market-seller", password="pass1234")
+        self.seller = Seller.objects.create(
+            user=self.user,
+            company_name="Market Steel",
+            business_type="Trading",
+            location="Isfahan",
+            is_verified=True,
+        )
+        self.category = ProductCategory.objects.create(name="Market Rebar", code="market-rebar")
+
+    def make_priced_product(self, name="میلگرد بازار", price="45000", basis=PricingBasis.KG, active=True):
+        product = Product.objects.create(category=self.category, name=name, is_active=active)
+        ProductSpecification.objects.create(
+            product=product,
+            material_type="rebar",
+            steel_grade="A3",
+            factory="zob-ahan",
+            diameter_mm="14",
+        )
+        offer = Offer.objects.create(product=product, seller=self.seller, is_active=True)
+        tier = PricingTier.objects.create(
+            offer=offer,
+            tier_name="قیمت روز",
+            unit_price=price,
+            price_basis=basis,
+            minimum_quantity=1,
+        )
+        return product, tier
+
+    def test_price_change_updates_one_tehran_daily_closing_snapshot(self):
+        product, tier = self.make_priced_product()
+        snapshot = ProductPriceSnapshot.objects.get(product=product, pricing_basis=PricingBasis.KG)
+        first_observed_at = snapshot.observed_at
+
+        tier.unit_price = "47000"
+        tier.save(update_fields=["unit_price"])
+
+        self.assertEqual(
+            ProductPriceSnapshot.objects.filter(product=product, pricing_basis=PricingBasis.KG).count(),
+            1,
+        )
+        snapshot.refresh_from_db()
+        self.assertEqual(str(snapshot.price), "47000.00")
+        self.assertEqual(str(snapshot.normalized_price_kg), "47000.0000")
+        self.assertGreaterEqual(snapshot.observed_at, first_observed_at)
+
+    def test_summary_normalizes_ton_price_and_excludes_inactive_product(self):
+        product, _tier = self.make_priced_product(price="45000000", basis=PricingBasis.TON)
+        today_snapshot = ProductPriceSnapshot.objects.get(product=product, pricing_basis=PricingBasis.TON)
+        ProductPriceSnapshot.objects.create(
+            product=product,
+            pricing_basis=PricingBasis.TON,
+            price="44000000",
+            normalized_price_kg="44000",
+            observed_on=today_snapshot.observed_on - datetime.timedelta(days=1),
+            observed_at=timezone.now() - datetime.timedelta(days=1),
+        )
+        self.make_priced_product(name="محصول غیرفعال", active=False)
+
+        response = self.client.get("/api/market/summary/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["advances"], 1)
+        row = response.data["tiles"][0]
+        self.assertEqual(row["normalized_price_kg"], "45000.00")
+        self.assertEqual(row["previous_price_kg"], "44000.0000")
+        self.assertEqual(row["percent_change"], "2.27")
+        self.assertEqual(row["tile_weight"], 3)
+
+    def test_sheet_without_unit_weight_is_visible_but_not_comparable(self):
+        product, _tier = self.make_priced_product(price="1200000", basis=PricingBasis.SHEET)
+        response = self.client.get("/api/market/products/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        row = next(item for item in response.data["results"] if item["product_id"] == product.id)
+        self.assertFalse(row["comparable"])
+        self.assertIsNone(row["normalized_price_kg"])
+        self.assertTrue(row["comparison_note"])
+
+    def test_history_range_and_search_are_bounded(self):
+        product, _tier = self.make_priced_product(name="میلگرد ویژه ذوب آهن")
+        current = ProductPriceSnapshot.objects.get(product=product, pricing_basis=PricingBasis.KG)
+        ProductPriceSnapshot.objects.create(
+            product=product,
+            pricing_basis=PricingBasis.KG,
+            price="43000",
+            normalized_price_kg="43000",
+            observed_on=current.observed_on - datetime.timedelta(days=8),
+            observed_at=timezone.now() - datetime.timedelta(days=8),
+        )
+
+        searched = self.client.get("/api/market/products/", {"search": "ذوب", "page_size": 500})
+        self.assertEqual(searched.status_code, status.HTTP_200_OK, searched.data)
+        self.assertEqual(searched.data["count"], 1)
+        self.assertEqual(searched.data["page_size"], 100)
+
+        seven_days = self.client.get(f"/api/market/products/{product.id}/history/", {"range": "7d"})
+        self.assertEqual(seven_days.status_code, status.HTTP_200_OK, seven_days.data)
+        self.assertEqual(len(seven_days.data["points"]), 1)
+
+        invalid = self.client.get(f"/api/market/products/{product.id}/history/", {"range": "365d"})
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_baseline_command_is_idempotent(self):
+        self.make_priced_product()
+        initial_count = ProductPriceSnapshot.objects.count()
+
+        call_command("seed_market_price_snapshots")
+        call_command("seed_market_price_snapshots")
+
+        self.assertEqual(ProductPriceSnapshot.objects.count(), initial_count)

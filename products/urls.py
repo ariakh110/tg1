@@ -9,6 +9,7 @@ from .views import (
     ProductDocumentViewSet, SellerViewSet
 )
 from .api_views import ProductSummaryViewSet
+from .market_views import MarketProductHistoryAPIView, MarketProductListAPIView, MarketSummaryAPIView
 
 
 router = DefaultRouter()
@@ -27,5 +28,8 @@ router.register(r'delivery-locations', DeliveryLocationViewSet, basename='delive
 router.register(r'sellers', SellerViewSet, basename='seller')
 router.register(r'products-summary', ProductSummaryViewSet, basename='product-summary')
 urlpatterns = [
+    path('market/summary/', MarketSummaryAPIView.as_view(), name='market-summary'),
+    path('market/products/', MarketProductListAPIView.as_view(), name='market-products'),
+    path('market/products/<int:product_id>/history/', MarketProductHistoryAPIView.as_view(), name='market-product-history'),
     path('', include(router.urls)),
 ]

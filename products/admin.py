@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Product, ProductCategory, ProductImage, ProductSpecification, 
     ProductStandard, SpecificationAttribute, SpecificationValue, 
-    ProductAttributeOption, ProductAuditLog, Offer, DeliveryLocation, PricingTier, ProductDocument, Seller
+    ProductAttributeOption, ProductAuditLog, ProductPriceSnapshot, Offer, DeliveryLocation, PricingTier, ProductDocument, Seller
 )
 
 # ---------- Inline ها ----------
@@ -72,6 +72,14 @@ class ProductAuditLogAdmin(admin.ModelAdmin):
     list_filter = ("action", "created_at")
     search_fields = ("product_name", "actor_user__username", "payload")
     readonly_fields = ("product", "product_name", "action", "actor_user", "payload", "created_at")
+
+
+@admin.register(ProductPriceSnapshot)
+class ProductPriceSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("product", "pricing_basis", "price", "normalized_price_kg", "observed_on", "observed_at")
+    list_filter = ("pricing_basis", "observed_on", "source")
+    search_fields = ("product__name", "product__slug")
+    readonly_fields = ("product", "pricing_basis", "price", "normalized_price_kg", "observed_on", "observed_at", "source")
 
 
 # ---------- استاندارد ----------

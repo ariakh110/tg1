@@ -436,6 +436,47 @@ class PricingTier(models.Model):
         return f"{self.offer.product.name} - {self.tier_name}"
 
 
+class ProductPriceSnapshot(models.Model):
+    """One Tehran-local closing price per product and pricing basis."""
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="price_snapshots",
+    )
+    pricing_basis = models.CharField(max_length=20, choices=PricingBasis.choices, db_index=True)
+    price = models.DecimalField(max_digits=14, decimal_places=2)
+    normalized_price_kg = models.DecimalField(
+        max_digits=14,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Comparable price per kilogram; null when the source basis cannot be normalized.",
+    )
+    observed_on = models.DateField(db_index=True)
+    observed_at = models.DateTimeField(default=timezone.now, db_index=True)
+    source = models.CharField(max_length=32, default="catalog")
+
+    class Meta:
+        ordering = ("-observed_on", "-observed_at", "product_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("product", "pricing_basis", "observed_on"),
+                name="uniq_product_price_snapshot_day_basis",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(price__gt=0),
+                name="product_price_snapshot_positive_price",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("product", "pricing_basis", "-observed_on"), name="prod_price_hist_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.product_id}:{self.pricing_basis}:{self.observed_on}"
+
+
 # ----------- شرایط تحویل (Delivery / Incoterm) -----------
 class DeliveryLocation(models.Model):
     offer = models.ForeignKey(Offer, on_delete=models.CASCADE, related_name='delivery_options')
