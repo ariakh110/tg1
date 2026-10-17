@@ -17,6 +17,7 @@ from .external_market_views import (
     GlobalMetalCSVImportAPIView,
     GlobalMetalHistoryAPIView,
     GlobalMetalSummaryAPIView,
+    GlobalMetalSyncAPIView,
 )
 
 
@@ -45,5 +46,6 @@ urlpatterns = [
     path('global-metals/summary/', GlobalMetalSummaryAPIView.as_view(), name='global-metals-summary'),
     path('global-metals/instruments/<slug:code>/history/', GlobalMetalHistoryAPIView.as_view(), name='global-metals-history'),
     path('admin/global-metals/import/', GlobalMetalCSVImportAPIView.as_view(), name='global-metals-import'),
+    path('admin/global-metals/sync/', GlobalMetalSyncAPIView.as_view(), name='global-metals-sync'),
     path('', include(router.urls)),
 ]

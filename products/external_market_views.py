@@ -1,7 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.conf import settings
 from django.db.models import Max, Sum, Q
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -11,7 +10,12 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
-from .external_markets import MarketSyncError, import_global_metals_csv
+from .external_markets import (
+    MarketSyncError,
+    global_metals_config,
+    import_global_metals_csv,
+    sync_global_metals,
+)
 from .models import (
     CommodityExchangeTrade,
     GlobalMetalInstrument,
@@ -216,6 +220,7 @@ class GlobalMetalSummaryAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        provider_config = global_metals_config()
         rows = []
         exchange = (request.query_params.get("exchange") or "").strip()
         instruments = GlobalMetalInstrument.objects.filter(is_active=True)
@@ -227,7 +232,8 @@ class GlobalMetalSummaryAPIView(APIView):
                 rows.append(_observation_payload(instrument, observations[0], observations[1] if len(observations) > 1 else None))
         return Response(
             {
-                "provider_configured": bool(settings.METALS_DEV_API_KEY),
+                "provider_enabled": provider_config["enabled"],
+                "provider_configured": provider_config["enabled"] and bool(provider_config["api_key"]),
                 "instruments": rows,
                 "exchanges": list(
                     GlobalMetalInstrument.objects.filter(is_active=True)
@@ -292,3 +298,20 @@ class GlobalMetalCSVImportAPIView(APIView):
         except (MarketSyncError, UnicodeDecodeError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"imported": count}, status=status.HTTP_201_CREATED)
+
+
+class GlobalMetalSyncAPIView(APIView):
+    permission_classes = [IsAdminOrActiveAdminRole]
+
+    def post(self, request):
+        try:
+            count = sync_global_metals(force=True)
+        except MarketSyncError as exc:
+            return Response(
+                {"detail": str(exc), "sync": _sync_payload("metals_dev")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        sync = _sync_payload("metals_dev")
+        if sync["status"] == MarketDataSyncState.Status.ERROR:
+            return Response({"detail": sync["error"], "sync": sync}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"synchronized": count, "sync": sync})

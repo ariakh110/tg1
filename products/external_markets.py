@@ -15,6 +15,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from core.models import SiteSettings
+
 from .models import (
     CommodityExchangeTrade,
     GlobalMetalInstrument,
@@ -50,6 +52,17 @@ METALS_DEV_INSTRUMENTS = {
 
 class MarketSyncError(RuntimeError):
     pass
+
+
+def global_metals_config():
+    """Resolve admin-managed provider settings with environment fallback for existing installs."""
+    config = SiteSettings.load()
+    return {
+        "enabled": config.global_metals_enabled,
+        "provider": config.global_metals_provider,
+        "api_key": (config.global_metals_api_key or getattr(settings, "METALS_DEV_API_KEY", "")).strip(),
+        "refresh_hours": max(1, min(int(config.global_metals_refresh_hours or 20), 168)),
+    }
 
 
 def _decimal(value, *, required=False):
@@ -292,7 +305,12 @@ def _payload_metals(payload):
 
 
 def sync_global_metals(force=False):
-    key = settings.METALS_DEV_API_KEY
+    config = global_metals_config()
+    if not config["enabled"]:
+        return 0
+    if config["provider"] != SiteSettings.GLOBAL_METALS_PROVIDER_METALS_DEV:
+        raise MarketSyncError("ارائه‌دهنده قیمت جهانی پشتیبانی نمی‌شود.")
+    key = config["api_key"]
     existing = MarketDataSyncState.objects.filter(key="metals_dev").first()
     if (
         key
@@ -300,12 +318,12 @@ def sync_global_metals(force=False):
         and existing
         and existing.status == MarketDataSyncState.Status.SUCCESS
         and existing.finished_at
-        and timezone.now() - existing.finished_at < timedelta(hours=settings.GLOBAL_METALS_MIN_REFRESH_HOURS)
+        and timezone.now() - existing.finished_at < timedelta(hours=config["refresh_hours"])
     ):
         return existing.record_count
     state = _sync_state_start("metals_dev")
     if not key:
-        exc = MarketSyncError("METALS_DEV_API_KEY تنظیم نشده است.")
+        exc = MarketSyncError("کلید API ارائه‌دهنده قیمت جهانی تنظیم نشده است.")
         _sync_state_error(state, exc)
         return 0
     try:

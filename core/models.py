@@ -26,6 +26,11 @@ class Contact(
 class SiteSettings(models.Model):
 	"""تنظیمات سراسری سایت (تک‌نمونه‌ای) — نام سایت و کلیدهای فعال/غیرفعال بخش‌ها."""
 
+	GLOBAL_METALS_PROVIDER_METALS_DEV = "metals_dev"
+	GLOBAL_METALS_PROVIDER_CHOICES = [
+		(GLOBAL_METALS_PROVIDER_METALS_DEV, "Metals.Dev"),
+	]
+
 	# خالی یعنی «از پیش‌فرض فرانت استفاده کن»؛ ادمین می‌تواند نام دلخواه را اینجا بگذارد.
 	site_name = models.CharField(max_length=120, blank=True, default="")
 	marketplace_enabled = models.BooleanField(default=False)   # بارانداز کاربران (/orders)
@@ -37,6 +42,14 @@ class SiteSettings(models.Model):
 	google_tag_manager_id = models.CharField(max_length=20, blank=True, default="")  # GTM-XXXXXXX (تزریق در فرانت)
 	openai_api_key = models.CharField(max_length=255, blank=True, default="")  # کلید OpenAI (محرمانه؛ در API عمومی برنمی‌گردد)
 	openai_content_model = models.CharField(max_length=80, blank=True, default="")  # مدل OpenAI برای سئو
+	global_metals_enabled = models.BooleanField(default=True)
+	global_metals_provider = models.CharField(
+		max_length=32,
+		choices=GLOBAL_METALS_PROVIDER_CHOICES,
+		default=GLOBAL_METALS_PROVIDER_METALS_DEV,
+	)
+	global_metals_api_key = models.CharField(max_length=255, blank=True, default="")
+	global_metals_refresh_hours = models.PositiveSmallIntegerField(default=20)
 	head_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های هدر: داخل <head> تزریق می‌شوند (Analytics/Clarity/verification)
 	footer_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های فوتر: پیش از پایان <body> تزریق می‌شوند
 	updated_at = models.DateTimeField(auto_now=True)

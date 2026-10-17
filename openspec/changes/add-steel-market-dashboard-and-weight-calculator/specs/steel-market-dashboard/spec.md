@@ -60,3 +60,19 @@ The system SHALL display a global or exchange indicator only when its response i
 #### Scenario: Provider data is stale
 - **WHEN** the latest provider observation exceeds its configured freshness window
 - **THEN** the UI labels it stale and shows the observation timestamp instead of describing it as live
+
+### Requirement: Administrator-Managed Global Market Provider
+The system SHALL allow an authorized administrator to enable the approved global-market provider, set its secret API key and refresh interval, force a synchronization, and import reviewed licensed CSV observations without exposing the stored key in any API response.
+
+#### Scenario: Administrator configures the provider
+- **WHEN** an authorized administrator submits a provider key and a refresh interval between 1 and 168 hours
+- **THEN** subsequent synchronization uses the saved configuration
+- **AND** settings responses expose only whether the key is configured
+
+#### Scenario: Administrator synchronizes immediately
+- **WHEN** an authorized administrator requests an immediate synchronization with a valid configured provider
+- **THEN** the system fetches, validates, and stores the observations and returns the sanitized synchronization status
+
+#### Scenario: Unauthorized user attempts configuration
+- **WHEN** an unauthenticated or non-admin user attempts to update provider settings, synchronize, or import a CSV
+- **THEN** the system rejects the request without changing credentials or market observations

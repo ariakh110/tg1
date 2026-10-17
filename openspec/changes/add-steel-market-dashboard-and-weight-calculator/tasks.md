@@ -22,3 +22,9 @@
 - [x] 4.2 Run backend checks/migrations/tests and focused frontend lint/tests.
 - [x] 4.3 Run the production frontend build and manually verify desktop/mobile RTL layouts.
 - [x] 4.4 Prepare deployment archives and document the post-deploy snapshot seed and smoke checks.
+
+## 5. Admin-managed global market source
+- [x] 5.1 Add singleton provider settings with a write-only API key, enable switch, and bounded refresh interval.
+- [x] 5.2 Resolve automatic synchronization from admin settings with an environment fallback.
+- [x] 5.3 Add admin-only force-sync and licensed CSV import controls to the site settings panel.
+- [x] 5.4 Test secret handling, permissions, provider synchronization, frontend lint, and production builds.

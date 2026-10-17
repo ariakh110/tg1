@@ -81,7 +81,7 @@ class ExternalMarketSyncTests(APITestCase):
         self.assertTrue(CommodityExchangeTrade.objects.filter(source_report_id=7).exists())
         self.assertEqual(MarketDataSyncState.objects.get(key="ime").status, "error")
 
-    @override_settings(METALS_DEV_API_KEY="server-secret", GLOBAL_METALS_MIN_REFRESH_HOURS=20)
+    @override_settings(METALS_DEV_API_KEY="server-secret")
     @patch("products.external_markets._get_json")
     def test_global_provider_parsing_is_idempotent_and_secret_is_not_stored(self, get_json):
         get_json.return_value = {
@@ -110,7 +110,7 @@ class ExternalMarketSyncTests(APITestCase):
         self.assertEqual(sync_global_metals(), 0)
         state = MarketDataSyncState.objects.get(key="metals_dev")
         self.assertEqual(state.status, MarketDataSyncState.Status.ERROR)
-        self.assertIn("METALS_DEV_API_KEY", state.error_message)
+        self.assertIn("کلید API", state.error_message)
 
 
 class ExternalMarketAPITests(APITestCase):
@@ -175,6 +175,26 @@ class ExternalMarketAPITests(APITestCase):
         accepted = self.client.post("/api/admin/global-metals/import/", {"file": self._upload(csv_data)})
         self.assertEqual(accepted.status_code, status.HTTP_201_CREATED, accepted.data)
         self.assertEqual(accepted.data["imported"], 1)
+
+    @patch("products.external_markets._get_json")
+    def test_admin_can_force_global_metals_sync_with_panel_key(self, get_json):
+        from core.models import SiteSettings
+
+        config = SiteSettings.load()
+        config.global_metals_api_key = "panel-secret"
+        config.save()
+        get_json.return_value = {
+            "timestamp": timezone.now().isoformat(),
+            "metals": {"lme_copper": "9345.50"},
+        }
+        user = get_user_model().objects.create_user("sync-admin", password="pass", is_staff=True)
+        self.client.force_authenticate(user)
+
+        response = self.client.post("/api/admin/global-metals/sync/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["synchronized"], 1)
+        self.assertNotIn("panel-secret", str(response.data))
 
     @staticmethod
     def _upload(content):

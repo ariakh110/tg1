@@ -13,6 +13,9 @@ The storefront already exposes active products with offer pricing tiers and fres
 - Decision: render charts with lightweight accessible SVG/CSS components instead of adding a chart package. Tables remain the canonical accessible representation.
 - Decision: calculator formulas live in a pure frontend module with deterministic tests. Standard section tables (channel/I-beam) are versioned data with the cited standard name; formula-based shapes use steel density 7,850 kg/m³ by default.
 - Decision: external indicators use a future provider interface with source name, source URL, observed timestamp, currency, unit, and freshness. Missing data renders an honest unavailable state.
+- Decision: global-market credentials and refresh policy are managed through the singleton site settings. The API key is write-only, the public response exposes only a configured boolean, and the server environment key remains a fallback for existing deployments.
+- Decision: Celery checks global-market synchronization hourly; the sync service applies the admin-configured 1–168 hour minimum interval before any provider request.
+- Decision: administrators can force a provider sync or import a reviewed licensed CSV. Both actions use authenticated admin-only endpoints and preserve the existing source/timestamp validation.
 
 ## Market API Shape
 - `GET /api/market/summary/`: counts, advances/declines/unchanged, latest observation time, top gainers/losers, and grouped tiles.
@@ -41,5 +44,4 @@ The storefront already exposes active products with offer pricing tiers and fres
 5. Roll back by hiding navigation links and endpoints; snapshot data is additive and can remain safely in place.
 
 ## Open Questions
-- Which owner-approved provider should supply global metal prices and USD/IRR if that second phase is required?
 - Which channel should the market-page call to action prioritize: product purchase, quote request, or direct phone contact?

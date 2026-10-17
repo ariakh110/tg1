@@ -279,7 +279,6 @@ OPENAI_CONTENT_MODEL = os.environ.get("OPENAI_CONTENT_MODEL", "gpt-5-mini")
 OPENAI_API_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_API_TIMEOUT_SECONDS", "30"))
 MARKET_HTTP_TIMEOUT_SECONDS = int(os.environ.get("MARKET_HTTP_TIMEOUT_SECONDS", "15"))
 METALS_DEV_API_KEY = os.environ.get("METALS_DEV_API_KEY", "")
-GLOBAL_METALS_MIN_REFRESH_HOURS = int(os.environ.get("GLOBAL_METALS_MIN_REFRESH_HOURS", "20"))
 OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON = os.environ.get("OFFLINE_PAYMENT_BANK_ACCOUNTS_JSON", "[]")
 OFFLINE_PAYMENT_PRIMARY_IBAN_ID = os.environ.get("OFFLINE_PAYMENT_PRIMARY_IBAN_ID", "IBAN_01")
 OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB = int(os.environ.get("OFFLINE_PAYMENT_RECEIPT_MAX_SIZE_MB", "5"))
@@ -304,9 +303,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "products.tasks.sync_ime_market",
         "schedule": 86400.0,
     },
-    "products-sync-global-metals-daily": {
+    "products-sync-global-metals-hourly-check": {
         "task": "products.tasks.sync_global_metals",
-        "schedule": 86400.0,
+        # The task checks the admin-managed refresh interval before contacting the provider.
+        "schedule": 3600.0,
     },
 }
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"

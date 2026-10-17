@@ -6,6 +6,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework import views, status
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
@@ -78,6 +79,34 @@ class SiteSettingsAPIView(views.APIView):
         openai_key = data.get("openai_api_key")
         if openai_key is not None and str(openai_key).strip():
             obj.openai_api_key = str(openai_key).strip()[:255]
+
+        global_metals = data.get("global_metals")
+        if global_metals is not None:
+            if not isinstance(global_metals, dict):
+                raise ValidationError({"global_metals": "ساختار تنظیمات بازار جهانی نامعتبر است."})
+            if "enabled" in global_metals:
+                if not isinstance(global_metals["enabled"], bool):
+                    raise ValidationError({"global_metals.enabled": "مقدار فعال‌بودن باید true یا false باشد."})
+                obj.global_metals_enabled = global_metals["enabled"]
+            if "provider" in global_metals:
+                provider = str(global_metals["provider"]).strip()
+                allowed = {choice[0] for choice in SiteSettings.GLOBAL_METALS_PROVIDER_CHOICES}
+                if provider not in allowed:
+                    raise ValidationError({"global_metals.provider": "ارائه‌دهنده انتخاب‌شده پشتیبانی نمی‌شود."})
+                obj.global_metals_provider = provider
+            api_key = global_metals.get("api_key")
+            if api_key is not None and str(api_key).strip():
+                obj.global_metals_api_key = str(api_key).strip()[:255]
+            if global_metals.get("clear_api_key") is True:
+                obj.global_metals_api_key = ""
+            if "refresh_hours" in global_metals:
+                try:
+                    refresh_hours = int(global_metals["refresh_hours"])
+                except (TypeError, ValueError) as exc:
+                    raise ValidationError({"global_metals.refresh_hours": "فاصله همگام‌سازی باید عدد باشد."}) from exc
+                if refresh_hours < 1 or refresh_hours > 168:
+                    raise ValidationError({"global_metals.refresh_hours": "فاصله همگام‌سازی باید بین ۱ تا ۱۶۸ ساعت باشد."})
+                obj.global_metals_refresh_hours = refresh_hours
 
         # اسکریپت‌های سفارشی هدر/فوتر (HTML خام؛ متن کامل بدون محدودیت طول)
         head_scripts = data.get("head_scripts")

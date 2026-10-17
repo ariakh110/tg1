@@ -12,17 +12,16 @@ For backend releases, the updater discovers the Python environment used by the s
 
 After migrations, `update.sh` runs the idempotent catalog baseline and market synchronization commands. IME synchronization reads the official physical-trade service with a bounded request and keeps the last successful rows if that service is unavailable. Global synchronization is skipped with a warning until a provider key is configured. The post-deploy checks request all three market APIs and both new pages.
 
-The updater restarts any installed `tirexa-celery`, `tirexa-celery-worker`, or `tirexa-celery-beat` systemd units so the daily schedules load the new tasks. If no beat unit is installed, run the two sync management commands from cron or add a Celery beat service before relying on unattended updates.
+The updater restarts any installed `tirexa-celery`, `tirexa-celery-worker`, or `tirexa-celery-beat` systemd units so the market schedules load the new tasks. The global-market task checks hourly and honors the 1–168 hour minimum interval selected by the administrator. If no beat unit is installed, run the two sync management commands from cron or add a Celery beat service before relying on unattended updates.
 
-Optional global-market configuration belongs only in `/srv/tirexa/backend/.env`:
+Configure the global-market provider from the admin dashboard under `تنظیمات سایت → بازار جهانی فلزات`. The server environment key remains an optional fallback for existing deployments:
 
 ```dotenv
 METALS_DEV_API_KEY=replace-with-server-side-key
 MARKET_HTTP_TIMEOUT_SECONDS=15
-GLOBAL_METALS_MIN_REFRESH_HOURS=20
 ```
 
-Do not add `METALS_DEV_API_KEY` to any `NEXT_PUBLIC_*` frontend variable. Without it, `/global-metals` displays a clear unavailable state and any reviewed CSV observations remain visible. Staff can upload CSV to `POST /api/admin/global-metals/import/` using the authenticated admin token, or run `python manage.py import_global_metals /path/to/file.csv`. Required headers are `instrument_code,name_fa,name_en,price,currency,unit,exchange,observed_at,provider,source_url`.
+Do not add `METALS_DEV_API_KEY` to any `NEXT_PUBLIC_*` frontend variable. The admin settings API never returns the stored key. Without a configured key, `/global-metals` displays a clear unavailable state and any reviewed CSV observations remain visible. Staff can upload CSV from the same settings panel, call `POST /api/admin/global-metals/import/` using an authenticated admin token, or run `python manage.py import_global_metals /path/to/file.csv`. Required headers are `instrument_code,name_fa,name_en,price,currency,unit,exchange,observed_at,provider,source_url`.
 
 For manual server upload, run:
 
