@@ -14,6 +14,10 @@ from .models import (
 
 
 class MessagingSettingsSerializer(serializers.ModelSerializer):
+    market_telegram_bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    market_bale_bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    market_telegram_configured = serializers.SerializerMethodField()
+    market_bale_configured = serializers.SerializerMethodField()
     api_key_configured = serializers.SerializerMethodField()
     is_configured = serializers.BooleanField(read_only=True)
     telegram_configured = serializers.BooleanField(read_only=True)
@@ -44,6 +48,9 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
             "telegram_configured", "telegram_token_configured",
             "safir_configured", "safir_key_configured",
             "webhook_secret", "updated_at",
+            "market_telegram_bot_token", "market_telegram_channel_id", "market_telegram_channel_url", "market_telegram_api_base",
+            "market_bale_bot_token", "market_bale_channel_id", "market_bale_channel_url",
+            "market_contact_phone", "market_vat_percent", "market_telegram_configured", "market_bale_configured",
         )
         read_only_fields = ("webhook_secret", "updated_at")
 
@@ -58,11 +65,29 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         # کلیدهای خالی ⇒ مقدارِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
-        for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key"):
+        for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key", "market_telegram_bot_token", "market_bale_bot_token"):
             value = validated_data.pop(secret_field, None)
             if value is not None and value.strip():
                 setattr(instance, secret_field, value.strip())
         return super().update(instance, validated_data)
+
+    def get_market_telegram_configured(self, obj):
+        return bool(obj.market_telegram_bot_token and obj.market_telegram_channel_id)
+
+    def get_market_bale_configured(self, obj):
+        return bool(obj.market_bale_bot_token and obj.market_bale_channel_id)
+
+    def validate_market_vat_percent(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("درصد مالیات باید بین صفر و صد باشد.")
+        return value
+
+    def validate_market_telegram_api_base(self, value):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise serializers.ValidationError("آدرس API باید HTTPS و بدون رمز یا پارامتر باشد.")
+        return value.rstrip("/")
 
 
 class OutboundMessageSerializer(serializers.ModelSerializer):

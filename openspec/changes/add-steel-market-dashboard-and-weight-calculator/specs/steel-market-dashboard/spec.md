@@ -98,3 +98,29 @@ The system SHALL render market time series using Apache ECharts with chronologic
 #### Scenario: Provider has missing or mixed observations
 - **WHEN** a history response includes missing prices or observations from multiple providers
 - **THEN** missing prices remain gaps and the global chart uses the latest observation provider consistently
+
+### Requirement: Map Scope And Consistent Market Navigation
+Each commodity map selection SHALL filter the table by its group, producer, exact symbol and report date as applicable. Breadcrumb navigation SHALL narrow or clear this scope. All three market pages SHALL place their shared navigation at the top of their hero containers.
+
+#### Scenario: Visitor drills down to a producer and symbol
+- **WHEN** a visitor clicks a group, producer and symbol in succession
+- **THEN** the table requests that exact symbol and producer for the map date
+- **AND** returning to the root clears all map filters
+
+### Requirement: Daily Branded Channel Drafts
+Full administrators SHALL be able to preview daily commodity summaries and item/producer/delivery-specific messages and publish selected drafts independently to the configured Kaveh Metal Telegram and Bale channels. Generation SHALL use only the requested report date, preserve missing values, deduplicate physical offer volumes, and disclose any explicitly configured tax adjustment.
+
+#### Scenario: Administrator generates daily messages
+- **WHEN** an administrator selects a date, group and report type
+- **THEN** the system creates reusable drafts with platform-specific Kaveh Metal signatures and source report references
+- **AND** preview generation sends no external messages
+
+#### Scenario: Administrator explicitly publishes a draft
+- **WHEN** an administrator publishes a reviewed draft to a configured platform
+- **THEN** the system records an outbound attempt and per-platform publication status
+- **AND** repeated requests do not resend a successful or uncertain publication
+
+#### Scenario: Delivery outcome is uncertain
+- **WHEN** the platform request times out or returns an unconfirmed outcome
+- **THEN** the system displays that uncertainty without leaking bot credentials or automatically retrying
+- **AND** only a definite platform rejection can be retried through an explicit retry action

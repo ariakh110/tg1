@@ -1,5 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from .market_views import MarketChannelDraftsView, MarketChannelPublishView
 
 from .views import (
     BaleUserBindingViewSet,
@@ -25,6 +26,8 @@ router.register(r"groups", MessagingContactGroupViewSet, basename="messaging-con
 app_name = "messaging"
 
 urlpatterns = [
+    path("market-drafts/", MarketChannelDraftsView.as_view(), name="market-drafts"),
+    path("market-drafts/<int:pk>/publish/", MarketChannelPublishView.as_view(), name="market-publish"),
     path("settings/", MessagingSettingsView.as_view(), name="settings"),
     path("send/", MessagingSendView.as_view(), name="send"),
     path("send-bulk/", MessagingBulkSendView.as_view(), name="send-bulk"),

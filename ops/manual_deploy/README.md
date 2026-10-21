@@ -23,6 +23,10 @@ MARKET_HTTP_TIMEOUT_SECONDS=15
 
 Do not add `METALS_DEV_API_KEY` to any `NEXT_PUBLIC_*` frontend variable. The admin settings API never returns the stored key. Without a configured key, `/global-metals` displays a clear unavailable state and any reviewed CSV observations remain visible. Staff can upload CSV from the same settings panel, call `POST /api/admin/global-metals/import/` using an authenticated admin token, or run `python manage.py import_global_metals /path/to/file.csv`. Required headers are `instrument_code,name_fa,name_en,price,currency,unit,exchange,observed_at,provider,source_url`.
 
+Daily channel reports are managed from `پیام‌رسانی → پیام‌های آماده بورس`. After deploying the messaging migrations, configure independent Telegram and Bale bot tokens and channel destinations in that tab. The owner-supplied default channel links are `https://t.me/kavehmetal` and `https://ble.ir/kavehmetal`; each bot must have permission to post in its respective channel. The HTTPS Telegram API root can be changed to a reachable relay where needed. Tokens are write-only and blank updates preserve existing credentials.
+
+Select a report date and either item/producer/delivery reports or group summaries, then generate previews. An empty requested day does not silently fall back to older reports. Publishing requires an explicit admin action; deploying or generating previews never posts messages. The existing outbound log records each platform's result. Already successful drafts are not resent, definite rejections support explicit retry, and uncertain delivery requires checking the channel before any manual repost. VAT defaults to zero additional adjustment; any selected percentage is disclosed in the message.
+
 For manual server upload, run:
 
 ```powershell

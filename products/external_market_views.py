@@ -130,7 +130,7 @@ class CommodityExchangeSummaryAPIView(APIView):
                 "totals": {key: _value(value) for key, value in totals.items()},
                 "groups": groups,
                 "hierarchy": [{"name": name, "group": name, "children": [
-                    {"name": producer, "group": name, "children": children}
+                    {"name": producer, "producer_name": children[0]["producer_name"], "group": name, "children": children}
                     for producer, children in producers.items()
                 ]} for name, producers in hierarchy.items()],
                 "is_stale": is_stale,

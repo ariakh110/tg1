@@ -172,6 +172,22 @@ class ExternalMarketAPITests(APITestCase):
         self.assertIn("130", response.data["results"][0]["display_name"])
         self.assertEqual(self.client.get("/api/commodity-exchange/trades/", {"ordering": "raw"}).status_code, 400)
 
+    def test_map_scope_filters_by_producer_symbol_and_selected_day(self):
+        for report_id, producer, symbol, day in [
+            (201, "تولیدکننده دیگر", self.trade.symbol, self.trade.trade_date),
+            (202, self.trade.producer_name, "ANOTHER", self.trade.trade_date),
+            (203, self.trade.producer_name, self.trade.symbol, self.trade.trade_date - timedelta(days=1)),
+        ]:
+            CommodityExchangeTrade.objects.create(source_report_id=report_id, producer_name=producer,
+                symbol=symbol, goods_name="میلگرد", product_group="میلگرد", trade_date=day,
+                trade_date_jalali="1405/07/28")
+        response = self.client.get("/api/commodity-exchange/trades/", {
+            "product_group": self.trade.product_group, "producer_name": self.trade.producer_name,
+            "symbol": self.trade.symbol, "date_from": str(self.trade.trade_date), "date_to": str(self.trade.trade_date),
+        })
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.trade.id)
+
     def test_same_day_history_is_volume_weighted_and_base_is_separate(self):
         CommodityExchangeTrade.objects.create(
             source_report_id=21, symbol=self.trade.symbol, goods_name=self.trade.goods_name,

@@ -35,3 +35,10 @@
 - [x] 6.3 Add server sorting, pagination, specification search and full report-derived product descriptions.
 - [x] 6.4 Add administrator metal visibility selection applied to public summary and history.
 - [x] 6.5 Verify chart options, API regressions, frontend build and deploy archives.
+
+## 7. Scope navigation and daily channel reports
+- [x] 7.1 Apply every treemap level to group/producer/symbol/date table scope and support root/breadcrumb reset.
+- [x] 7.2 Align market navigation within all three page heroes.
+- [x] 7.3 Add branded daily item/group drafts with independent Telegram/Bale configuration and explicit preview/send controls.
+- [x] 7.4 Persist per-channel publication status, duplicate prevention and outbound audit logs.
+- [x] 7.5 Verify API calculations, authorization, publication mocks, real canvas drilldown and browser/admin flows; prepare deployment.

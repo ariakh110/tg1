@@ -54,3 +54,12 @@ The storefront already exposes active products with offer pricing tiers and fres
 - Commodity tables search the complete saved report, sort before pagination, and expose a group/producer/symbol treemap.
 - Store an optional visible metal-code allowlist: null means all, [] means none. Apply it to summary, exchange filters and history while retaining observations.
 - Global history and daily changes use the latest observation provider consistently, avoiding duplicate same-day points from mixed providers.
+
+## Review fixes and channel reporting (2026-10-21)
+- Treemap drilldown is controlled in React with explicit breadcrumb navigation. Each selection applies group, producer, exact symbol and the map's date to the table; root resets the scope.
+- Place the shared dark market navigation at the top of every market hero with matching container dimensions.
+- Add a full-admin-only channel drafts panel under messaging. Generate item/producer/delivery reports or separate group summaries only for the requested report date, without falling back to a different day.
+- Drafts snapshot platform-specific signatures, destination IDs and report IDs. Use independent write-only Telegram and Bale bot tokens; default channel links are https://t.me/kavehmetal and https://ble.ir/kavehmetal as supplied by the owner.
+- Deduplicate offer/demand volumes by official offer ID, weight execution prices by actual traded volume, show absent values explicitly, and add VAT only when the administrator explicitly configures a percentage.
+- A persisted per-draft/platform publication claim prevents repeated clicks from posting twice. Platform rejections are retryable explicitly; uncertain network outcomes remain blocked from automatic resend. Every attempt is represented in the existing outbound log.
+- Preview generation makes no external requests; publication is triggered only by the administrator's send action. Telegram's HTTPS API root supports a configured relay; Bale uses its documented bot API.

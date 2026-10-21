@@ -86,6 +86,16 @@ class MessagingSettings(models.Model):
 
     updated_at = models.DateTimeField(auto_now=True)
 
+    market_telegram_bot_token = models.CharField(max_length=255, blank=True, default="")
+    market_telegram_channel_id = models.CharField(max_length=120, default="@kavehmetal", blank=True)
+    market_telegram_channel_url = models.URLField(default="https://t.me/kavehmetal", blank=True)
+    market_telegram_api_base = models.URLField(default="https://api.telegram.org")
+    market_bale_bot_token = models.CharField(max_length=255, blank=True, default="")
+    market_bale_channel_id = models.CharField(max_length=120, default="@kavehmetal", blank=True)
+    market_bale_channel_url = models.URLField(default="https://ble.ir/kavehmetal", blank=True)
+    market_contact_phone = models.CharField(max_length=32, default="", blank=True)
+    market_vat_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
     class Meta:
         verbose_name = "تنظیمات پیام‌رسانی"
         verbose_name_plural = "تنظیمات پیام‌رسانی"
@@ -298,7 +308,7 @@ class OutboundMessage(models.Model):
         "customers.Customer", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="messages", verbose_name="مشتری",
     )
-    recipient = models.CharField(max_length=32, db_index=True, verbose_name="گیرنده")
+    recipient = models.CharField(max_length=120, db_index=True, verbose_name="گیرنده")
     purpose = models.CharField(max_length=16, choices=PURPOSE_CHOICES, default=PURPOSE_MANUAL, db_index=True, verbose_name="هدف")
     template = models.CharField(max_length=80, blank=True, default="", verbose_name="الگو")
     body = models.TextField(blank=True, default="", verbose_name="متن")
@@ -324,3 +334,28 @@ class OutboundMessage(models.Model):
 
     def __str__(self):
         return f"{self.get_channel_display()} → {self.recipient} ({self.get_status_display()})"
+
+
+class MarketChannelDraft(models.Model):
+    fingerprint = models.CharField(max_length=64, unique=True)
+    report_date = models.DateField(db_index=True)
+    kind = models.CharField(max_length=16)
+    product_group = models.CharField(max_length=80)
+    title = models.CharField(max_length=500)
+    texts = models.JSONField(default=dict)
+    targets = models.JSONField(default=dict)
+    source_report_ids = models.JSONField(default=list)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["product_group", "title", "id"]
+
+
+class MarketChannelPublication(models.Model):
+    draft = models.ForeignKey(MarketChannelDraft, on_delete=models.PROTECT, related_name="publications")
+    platform = models.CharField(max_length=12, choices=[("telegram", "تلگرام"), ("bale", "بله")])
+    outbound = models.OneToOneField(OutboundMessage, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["draft", "platform"], name="unique_market_draft_platform")]
