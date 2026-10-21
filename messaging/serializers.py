@@ -15,6 +15,8 @@ from .models import (
 
 class MessagingSettingsSerializer(serializers.ModelSerializer):
     market_telegram_bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    market_telegram_api_hash = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=32)
+    market_telegram_api_hash_configured = serializers.SerializerMethodField()
     market_bale_bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
     market_telegram_configured = serializers.SerializerMethodField()
     market_bale_configured = serializers.SerializerMethodField()
@@ -50,6 +52,7 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
             "webhook_secret", "updated_at",
             "market_telegram_bot_token", "market_telegram_channel_id", "market_telegram_channel_url", "market_telegram_api_base",
             "market_bale_bot_token", "market_bale_channel_id", "market_bale_channel_url",
+            "market_telegram_transport", "market_telegram_api_id", "market_telegram_api_hash", "market_telegram_api_hash_configured", "market_telegram_proxies",
             "market_contact_phone", "market_vat_percent", "market_telegram_configured", "market_bale_configured",
         )
         read_only_fields = ("webhook_secret", "updated_at")
@@ -65,7 +68,7 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         # کلیدهای خالی ⇒ مقدارِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
-        for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key", "market_telegram_bot_token", "market_bale_bot_token"):
+        for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key", "market_telegram_bot_token", "market_bale_bot_token", "market_telegram_api_hash"):
             value = validated_data.pop(secret_field, None)
             if value is not None and value.strip():
                 setattr(instance, secret_field, value.strip())
@@ -73,6 +76,26 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
 
     def get_market_telegram_configured(self, obj):
         return bool(obj.market_telegram_bot_token and obj.market_telegram_channel_id)
+
+    def get_market_telegram_api_hash_configured(self, obj):
+        return bool(obj.market_telegram_api_hash)
+
+    def validate_market_telegram_api_hash(self, value):
+        if value and not re.fullmatch(r"[a-fA-F0-9]{32}", value):
+            raise serializers.ValidationError("API Hash باید ۳۲ رقم هگز باشد.")
+        return value
+
+    def validate_market_telegram_api_id(self, value):
+        if value is not None and not 0 < value <= 2147483647:
+            raise serializers.ValidationError("API ID باید عدد مثبت معتبر باشد.")
+        return value
+
+    def validate_market_telegram_proxies(self, value):
+        from .telegram_transport import validate_proxies
+        try:
+            return validate_proxies(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from None
 
     def get_market_bale_configured(self, obj):
         return bool(obj.market_bale_bot_token and obj.market_bale_channel_id)

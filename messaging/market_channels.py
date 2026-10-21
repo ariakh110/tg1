@@ -165,6 +165,12 @@ def publish_draft(draft, platforms, actor, retry_failed=False):
     for platform in platforms:
         if not getattr(cfg, f"market_{platform}_bot_token") or not getattr(cfg, f"market_{platform}_channel_id"):
             raise ValueError(f"تنظیمات کانال {platform} کامل نیست.")
+        if platform == "telegram" and cfg.market_telegram_transport == "mtproto":
+            from .telegram_transport import check_configuration, TelegramNotSent
+            try:
+                check_configuration(cfg)
+            except TelegramNotSent as exc:
+                raise ValueError(str(exc)) from None
         if draft.targets[platform] != getattr(cfg, f"market_{platform}_channel_id"):
             raise ValueError("مقصد کانال تغییر کرده است؛ پیش‌نمایش جدید بسازید.")
     for platform in platforms:
@@ -186,8 +192,15 @@ def publish_draft(draft, platforms, actor, retry_failed=False):
                 )
                 MarketChannelPublication.objects.create(draft=locked, platform=platform, outbound=outbound)
         try:
-            outbound.provider_message_id = bot_send(platform, getattr(cfg, f"market_{platform}_bot_token"),
-                outbound.recipient, outbound.body, "https://tapi.bale.ai" if platform == "bale" else cfg.market_telegram_api_base)
+            if platform == "telegram" and cfg.market_telegram_transport == "mtproto":
+                from .telegram_transport import send_mtproto, TelegramNotSent
+                try:
+                    outbound.provider_message_id = send_mtproto(cfg, outbound.body)
+                except TelegramNotSent as exc:
+                    raise BotRejected(str(exc)) from None
+            else:
+                outbound.provider_message_id = bot_send(platform, getattr(cfg, f"market_{platform}_bot_token"),
+                    outbound.recipient, outbound.body, "https://tapi.bale.ai" if platform == "bale" else cfg.market_telegram_api_base)
             outbound.status = OutboundMessage.STATUS_SENT
         except BotRejected as exc:
             outbound.status = OutboundMessage.STATUS_FAILED

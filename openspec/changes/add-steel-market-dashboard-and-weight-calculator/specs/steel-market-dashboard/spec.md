@@ -123,4 +123,17 @@ Full administrators SHALL be able to preview daily commodity summaries and item/
 #### Scenario: Delivery outcome is uncertain
 - **WHEN** the platform request times out or returns an unconfirmed outcome
 - **THEN** the system displays that uncertainty without leaking bot credentials or automatically retrying
-- **AND** only a definite platform rejection can be retried through an explicit retry action
+- **AND** only a definite platform rejection or a completed uncertain attempt explicitly reviewed as not delivered by a full administrator can be retried through an explicit retry action
+
+### Requirement: Optional Telegram MTProto proxy transport
+The system SHALL offer a full-admin-configured bot-only MTProto proxy transport with write-only application hash, validated classic/dd proxy links and message-free connection checks.
+
+#### Scenario: Administrator tests a saved proxy
+- **WHEN** a full administrator tests a saved proxy with application and bot credentials
+- **THEN** the system checks connection, bot authentication and channel posting permission without publishing a message
+- **AND** unsupported FakeTLS links and private proxy destinations are rejected
+
+#### Scenario: Proxy fails before or after sending
+- **WHEN** a proxy fails before sending starts
+- **THEN** the system tries the next configured candidate within a bounded preflight budget
+- **AND** after sending starts it never switches proxies or retries an uncertain delivery automatically

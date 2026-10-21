@@ -127,3 +127,66 @@ class MarketChannelTests(APITestCase):
         self.assertEqual(response.data["publications"]["telegram"]["status"], "sent")
         self.assertEqual(send.call_count, 2)
         self.assertEqual(MarketChannelPublication.objects.count(), 1)
+
+
+    def test_mtproto_settings_hide_hash_preserve_blank_and_validate_links(self):
+        response = self.client.patch("/api/messaging/settings/", {
+            "market_telegram_transport": "mtproto", "market_telegram_api_id": 123,
+            "market_telegram_api_hash": "a" * 32,
+            "market_telegram_proxies": ["tg://proxy?server=proxy.example.com&port=443&secret=" + "ab" * 16],
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["market_telegram_api_hash_configured"])
+        self.assertNotIn("market_telegram_api_hash", response.data)
+        self.client.patch("/api/messaging/settings/", {"market_telegram_api_hash": ""}, format="json")
+        self.cfg.refresh_from_db()
+        self.assertEqual(self.cfg.market_telegram_api_hash, "a" * 32)
+        bad = self.client.patch("/api/messaging/settings/", {"market_telegram_proxies": ["http://localhost"]}, format="json")
+        self.assertEqual(bad.status_code, 400)
+
+    @patch("messaging.telegram_transport.test_mtproto", return_value={"ok": True, "detail": "connected"})
+    def test_proxy_connection_test_is_admin_only_and_never_publishes(self, test):
+        response = self.client.post("/api/messaging/market-telegram/test/", {"index": 0}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(OutboundMessage.objects.count(), 0)
+        self.client.force_authenticate(get_user_model().objects.create_user("no-access", password="pass"))
+        self.assertEqual(self.client.post("/api/messaging/market-telegram/test/", {}, format="json").status_code, 403)
+
+    @patch("messaging.telegram_transport.send_mtproto", return_value="123")
+    @patch("messaging.market_channels.bot_send", return_value="456")
+    def test_mtproto_telegram_keeps_bale_https(self, https, mtproto):
+        self.cfg.market_telegram_transport = "mtproto"
+        self.cfg.market_telegram_api_id = 123
+        self.cfg.market_telegram_api_hash = "a" * 32
+        self.cfg.market_telegram_proxies = ["tg://proxy?server=proxy.example.com&port=443&secret=" + "ab" * 16]
+        self.cfg.save()
+        response = self.publish(self.generate()[0])
+        self.assertEqual(response.data["publications"]["telegram"]["status"], "sent")
+        self.assertEqual(response.data["publications"]["bale"]["status"], "sent")
+        mtproto.assert_called_once()
+        https.assert_called_once()
+        self.assertEqual(https.call_args.args[0], "bale")
+
+
+    @patch("messaging.market_channels.bot_send", side_effect=TimeoutError())
+    def test_only_explicit_admin_review_can_release_completed_uncertainty(self, send):
+        draft = self.generate()[0]
+        self.publish(draft, ["telegram"])
+        url = f"/api/messaging/market-drafts/{draft['id']}/resolve/"
+        self.assertEqual(self.client.post(url, {"platform": "telegram"}, format="json").status_code, 400)
+        response = self.client.post(url, {"platform": "telegram", "confirm_not_delivered": True}, format="json")
+        self.assertEqual(response.data["publications"]["telegram"]["status"], "failed")
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(OutboundMessage.objects.get().meta["not_delivered_confirmed_by"], self.admin.pk)
+
+    def test_review_cannot_release_active_claim_or_sent_message(self):
+        from .market_channels import generate_drafts
+        draft = generate_drafts(self.date, actor=self.admin)[0]
+        outbound = OutboundMessage.objects.create(channel="telegram", provider="telegram_bot", recipient="@kavehmetal", body="x", status="queued")
+        MarketChannelPublication.objects.create(draft=draft, platform="telegram", outbound=outbound)
+        url = f"/api/messaging/market-drafts/{draft.id}/resolve/"
+        body = {"platform": "telegram", "confirm_not_delivered": True}
+        self.assertEqual(self.client.post(url, body, format="json").status_code, 400)
+        outbound.status = "sent"
+        outbound.save()
+        self.assertEqual(self.client.post(url, body, format="json").status_code, 400)

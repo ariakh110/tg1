@@ -42,3 +42,10 @@
 - [x] 7.3 Add branded daily item/group drafts with independent Telegram/Bale configuration and explicit preview/send controls.
 - [x] 7.4 Persist per-channel publication status, duplicate prevention and outbound audit logs.
 - [x] 7.5 Verify API calculations, authorization, publication mocks, real canvas drilldown and browser/admin flows; prepare deployment.
+
+## Telegram MTProto recovery
+- [x] Add optional bot MTProto transport, validated classic/dd proxy imports, write-only application hash and admin connection tests.
+- [x] Preserve Bale HTTPS delivery, bound preflight failover, and block automatic resend after uncertain delivery.
+- [x] Add explicit audited admin review for completed uncertain publications without sending.
+- [x] Verify transport tests, frontend lint/build and browser settings/test flow with mocked delivery.
+- [x] Prepare committed deployment archives using the existing PrepareOnly release workflow.

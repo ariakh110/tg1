@@ -63,3 +63,10 @@ The storefront already exposes active products with offer pricing tiers and fres
 - Deduplicate offer/demand volumes by official offer ID, weight execution prices by actual traded volume, show absent values explicitly, and add VAT only when the administrator explicitly configures a percentage.
 - A persisted per-draft/platform publication claim prevents repeated clicks from posting twice. Platform rejections are retryable explicitly; uncertain network outcomes remain blocked from automatic resend. Every attempt is represented in the existing outbound log.
 - Preview generation makes no external requests; publication is triggered only by the administrator's send action. Telegram's HTTPS API root supports a configured relay; Bale uses its documented bot API.
+
+## Telegram proxy recovery (2026-10-22)
+- Owner authorized implementation after production HTTPS requests to Telegram timed out. Add an optional bot-only Telethon MTProto transport while preserving HTTPS/Bale defaults.
+- Full admins can save API ID, write-only API hash and at most 20 classic/dd MTProxy links, import a small text file, and test saved links without publishing. FakeTLS ee links are explicitly rejected because the selected connector does not support them.
+- Resolve and pin public proxy IPs. Try at most the first three links during bounded preflight; verify bot login and channel posting permissions. Do not switch proxies or automatically resend after sending starts. Missing configuration or exhausted preflight is definitely unsent; later network failures remain uncertain.
+- Application credentials must be obtained by the owner from my.telegram.org; deployment and mock tests cannot establish live connectivity without those credentials and working proxy links.
+- A full administrator may explicitly attest that a completed uncertain message is absent from the channel; record actor/time and mark it failed without sending. Active claims and confirmed deliveries cannot be released. A subsequent send still requires a separate explicit retry.
