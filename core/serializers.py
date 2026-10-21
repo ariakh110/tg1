@@ -33,12 +33,15 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 		return bool(obj.openai_api_key)
 
 	def get_global_metals(self, obj):
+		from products.external_markets import available_global_metals
 		return {
 			'enabled': obj.global_metals_enabled,
 			'provider': obj.global_metals_provider,
 			'provider_label': obj.get_global_metals_provider_display(),
 			'api_key_configured': bool(obj.global_metals_api_key or getattr(settings, 'METALS_DEV_API_KEY', '')),
 			'refresh_hours': obj.global_metals_refresh_hours,
+			'visible_codes': obj.global_metals_visible_codes,
+			'available_instruments': available_global_metals(),
 		}
 
 	def get_sections(self, obj):

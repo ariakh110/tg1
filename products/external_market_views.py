@@ -1,7 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Max, Sum, Q
+from django.db.models import Max, Sum, Q, F, Count
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -15,6 +15,9 @@ from .external_markets import (
     global_metals_config,
     import_global_metals_csv,
     sync_global_metals,
+    trade_display_name,
+    trade_specifications,
+    visible_global_metals,
 )
 from .models import (
     CommodityExchangeTrade,
@@ -59,6 +62,8 @@ def _trade_payload(item):
         "source_report_id": item.source_report_id,
         "symbol": item.symbol,
         "goods_name": item.goods_name,
+        "display_name": trade_display_name(item),
+        "specifications": trade_specifications(item.raw),
         "product_group": item.product_group,
         "producer_name": item.producer_name,
         "hall": item.hall,
@@ -107,6 +112,14 @@ class CommodityExchangeSummaryAPIView(APIView):
         for group in groups:
             for key, value in list(group.items()):
                 group[key] = _value(value)
+        hierarchy = {}
+        for item in latest.values("product_group", "producer_name", "symbol", "goods_name").annotate(records=Count("id")):
+            producers = hierarchy.setdefault(item["product_group"], {})
+            producer = item["producer_name"] or "تولیدکننده نامشخص"
+            producers.setdefault(producer, []).append({
+                "name": item["goods_name"], "symbol": item["symbol"], "producer_name": item["producer_name"],
+                "group": item["product_group"], "value": item["records"],
+            })
         is_stale = bool(latest_date and latest_date < timezone.localdate() - timedelta(days=5))
         return Response(
             {
@@ -116,6 +129,10 @@ class CommodityExchangeSummaryAPIView(APIView):
                 "symbols": latest.values("symbol").distinct().count(),
                 "totals": {key: _value(value) for key, value in totals.items()},
                 "groups": groups,
+                "hierarchy": [{"name": name, "group": name, "children": [
+                    {"name": producer, "group": name, "children": children}
+                    for producer, children in producers.items()
+                ]} for name, producers in hierarchy.items()],
                 "is_stale": is_stale,
                 "source": {"name": "بورس کالای ایران", "url": "https://www.ime.co.ir/deals_statistics.html"},
                 "sync": _sync_payload("ime"),
@@ -133,11 +150,12 @@ class CommodityExchangeTradeListAPIView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         queryset = CommodityExchangeTrade.objects.all()
         search = (request.query_params.get("search") or "").strip()
-        if search:
+        for term in search.split():
             queryset = queryset.filter(
-                Q(goods_name__icontains=search)
-                | Q(symbol__icontains=search)
-                | Q(producer_name__icontains=search)
+                Q(goods_name__icontains=term)
+                | Q(symbol__icontains=term)
+                | Q(producer_name__icontains=term)
+                | Q(raw__icontains=term)
             )
         for field in ("product_group", "producer_name", "symbol"):
             value = (request.query_params.get(field) or "").strip()
@@ -147,6 +165,14 @@ class CommodityExchangeTradeListAPIView(APIView):
             queryset = queryset.filter(trade_date__gte=request.query_params["date_from"])
         if request.query_params.get("date_to"):
             queryset = queryset.filter(trade_date__lte=request.query_params["date_to"])
+        ordering = request.query_params.get("ordering", "-trade_date")
+        sort_fields = {"goods_name", "symbol", "producer_name", "base_price", "weighted_price",
+                       "offered_volume", "demand_volume", "traded_volume", "trade_date"}
+        field = ordering.lstrip("-")
+        if field not in sort_fields:
+            return Response({"detail": "ستون مرتب‌سازی نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+        expression = F(field).desc(nulls_last=True) if ordering.startswith("-") else F(field).asc(nulls_last=True)
+        queryset = queryset.order_by(expression, "-source_report_id")
         count = queryset.count()
         start = (page - 1) * page_size
         return Response(
@@ -168,29 +194,33 @@ class CommodityExchangeHistoryAPIView(APIView):
         if range_name not in ranges:
             return Response({"detail": "range نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
         start = timezone.localdate() - timedelta(days=ranges[range_name] - 1)
-        rows = CommodityExchangeTrade.objects.filter(symbol=symbol, trade_date__gte=start).order_by(
-            "trade_date", "source_report_id"
-        )[:500]
-        return Response(
-            {
-                "symbol": symbol,
-                "range": range_name,
-                "points": [
-                    {
-                        "date": row.trade_date.isoformat(),
-                        "date_jalali": row.trade_date_jalali,
-                        "price": _value(row.weighted_price if row.weighted_price is not None else row.base_price),
-                        "price_kind": "weighted" if row.weighted_price is not None else "base",
-                        "offered_volume": _value(row.offered_volume),
-                        "demand_volume": _value(row.demand_volume),
-                        "traded_volume": _value(row.traded_volume),
-                        "currency": row.currency,
-                        "unit": row.unit,
-                    }
-                    for row in rows
-                ],
-            }
-        )
+        rows = CommodityExchangeTrade.objects.filter(symbol=symbol, trade_date__gte=start).order_by("trade_date", "source_report_id")
+        producer = request.query_params.get("producer_name")
+        if producer:
+            rows = rows.filter(producer_name=producer)
+        # Aggregate executions within a day; never mix units or substitute a base quote for a trade price.
+        buckets = {}
+        for row in rows:
+            key = (row.trade_date, row.currency, row.unit)
+            bucket = buckets.setdefault(key, {"date": row.trade_date.isoformat(), "date_jalali": row.trade_date_jalali,
+                "currency": row.currency, "unit": row.unit, "offered_volume": Decimal(0),
+                "demand_volume": Decimal(0), "traded_volume": Decimal(0), "weighted_sum": Decimal(0),
+                "weight": Decimal(0), "base_sum": Decimal(0), "base_count": 0})
+            for field in ("offered_volume", "demand_volume", "traded_volume"):
+                bucket[field] += getattr(row, field) or Decimal(0)
+            if row.weighted_price is not None and row.traded_volume and row.traded_volume > 0:
+                bucket["weighted_sum"] += row.weighted_price * row.traded_volume
+                bucket["weight"] += row.traded_volume
+            if row.base_price is not None:
+                bucket["base_sum"] += row.base_price
+                bucket["base_count"] += 1
+        points = []
+        for bucket in buckets.values():
+            weighted = bucket["weighted_sum"] / bucket["weight"] if bucket["weight"] else None
+            base = bucket["base_sum"] / bucket["base_count"] if bucket["base_count"] else None
+            points.append({**{k: _value(bucket[k]) for k in ("date", "date_jalali", "currency", "unit", "offered_volume", "demand_volume", "traded_volume")},
+                           "price": _value(weighted), "base_price": _value(base), "price_kind": "weighted"})
+        return Response({"symbol": symbol, "range": range_name, "points": points})
 
 
 def _observation_payload(instrument, latest, previous):
@@ -223,11 +253,15 @@ class GlobalMetalSummaryAPIView(APIView):
         provider_config = global_metals_config()
         rows = []
         exchange = (request.query_params.get("exchange") or "").strip()
-        instruments = GlobalMetalInstrument.objects.filter(is_active=True)
+        instruments = visible_global_metals()
         if exchange:
             instruments = instruments.filter(exchange=exchange)
         for instrument in instruments:
-            observations = list(instrument.observations.order_by("-observed_on", "-observed_at")[:2])
+            latest = instrument.observations.order_by("-observed_on", "-observed_at").first()
+            observations = []
+            if latest:
+                previous = instrument.observations.filter(provider=latest.provider, observed_on__lt=latest.observed_on).order_by("-observed_on", "-observed_at").first()
+                observations = [latest, previous]
             if observations:
                 rows.append(_observation_payload(instrument, observations[0], observations[1] if len(observations) > 1 else None))
         return Response(
@@ -236,7 +270,7 @@ class GlobalMetalSummaryAPIView(APIView):
                 "provider_configured": provider_config["enabled"] and bool(provider_config["api_key"]),
                 "instruments": rows,
                 "exchanges": list(
-                    GlobalMetalInstrument.objects.filter(is_active=True)
+                    visible_global_metals()
                     .values_list("exchange", flat=True)
                     .distinct()
                 ),
@@ -254,11 +288,14 @@ class GlobalMetalHistoryAPIView(APIView):
         if range_name not in ranges:
             return Response({"detail": "range نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            instrument = GlobalMetalInstrument.objects.get(code=code, is_active=True)
+            instrument = visible_global_metals().get(code=code)
         except GlobalMetalInstrument.DoesNotExist:
             return Response({"detail": "فلز موردنظر یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
         start = timezone.localdate() - timedelta(days=ranges[range_name] - 1)
-        points = instrument.observations.filter(observed_on__gte=start).order_by("observed_on", "observed_at")[:500]
+        latest = instrument.observations.order_by("-observed_on", "-observed_at").first()
+        points = instrument.observations.filter(observed_on__gte=start)
+        points = points.filter(provider=latest.provider) if latest else points.none()
+        points = points.order_by("observed_on", "observed_at")[:500]
         return Response(
             {
                 "instrument": {

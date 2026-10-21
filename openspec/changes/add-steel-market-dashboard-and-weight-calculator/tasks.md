@@ -28,3 +28,10 @@
 - [x] 5.2 Resolve automatic synchronization from admin settings with an environment fallback.
 - [x] 5.3 Add admin-only force-sync and licensed CSV import controls to the site settings panel.
 - [x] 5.4 Test secret handling, permissions, provider synchronization, frontend lint, and production builds.
+
+## 6. Interactive market chart corrections
+- [x] 6.1 Replace custom price SVGs with shared Apache ECharts line/bar charts and correct null/date handling.
+- [x] 6.2 Add commodity hierarchy drilldown and independent inline charts with range controls.
+- [x] 6.3 Add server sorting, pagination, specification search and full report-derived product descriptions.
+- [x] 6.4 Add administrator metal visibility selection applied to public summary and history.
+- [x] 6.5 Verify chart options, API regressions, frontend build and deploy archives.

@@ -50,6 +50,7 @@ class SiteSettings(models.Model):
 	)
 	global_metals_api_key = models.CharField(max_length=255, blank=True, default="")
 	global_metals_refresh_hours = models.PositiveSmallIntegerField(default=20)
+	global_metals_visible_codes = models.JSONField(null=True, blank=True, default=None)
 	head_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های هدر: داخل <head> تزریق می‌شوند (Analytics/Clarity/verification)
 	footer_scripts = models.TextField(blank=True, default="")  # اسکریپت‌های فوتر: پیش از پایان <body> تزریق می‌شوند
 	updated_at = models.DateTimeField(auto_now=True)

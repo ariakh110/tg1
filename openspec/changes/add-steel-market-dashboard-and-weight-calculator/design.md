@@ -10,7 +10,7 @@ The storefront already exposes active products with offer pricing tiers and fres
 - Decision: normalize market comparison to price per kilogram. Per-ton values are divided by 1,000. Per-sheet prices are excluded from percentage comparisons unless the product has a valid `weight_kg_per_unit`; the API explains excluded rows.
 - Decision: seed one baseline snapshot for current valid prices during migration/management command execution, without inventing older history.
 - Decision: public market endpoints return summary, groups, rows, and bounded history series. Querysets include only active products, active offers, positive prices, and their latest effective tier.
-- Decision: render charts with lightweight accessible SVG/CSS components instead of adding a chart package. Tables remain the canonical accessible representation.
+- Decision: render market time series and hierarchical commodity maps with Apache ECharts, loaded in the browser with ResizeObserver cleanup. Tables remain the canonical accessible representation.
 - Decision: calculator formulas live in a pure frontend module with deterministic tests. Standard section tables (channel/I-beam) are versioned data with the cited standard name; formula-based shapes use steel density 7,850 kg/m³ by default.
 - Decision: external indicators use a future provider interface with source name, source URL, observed timestamp, currency, unit, and freshness. Missing data renders an honest unavailable state.
 - Decision: global-market credentials and refresh policy are managed through the singleton site settings. The API key is write-only, the public response exposes only a configured boolean, and the server environment key remains a fallback for existing deployments.
@@ -45,3 +45,12 @@ The storefront already exposes active products with offer pricing tiers and fres
 
 ## Open Questions
 - Which channel should the market-page call to action prioritize: product purchase, quote request, or direct phone contact?
+
+## Market chart corrections (2026-10-21)
+- Use ECharts line/bar charts with zoom, dated Persian axes, separate price/volume axes, and expandable commodity row charts.
+- Missing values remain null gaps; a single point is displayed honestly. Ignore aborted requests and avoid showing a previous symbol/range while fetching.
+- Aggregate same-day commodity executions by volume for weighted prices, retain base quotes as a distinct series, and separate units/currencies.
+- Query both main and secondary IME halls; preserve the original product name and append only explicitly supplied grade/dimension details.
+- Commodity tables search the complete saved report, sort before pagination, and expose a group/producer/symbol treemap.
+- Store an optional visible metal-code allowlist: null means all, [] means none. Apply it to summary, exchange filters and history while retaining observations.
+- Global history and daily changes use the latest observation provider consistently, avoiding duplicate same-day points from mixed providers.

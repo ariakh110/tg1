@@ -59,6 +59,8 @@ class ExternalMarketSyncTests(APITestCase):
         post_json.return_value = {"d": [self.ime_row(price="535000")]}
         second = sync_ime_market()
 
+        self.assertEqual(post_json.call_args_list[0].args[1]["fari"], "false")
+        self.assertEqual(post_json.call_args_list[1].args[1]["fari"], "true")
         self.assertEqual((first, second), (1, 1))
         self.assertEqual(CommodityExchangeTrade.objects.count(), 1)
         trade = CommodityExchangeTrade.objects.get()
@@ -154,6 +156,56 @@ class ExternalMarketAPITests(APITestCase):
         self.assertEqual(summary.data["totals"]["traded_volume"], "800")
         self.assertEqual(listing.data["count"], 1)
         self.assertEqual(history.data["points"][0]["currency"], "ریال")
+
+    def test_trade_detail_search_and_server_sort_before_pagination(self):
+        self.trade.raw = {"Grade": "3sp", "Size": "130"}
+        self.trade.save()
+        other = CommodityExchangeTrade.objects.create(
+            source_report_id=20, symbol="BLOOM", goods_name="شمش بلوم", product_group="شمش و اسلب",
+            weighted_price="100", trade_date=timezone.localdate(), trade_date_jalali="1405/07/29",
+        )
+        response = self.client.get("/api/commodity-exchange/trades/", {"ordering": "weighted_price", "page_size": 1})
+        self.assertEqual(response.data["results"][0]["id"], other.id)
+        response = self.client.get("/api/commodity-exchange/trades/", {"search": "3sp 130"})
+        self.assertEqual(response.data["count"], 1)
+        self.assertIn("3sp", response.data["results"][0]["display_name"])
+        self.assertIn("130", response.data["results"][0]["display_name"])
+        self.assertEqual(self.client.get("/api/commodity-exchange/trades/", {"ordering": "raw"}).status_code, 400)
+
+    def test_same_day_history_is_volume_weighted_and_base_is_separate(self):
+        CommodityExchangeTrade.objects.create(
+            source_report_id=21, symbol=self.trade.symbol, goods_name=self.trade.goods_name,
+            product_group=self.trade.product_group, producer_name=self.trade.producer_name,
+            weighted_price="600000", base_price="490000", traded_volume="200", currency="ریال", unit="کیلوگرم",
+            trade_date=self.trade.trade_date, trade_date_jalali=self.trade.trade_date_jalali,
+        )
+        response = self.client.get("/api/commodity-exchange/symbols/REB-14/history/")
+        self.assertEqual(len(response.data["points"]), 1)
+        self.assertEqual(float(response.data["points"][0]["price"]), 540000)
+        self.assertEqual(float(response.data["points"][0]["base_price"]), 490000)
+
+    def test_hidden_metals_are_excluded_from_summary_history_and_exchanges(self):
+        from core.models import SiteSettings
+        config = SiteSettings.load()
+        config.global_metals_visible_codes = []
+        config.save()
+        response = self.client.get("/api/global-metals/summary/")
+        self.assertEqual(response.data["instruments"], [])
+        self.assertEqual(response.data["exchanges"], [])
+        self.assertEqual(self.client.get("/api/global-metals/instruments/copper/history/").status_code, 404)
+        self.assertTrue(GlobalMetalObservation.objects.exists())
+
+    def test_global_chart_uses_latest_provider_without_mixing_same_day_quotes(self):
+        GlobalMetalObservation.objects.create(
+            instrument=self.instrument, provider="Other provider", price="99999",
+            observed_at=timezone.now() - timedelta(minutes=1), observed_on=timezone.localdate(),
+            source_url="https://example.com/other",
+        )
+        summary = self.client.get("/api/global-metals/summary/")
+        self.assertEqual(summary.data["instruments"][0]["percent_change"], "2.00")
+        history = self.client.get("/api/global-metals/instruments/copper/history/")
+        self.assertEqual(len(history.data["points"]), 2)
+        self.assertTrue(all(point["provider"] == "Test Provider" for point in history.data["points"]))
 
     @override_settings(METALS_DEV_API_KEY="server-secret")
     def test_global_summary_calculates_change_without_exposing_secret(self):

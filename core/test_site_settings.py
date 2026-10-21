@@ -45,3 +45,12 @@ class SiteSettingsMarketConfigurationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(SiteSettings.load().global_metals_api_key, "")
+
+    def test_visible_metals_selection_can_be_saved_cleared_and_validated(self):
+        self.client.force_authenticate(self.admin)
+        for codes in [["copper"], [], None]:
+            response = self.client.patch("/api/site-settings/", {"global_metals": {"visible_codes": codes}}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(SiteSettings.load().global_metals_visible_codes, codes)
+        response = self.client.patch("/api/site-settings/", {"global_metals": {"visible_codes": ["unknown"]}}, format="json")
+        self.assertEqual(response.status_code, 400)

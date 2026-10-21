@@ -94,6 +94,16 @@ class SiteSettingsAPIView(views.APIView):
                 if provider not in allowed:
                     raise ValidationError({"global_metals.provider": "ارائه‌دهنده انتخاب‌شده پشتیبانی نمی‌شود."})
                 obj.global_metals_provider = provider
+            if "visible_codes" in global_metals:
+                from products.external_markets import available_global_metals
+                codes = global_metals["visible_codes"]
+                allowed_codes = {item["code"] for item in available_global_metals()}
+                if codes is not None and (
+                    not isinstance(codes, list)
+                    or any(not isinstance(code, str) or code not in allowed_codes for code in codes)
+                ):
+                    raise ValidationError({"global_metals.visible_codes": "فهرست فلزات انتخابی نامعتبر است."})
+                obj.global_metals_visible_codes = list(dict.fromkeys(codes)) if codes is not None else None
             api_key = global_metals.get("api_key")
             if api_key is not None and str(api_key).strip():
                 obj.global_metals_api_key = str(api_key).strip()[:255]

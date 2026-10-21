@@ -54,6 +54,46 @@ class MarketSyncError(RuntimeError):
     pass
 
 
+def available_global_metals():
+    instruments = {row[0]: {"code": row[0], "name_fa": row[1]} for row in METALS_DEV_INSTRUMENTS.values()}
+    for item in GlobalMetalInstrument.objects.all():
+        instruments[item.code] = {"code": item.code, "name_fa": item.name_fa}
+    return list(instruments.values())
+
+
+def visible_global_metals():
+    queryset = GlobalMetalInstrument.objects.filter(is_active=True)
+    codes = SiteSettings.load().global_metals_visible_codes
+    return queryset if codes is None else queryset.filter(code__in=codes)
+
+
+# These fields are copied only when explicitly supplied by the official report.
+TRADE_SPEC_FIELDS = (
+    ("Grade", "گرید"), ("SteelGrade", "گرید فولاد"), ("Standard", "استاندارد"),
+    ("Size", "سایز"), ("Dimensions", "ابعاد"), ("Thickness", "ضخامت"),
+    ("Width", "عرض"), ("Length", "طول"), ("Diameter", "قطر"),
+    ("GoodsDescription", "شرح کالا"), ("Specification", "مشخصات"),
+    ("Specifications", "مشخصات فنی"), ("Warehouse", "محل تحویل"),
+    ("Tasvieh", "تسویه"),
+)
+
+
+def trade_specifications(raw):
+    raw = raw or {}
+    return [{"label": label, "value": str(raw[key]).strip()} for key, label in TRADE_SPEC_FIELDS
+            if raw.get(key) is not None and str(raw[key]).strip()]
+
+
+def trade_display_name(item):
+    parts = [item.goods_name]
+    for detail in trade_specifications(item.raw):
+        if detail["label"] in {"محل تحویل", "تسویه"}:
+            continue
+        if detail["value"].casefold() not in " ".join(parts).casefold():
+            parts.append(detail["value"])
+    return " — ".join(parts)
+
+
 def global_metals_config():
     """Resolve admin-managed provider settings with environment fallback for existing installs."""
     config = SiteSettings.load()
@@ -221,27 +261,28 @@ def sync_ime_market(from_jalali=None, to_jalali=None):
         _sync_state_error(state, exc)
         raise exc
     try:
-        payload = _post_json(
-            IME_ENDPOINT,
-            {
-                "Language": "0",
-                "fari": "true",
+        source_rows = []
+        # Read both the industrial/main hall and the secondary market report.
+        for secondary_market in ("false", "true"):
+            payload = _post_json(IME_ENDPOINT, {
+                "Language": "0", "fari": secondary_market,
                 "GregorianFromDate": start.strftime("%Y/%m/%d"),
                 "GregorianToDate": end.strftime("%Y/%m/%d"),
-                "MainCat": "0",
-                "Cat": "0",
-                "SubCat": "0",
-                "Producer": "0",
-            },
-        )
+                "MainCat": "0", "Cat": "0", "SubCat": "0", "Producer": "0",
+            })
+            source_rows.extend(_unwrap_ime_payload(payload))
         parsed = []
-        for row in _unwrap_ime_payload(payload):
+        seen_ids = set()
+        for row in source_rows:
             if not isinstance(row, dict):
                 continue
             product_group = classify_steel_product(row)
             if not product_group:
                 continue
             report_id = _ime_row_id(row)
+            if report_id in seen_ids:
+                continue
+            seen_ids.add(report_id)
             published_date = row.get("date") or row.get("Date")
             goods_name = str(row.get("GoodsName") or "").strip()
             if not published_date or not goods_name:

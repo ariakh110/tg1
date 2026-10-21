@@ -76,3 +76,25 @@ The system SHALL allow an authorized administrator to enable the approved global
 #### Scenario: Unauthorized user attempts configuration
 - **WHEN** an unauthenticated or non-admin user attempts to update provider settings, synchronize, or import a CSV
 - **THEN** the system rejects the request without changing credentials or market observations
+
+### Requirement: Interactive Market Charts And Commodity Details
+The system SHALL render market time series using Apache ECharts with chronological dates, explicit missing-value gaps, zoom controls and honest single-observation states. Commodity views SHALL include group/producer/symbol drilldown and independent expandable row charts with separate price and volume axes.
+
+#### Scenario: Commodity trades share a date
+- **WHEN** multiple executions for one symbol, currency and unit share a date
+- **THEN** the chart receives the traded-volume weighted price for that date and a separate base-price series
+- **AND** base quotes are never presented as actual execution prices
+
+#### Scenario: Visitor searches and sorts commodity rows
+- **WHEN** a visitor searches for a name, grade, size, symbol or producer and sorts a column
+- **THEN** the system filters all saved reports and orders matching rows before pagination
+- **AND** the original full source name and any explicitly supplied specifications are displayed
+
+#### Scenario: Administrator selects visible metals
+- **WHEN** an administrator saves a subset of global metal codes
+- **THEN** only selected instruments appear in public summary, exchange filters and history
+- **AND** hidden instrument observations remain stored
+
+#### Scenario: Provider has missing or mixed observations
+- **WHEN** a history response includes missing prices or observations from multiple providers
+- **THEN** missing prices remain gaps and the global chart uses the latest observation provider consistently
