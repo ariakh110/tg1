@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrActiveAdminRole
 
+from .throttles import AssistantChatThrottle
 from .ai import AssistantError, ensure_embeddings, run_chat
 from .models import AssistantConversation, AssistantInquiry, AssistantKnowledge, AssistantSettings
 from .serializers import (
@@ -35,6 +36,7 @@ class AssistantChatView(APIView):
     """نقطهٔ پایانیِ گفتگوی عمومی با دستیار فروش."""
 
     permission_classes = [AllowAny]
+    throttle_classes = [AssistantChatThrottle]
 
     def post(self, request):
         cfg = AssistantSettings.load()

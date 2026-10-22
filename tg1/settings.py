@@ -358,3 +358,7 @@ CKEDITOR_5_CONFIGS = {
         },
     },
 }
+
+# Public assistant quotas share the authentication cache (Redis in production).
+ASSISTANT_CHAT_MINUTE_LIMIT = int(os.getenv("ASSISTANT_CHAT_MINUTE_LIMIT", "10"))
+ASSISTANT_CHAT_DAILY_LIMIT = int(os.getenv("ASSISTANT_CHAT_DAILY_LIMIT", "100"))
