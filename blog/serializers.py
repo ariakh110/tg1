@@ -4,8 +4,7 @@ import logging
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils.text import slugify
-import bleach
-from bleach.css_sanitizer import CSSSanitizer
+from .content_sanitizer import sanitize_content
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
@@ -36,79 +35,6 @@ def validate_blog_image(value, label="تصویر"):
     return value
 
 
-ALLOWED_CONTENT_TAGS = [
-    "a",
-    "blockquote",
-    "br",
-    "code",
-    "div",
-    "em",
-    "figcaption",
-    "figure",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hr",
-    "i",
-    "img",
-    "li",
-    "mark",
-    "oembed",
-    "ol",
-    "p",
-    "pre",
-    "s",
-    "span",
-    "strong",
-    "sub",
-    "sup",
-    "table",
-    "tbody",
-    "td",
-    "th",
-    "thead",
-    "tr",
-    "u",
-    "ul",
-]
-
-ALLOWED_CONTENT_ATTRIBUTES = {
-    "a": ["href", "rel", "target", "title"],
-    "img": ["alt", "height", "src", "title", "width"],
-    "oembed": ["url"],
-    "td": ["colspan", "rowspan"],
-    "th": ["colspan", "rowspan", "scope"],
-    "*": ["class", "style"],
-}
-
-CONTENT_CSS_SANITIZER = CSSSanitizer(
-    allowed_css_properties=[
-        "background-color",
-        "border",
-        "border-color",
-        "border-style",
-        "border-width",
-        "color",
-        "height",
-        "text-align",
-        "vertical-align",
-        "width",
-    ]
-)
-
-
-def sanitize_content(value):
-    return bleach.clean(
-        value or "",
-        tags=ALLOWED_CONTENT_TAGS,
-        attributes=ALLOWED_CONTENT_ATTRIBUTES,
-        css_sanitizer=CONTENT_CSS_SANITIZER,
-        protocols=["http", "https", "mailto"],
-        strip=True,
-    )
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -482,6 +408,15 @@ class LandingSerializer(serializers.ModelSerializer):
                   'meta_title', 'meta_description', 'sort_order',
                   'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+    def validate_body(self, value):
+        return sanitize_content(value)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Protect public/admin readers even before historical cleanup has run.
+        data["body"] = sanitize_content(data.get("body"))
+        return data
 
     def validate_expert_image(self, value):
         return validate_blog_image(value, "تصویر کارشناس")

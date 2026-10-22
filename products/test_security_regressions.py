@@ -101,3 +101,24 @@ class SecurityRegressionTests(APITestCase):
         self.client.force_authenticate(staff)
         response = self.client.post("/api/specifications/", {"product": self.foreign.pk})
         self.assertEqual(response.status_code, 201, response.data)
+
+    def test_legacy_landing_is_sanitized_on_read_and_by_cleanup(self):
+        from blog.models import Landing
+        from blog.serializers import LandingSerializer
+        from django.apps import apps
+        from django.db import connection
+        from importlib import import_module
+        landing = Landing.objects.create(family="legacy", slug="legacy", title="Legacy", body='<h2>Title</h2><img src="/safe.png" onerror="bad()"><a href="javascript:bad()">Link</a>')
+        body = LandingSerializer(landing).data["body"]
+        self.assertIn("<h2>Title</h2>", body)
+        self.assertNotIn("onerror", body)
+        self.assertNotIn("javascript:", body)
+        migration = import_module("blog.migrations.0013_sanitize_landing_bodies")
+        from types import SimpleNamespace
+        migration.sanitize_existing_bodies(apps, SimpleNamespace(connection=connection))
+        landing.refresh_from_db()
+        self.assertEqual(landing.body, body)
+        from types import SimpleNamespace
+        migration.sanitize_existing_bodies(apps, SimpleNamespace(connection=connection))
+        landing.refresh_from_db()
+        self.assertEqual(landing.body, body)
