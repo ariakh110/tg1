@@ -10,7 +10,7 @@ djangorestframework-simplejwt
 google-auth[requests]
 jdatetime
 django-mptt
-Pillow
+Pillow>=13.0.0,<14
 bleach
 openpyxl
 tinycss2
@@ -18,3 +18,8 @@ celery[redis]>=5.5,<6
 gunicorn>=23,<24
 
 Telethon>=1.42,<2
+
+# Security floors reviewed on 2026-10-22 (also constrain transitive installs).
+certifi>=2026.10.19
+urllib3>=2.8.0,<3
+PyJWT>=2.15.0,<3

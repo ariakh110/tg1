@@ -1,5 +1,4 @@
 import tempfile
-from pathlib import Path
 from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile

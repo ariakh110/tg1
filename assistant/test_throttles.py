@@ -50,3 +50,25 @@ class AssistantQuotaTests(APITestCase):
         cache_registry.__getitem__.return_value.add.side_effect = ConnectionError("offline")
         self.assertEqual(self.send().status_code, 503)
         chat.assert_not_called()
+
+    @override_settings(ASSISTANT_CHAT_MINUTE_LIMIT=1)
+    @patch("assistant.views.run_chat", return_value="reply")
+    def test_user_quota_survives_ip_changes(self, chat):
+        user = get_user_model().objects.create_user("mobile-quota-user")
+        self.client.force_authenticate(user)
+        self.assertEqual(self.send().status_code, 200)
+        self.client.defaults["REMOTE_ADDR"] = "192.0.2.2"
+        self.assertEqual(self.send("another-ip").status_code, 429)
+        self.assertEqual(chat.call_count, 1)
+
+    @override_settings(ASSISTANT_CHAT_MINUTE_LIMIT=3)
+    def test_concurrent_requests_cannot_exceed_quota(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from types import SimpleNamespace
+        from .throttles import AssistantChatThrottle
+        from rest_framework.test import APIRequestFactory
+        request = APIRequestFactory().post("/api/assistant/chat/", REMOTE_ADDR="192.0.2.3")
+        request.user = SimpleNamespace(is_authenticated=False)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            allowed = list(pool.map(lambda _: AssistantChatThrottle().allow_request(request, None), range(24)))
+        self.assertEqual(sum(allowed), 3)
