@@ -5,6 +5,7 @@ from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from .document_validation import validate_product_document
 from .content_sanitizer import sanitize_plain_text, sanitize_product_content_html
 from .models import (
     Product, ProductCategory, ProductImage, ProductSpecification,
@@ -345,6 +346,9 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if self.instance and "product" in attrs and attrs["product"].pk != self.instance.product_id:
+            raise serializers.ValidationError({"product": "انتقال مشخصات به محصول دیگر مجاز نیست."})
+
         product = attrs.get("product") or getattr(self.instance, "product", None)
         category = getattr(product, "category", None)
         if not category:
@@ -514,6 +518,14 @@ class ProductDocumentSerializer(serializers.ModelSerializer):
         model = ProductDocument
         fields = ("id", "product", "title", "file", "file_url")
         read_only_fields = ("file_url",)
+
+    def validate_file(self, value):
+        return validate_product_document(value)
+
+    def validate_product(self, value):
+        if self.instance and value.pk != self.instance.product_id:
+            raise serializers.ValidationError("انتقال سند به محصول دیگر مجاز نیست.")
+        return value
 
     def get_file_url(self, obj):
         request = self.context.get("request")

@@ -671,7 +671,7 @@ class ProductSpecificationViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         if self.action == "create":
             return [permissions.IsAuthenticated(), HasSellerProfile()]
-        return [permissions.IsAuthenticated(), IsSellerOwnerOrAdmin()]
+        return [permissions.IsAuthenticated(), HasSellerProfile(), IsProductAssetOwnerOrAdmin()]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = [
         "product",
@@ -682,6 +682,13 @@ class ProductSpecificationViewSet(viewsets.ModelViewSet):
         "diameter_mm",
     ]
     search_fields = ["steel_grade", "material_type", "surface_finish", "manufacturing_process"]
+
+
+    def perform_create(self, serializer):
+        product = serializer.validated_data["product"]
+        if not IsProductAssetOwnerOrAdmin()._can_access_product(self.request.user, product):
+            raise PermissionDenied("You are not allowed to create specifications for this product.")
+        serializer.save()
 
 
 # ---------------- SpecificationAttribute & SpecificationValue ----------------

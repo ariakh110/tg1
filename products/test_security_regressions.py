@@ -61,3 +61,43 @@ class SecurityRegressionTests(APITestCase):
         self.client.force_authenticate(None)
         statuses=[self.client.post("/api/assistant/chat/",{"message":"audit","session_key":"ecc-audit-session"},format="json").status_code for _ in range(12)]
         self.assertIn(429,statuses,"Public AI endpoint has no application-level request burst limit")
+
+    def test_valid_pdf_upload_and_title_edit_remain_allowed(self):
+        response = self.client.post("/api/product-documents/", {
+            "product": self.own.pk, "title": "Technical document",
+            "file": SimpleUploadedFile("technical.pdf", b"%PDF-1.7 test document"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        response = self.client.patch(f"/api/product-documents/{response.data['id']}/", {"title": "Updated"})
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_document_signature_and_size_are_checked(self):
+        from products.document_validation import validate_product_document, MAX_DOCUMENT_SIZE
+        from rest_framework.exceptions import ValidationError
+        for name, content in [("fake.pdf", b"<html>bad</html>"), ("active.svg", b"<svg/>"), ("empty.pdf", b"")]:
+            with self.subTest(name=name), self.assertRaises(ValidationError):
+                validate_product_document(SimpleUploadedFile(name, content))
+        upload = SimpleUploadedFile("large.pdf", b"%PDF-1.7")
+        upload.size = MAX_DOCUMENT_SIZE + 1
+        with self.assertRaises(ValidationError):
+            validate_product_document(upload)
+        for name, content in [("drawing.dwg", b"AC1032test"), ("drawing.dxf", b"0\nSECTION\n2\nHEADER\n")]:
+            upload = SimpleUploadedFile(name, content)
+            self.assertIs(validate_product_document(upload), upload)
+            self.assertEqual(upload.tell(), 0)
+
+    def test_owner_can_create_and_edit_specs_but_not_reparent(self):
+        response = self.client.post("/api/specifications/", {"product": self.own.pk})
+        self.assertEqual(response.status_code, 201, response.data)
+        url = f"/api/specifications/{response.data['id']}/"
+        self.assertEqual(self.client.patch(url, {"thickness_mm": "5.00"}).status_code, 200)
+        self.assertEqual(self.client.patch(url, {"product": self.foreign.pk}).status_code, 400)
+        from products.models import ProductSpecification
+        spec = ProductSpecification.objects.create(product=self.foreign)
+        self.assertEqual(self.client.patch(f"/api/specifications/{spec.pk}/", {"thickness_mm": "6.00"}).status_code, 403)
+
+    def test_staff_can_manage_foreign_specs(self):
+        staff = get_user_model().objects.create_user("spec-admin", is_staff=True)
+        self.client.force_authenticate(staff)
+        response = self.client.post("/api/specifications/", {"product": self.foreign.pk})
+        self.assertEqual(response.status_code, 201, response.data)
