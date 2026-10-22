@@ -5,4 +5,4 @@
 - [x] Enforce public assistant request quotas and cache failure handling.
 - [x] Upgrade and re-audit dependencies.
 - [x] Run regressions and review diffs.
-- [ ] Prepare committed deployment archives.
+- [x] Prepare committed deployment archives.
