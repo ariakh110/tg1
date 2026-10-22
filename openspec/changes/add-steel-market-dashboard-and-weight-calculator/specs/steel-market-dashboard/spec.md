@@ -137,3 +137,20 @@ The system SHALL offer a full-admin-configured bot-only MTProto proxy transport 
 - **WHEN** a proxy fails before sending starts
 - **THEN** the system tries the next configured candidate within a bounded preflight budget
 - **AND** after sending starts it never switches proxies or retries an uncertain delivery automatically
+
+### Requirement: Domestic market hierarchy with synchronized table
+The system SHALL group active priced catalog products by product kind, registered subtype, factory and individual product, showing current navigation scope in both map and table.
+
+#### Scenario: Visitor drills into a sheet factory
+- **WHEN** a visitor selects sheet, black sheet, and a factory in the map
+- **THEN** the map shows only that level's descendants and the table contains only matching products across all pages
+- **AND** the path displays each selected ancestor with root and one-step return actions
+
+#### Scenario: Search within a selected path
+- **WHEN** a visitor searches or changes table pages within a selected map scope
+- **THEN** scope and search are applied before pagination and stale requests cannot overwrite the current table
+- **AND** returning to all products clears the map path and search
+
+#### Scenario: Missing or custom catalog metadata
+- **WHEN** a priced product uses a custom subtype or lacks classification or factory metadata
+- **THEN** it remains accessible in the appropriate registered or explicitly unspecified group without guessing from its name

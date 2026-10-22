@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from .market import build_market_rows, build_market_summary, history_start_date
 from .models import Product, ProductPriceSnapshot
+from .market_hierarchy import filter_market_scope
 
 
 def serialize_value(value):
@@ -44,7 +45,7 @@ class MarketProductListAPIView(APIView):
             page_size = min(100, max(1, int(request.query_params.get("page_size", 30))))
         except (TypeError, ValueError):
             return Response({"detail": "page و page_size باید عدد صحیح باشند."}, status=status.HTTP_400_BAD_REQUEST)
-        rows = build_market_rows(search=search)
+        rows = filter_market_scope(build_market_rows(search=search), request.query_params)
         start = (page - 1) * page_size
         return Response(
             {

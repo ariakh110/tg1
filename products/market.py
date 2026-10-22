@@ -153,6 +153,8 @@ def _select_effective_tier(product):
 
 
 def build_market_rows(search=""):
+    from .market_hierarchy import MarketTaxonomy
+    taxonomy = MarketTaxonomy()
     observed_on = tehran_localdate()
     needle = (search or "").strip().casefold()
     rows = []
@@ -167,7 +169,8 @@ def build_market_rows(search=""):
         category_name = product.category.name if product.category_id else "سایر"
         factory = (getattr(specification, "factory", "") or "").strip()
         grade = (getattr(specification, "steel_grade", "") or "").strip()
-        haystack = " ".join((product.name, category_name, factory, grade)).casefold()
+        grouping = taxonomy.describe(product, specification)
+        haystack = " ".join((product.name, category_name, factory, grade, grouping["product_kind_label"], grouping["subtype_label"], grouping["factory_label"])).casefold()
         if needle and needle not in haystack:
             continue
 
@@ -198,6 +201,7 @@ def build_market_rows(search=""):
                 "category": category_name,
                 "factory": factory,
                 "grade": grade,
+                **grouping,
                 "price": tier.unit_price,
                 "pricing_basis": tier.price_basis,
                 "normalized_price_kg": normalized,
@@ -215,6 +219,7 @@ def build_market_rows(search=""):
 
 
 def build_market_summary(rows=None):
+    from .market_hierarchy import build_market_hierarchy
     rows = list(rows if rows is not None else build_market_rows())
     counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
     for row in rows:
@@ -253,6 +258,7 @@ def build_market_summary(rows=None):
         "groups": groups,
         "top_gainers": sorted(movers, key=lambda row: row["percent_change"], reverse=True)[:5],
         "top_losers": sorted(movers, key=lambda row: row["percent_change"])[:5],
+        "hierarchy": build_market_hierarchy(rows),
         "tiles": sorted(rows, key=lambda row: (-row["tile_weight"], row["name"])),
         "external_market": {
             "available": False,

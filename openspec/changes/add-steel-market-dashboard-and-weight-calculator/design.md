@@ -70,3 +70,10 @@ The storefront already exposes active products with offer pricing tiers and fres
 - Resolve and pin public proxy IPs. Try at most the first three links during bounded preflight; verify bot login and channel posting permissions. Do not switch proxies or automatically resend after sending starts. Missing configuration or exhausted preflight is definitely unsent; later network failures remain uncertain.
 - Application credentials must be obtained by the owner from my.telegram.org; deployment and mock tests cannot establish live connectivity without those credentials and working proxy links.
 - A full administrator may explicitly attest that a completed uncertain message is absent from the channel; record actor/time and mark it failed without sending. Active claims and confirmed deliveries cannot be released. A subsequent send still requires a separate explicit retry.
+
+## Domestic market hierarchy (2026-10-22)
+- Owner requested catalog-kind → subtype/sheet finish → factory → individual product navigation with synchronized table and visible return path.
+- Build hierarchy from all active priced market rows, not the first 30 tiles or the first table page. Category ancestry supplies kind/defaults; explicit specifications supply subtype/factory and controlled option labels supply display text. Missing metadata remains an explicit group; no inference from product names or grades.
+- Group/filter identifiers are stored values, not translated labels. Scope filtering intersects search before server pagination. Show all priced products through table pagination.
+- React controls ECharts drill path; render only the current level and expose root, ancestor and single-step return controls plus keyboard-accessible node buttons. Group area represents product count; color reflects mean comparable daily price change, with null remaining unknown.
+- Abort stale table requests and clear out-of-scope chart selection during navigation. Search stays within the chosen path; returning to all products resets search too.

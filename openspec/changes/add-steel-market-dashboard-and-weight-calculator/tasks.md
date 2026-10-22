@@ -49,3 +49,9 @@
 - [x] Add explicit audited admin review for completed uncertain publications without sending.
 - [x] Verify transport tests, frontend lint/build and browser settings/test flow with mocked delivery.
 - [x] Prepare committed deployment archives using the existing PrepareOnly release workflow.
+
+## Domestic market map drilldown
+- [x] Build complete catalog-based kind/subtype/factory/product hierarchy and scope filtering before pagination.
+- [x] Add controlled ECharts navigation, visible breadcrumb/root/back and synchronized paginated table/search.
+- [x] Verify hierarchy API tests, map tests, browser scope navigation and frontend checks.
+- [x] Prepare committed release archives.
