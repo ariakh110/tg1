@@ -14,7 +14,7 @@ class AdminProductIdentityTests(APITestCase):
         seller_user = get_user_model().objects.create_user("identity-seller")
         self.seller = Seller.objects.create(user=seller_user, company_name="Identity", business_type="Trading", location="Test")
         self.payload = {
-            "name": "ÙˆØ±Ù‚ Ø³ÛŒØ§Ù‡ Ú©Ø§ÙˆÛŒØ§Ù† Û³Û° Ù…ÛŒÙ„", "category_code": "sheet",
+            "name": "Ã™Ë†Ã˜Â±Ã™â€š Ã˜Â³Ã›Å’Ã˜Â§Ã™â€¡ ÃšÂ©Ã˜Â§Ã™Ë†Ã›Å’Ã˜Â§Ã™â€  Ã›Â³Ã›Â° Ã™â€¦Ã›Å’Ã™â€ž", "category_code": "sheet",
             "seller_id": self.seller.pk, "price": "50000", "price_basis": "kg",
             "manufacturing_process": "sheet", "surface_finish": "black",
             "factory": "kavian", "steel_grade": "ST37", "cut_type": "cut",
@@ -111,3 +111,10 @@ class AdminProductIdentityTests(APITestCase):
         from .models import ProductCategory
         ProductCategory.objects.create(name="Default sheet", code="default-variable-sheet", product_kind="sheet", spec_defaults={"manufacturing_process": "sheet"})
         self.save(category_code="default-variable-sheet", manufacturing_process="", length_type="over", length_mm="7000")
+
+    def test_variable_length_rejects_automatic_cut_line_weight(self):
+        from sales.services import normalize_cut_lines_selection
+        result = self.save(length_mm="7000", length_type="over")
+        product = Product.objects.get(pk=result["product_id"])
+        with self.assertRaisesRegex(ValueError, "variable_length"):
+            normalize_cut_lines_selection(product, {"cut_lines": [{"count": 1, "width_m": 1500, "length_m": 7000}]})
