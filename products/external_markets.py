@@ -222,6 +222,7 @@ def _sync_state_start(key):
 def _sync_state_finish(state, *, count, metadata=None):
     state.status = MarketDataSyncState.Status.SUCCESS
     state.finished_at = timezone.now()
+    state.last_success_at = state.finished_at
     state.record_count = count
     state.error_message = ""
     state.metadata = metadata or {}

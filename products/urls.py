@@ -11,6 +11,7 @@ from .views import (
 from .api_views import ProductSummaryViewSet
 from .market_views import MarketProductHistoryAPIView, MarketProductListAPIView, MarketSummaryAPIView
 from .external_market_views import (
+    CommodityExchangeSyncAPIView,
     CommodityExchangeHistoryAPIView,
     CommodityExchangeSummaryAPIView,
     CommodityExchangeTradeListAPIView,
@@ -37,6 +38,7 @@ router.register(r'delivery-locations', DeliveryLocationViewSet, basename='delive
 router.register(r'sellers', SellerViewSet, basename='seller')
 router.register(r'products-summary', ProductSummaryViewSet, basename='product-summary')
 urlpatterns = [
+    path('admin/commodity-exchange/sync/', CommodityExchangeSyncAPIView.as_view(), name='commodity-exchange-sync'),
     path('market/summary/', MarketSummaryAPIView.as_view(), name='market-summary'),
     path('market/products/', MarketProductListAPIView.as_view(), name='market-products'),
     path('market/products/<int:product_id>/history/', MarketProductHistoryAPIView.as_view(), name='market-product-history'),

@@ -43,6 +43,9 @@ class SiteSettings(models.Model):
 	openai_api_key = models.CharField(max_length=255, blank=True, default="")  # کلید OpenAI (محرمانه؛ در API عمومی برنمی‌گردد)
 	openai_content_model = models.CharField(max_length=80, blank=True, default="")  # مدل OpenAI برای سئو
 	global_metals_enabled = models.BooleanField(default=True)
+	global_metals_auto_refresh = models.BooleanField(default=True)
+	ime_auto_refresh = models.BooleanField(default=True)
+	ime_refresh_minutes = models.PositiveSmallIntegerField(default=30)
 	global_metals_provider = models.CharField(
 		max_length=32,
 		choices=GLOBAL_METALS_PROVIDER_CHOICES,

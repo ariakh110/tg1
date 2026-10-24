@@ -3,18 +3,20 @@ from decimal import Decimal
 
 from django.db.models import Max, Sum, Q, F, Count
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrActiveAdminRole
+from rest_framework.permissions import IsAdminUser
+from .tasks import refresh_market
 
 from .external_markets import (
     MarketSyncError,
     global_metals_config,
     import_global_metals_csv,
-    sync_global_metals,
     trade_display_name,
     trade_specifications,
     visible_global_metals,
@@ -42,6 +44,7 @@ def _sync_payload(key):
     return {
         "status": state.status,
         "finished_at": _value(state.finished_at),
+        "last_success_at": _value(state.last_success_at),
         "record_count": state.record_count,
         "error": state.error_message if state.status == MarketDataSyncState.Status.ERROR else "",
     }
@@ -90,9 +93,17 @@ class CommodityExchangeSummaryAPIView(APIView):
 
     def get(self, request):
         latest_date = CommodityExchangeTrade.objects.aggregate(value=Max("trade_date"))["value"]
+        selected_date = latest_date
+        if request.query_params.get('date'):
+            try:
+                selected_date = parse_date(request.query_params['date'])
+            except ValueError:
+                selected_date = None
+            if selected_date is None:
+                return Response({'detail': 'تاریخ باید به صورت YYYY-MM-DD باشد.'}, status=400)
         latest = CommodityExchangeTrade.objects.none()
-        if latest_date:
-            latest = CommodityExchangeTrade.objects.filter(trade_date=latest_date)
+        if selected_date:
+            latest = CommodityExchangeTrade.objects.filter(trade_date=selected_date)
         totals = latest.aggregate(
             offered_volume=Sum("offered_volume"),
             demand_volume=Sum("demand_volume"),
@@ -124,7 +135,12 @@ class CommodityExchangeSummaryAPIView(APIView):
         return Response(
             {
                 "latest_trade_date": _value(latest_date),
-                "latest_trade_date_jalali": latest.values_list("trade_date_jalali", flat=True).first(),
+                "selected_date": _value(selected_date),
+                "today": timezone.localdate().isoformat(),
+                "has_today_data": CommodityExchangeTrade.objects.filter(trade_date=timezone.localdate()).exists(),
+                "available_dates": [{'date': _value(row['trade_date']), 'label': row['trade_date_jalali']} for row in CommodityExchangeTrade.objects.values('trade_date', 'trade_date_jalali').order_by('-trade_date').distinct()[:366]],
+                "latest_trade_date_jalali": CommodityExchangeTrade.objects.filter(trade_date=latest_date).values_list("trade_date_jalali", flat=True).first(),
+                "selected_date_jalali": latest.values_list("trade_date_jalali", flat=True).first(),
                 "records": latest.count(),
                 "symbols": latest.values("symbol").distinct().count(),
                 "totals": {key: _value(value) for key, value in totals.items()},
@@ -136,6 +152,7 @@ class CommodityExchangeSummaryAPIView(APIView):
                 "is_stale": is_stale,
                 "source": {"name": "بورس کالای ایران", "url": "https://www.ime.co.ir/deals_statistics.html"},
                 "sync": _sync_payload("ime"),
+                "scheduler": _sync_payload("market_scheduler"),
             }
         )
 
@@ -342,7 +359,7 @@ class GlobalMetalSyncAPIView(APIView):
 
     def post(self, request):
         try:
-            count = sync_global_metals(force=True)
+            result = refresh_market('metals_dev', force=True)
         except MarketSyncError as exc:
             return Response(
                 {"detail": str(exc), "sync": _sync_payload("metals_dev")},
@@ -351,4 +368,15 @@ class GlobalMetalSyncAPIView(APIView):
         sync = _sync_payload("metals_dev")
         if sync["status"] == MarketDataSyncState.Status.ERROR:
             return Response({"detail": sync["error"], "sync": sync}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"synchronized": count, "sync": sync})
+        return Response({**result, "sync": sync}, status=409 if result.get('skipped') else 200)
+
+
+class CommodityExchangeSyncAPIView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        try:
+            result = refresh_market('ime', force=True)
+        except MarketSyncError as exc:
+            return Response({'detail': str(exc), 'sync': _sync_payload('ime')}, status=400)
+        return Response({**result, 'sync': _sync_payload('ime')}, status=409 if result.get('skipped') else 200)

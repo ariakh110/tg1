@@ -80,6 +80,20 @@ class SiteSettingsAPIView(views.APIView):
         if openai_key is not None and str(openai_key).strip():
             obj.openai_api_key = str(openai_key).strip()[:255]
 
+        commodity = data.get("commodity_exchange")
+        if commodity is not None:
+            if not isinstance(commodity, dict):
+                raise ValidationError({'commodity_exchange': 'ساختار تنظیمات بورس کالا نامعتبر است.'})
+            if 'auto_refresh' in commodity:
+                if not isinstance(commodity['auto_refresh'], bool):
+                    raise ValidationError({'commodity_exchange.auto_refresh': 'مقدار باید true یا false باشد.'})
+                obj.ime_auto_refresh = commodity['auto_refresh']
+            if 'refresh_minutes' in commodity:
+                minutes = commodity['refresh_minutes']
+                if type(minutes) is not int or not 5 <= minutes <= 1440:
+                    raise ValidationError({'commodity_exchange.refresh_minutes': 'فاصله باید عدد صحیح بین ۵ تا ۱۴۴۰ دقیقه باشد.'})
+                obj.ime_refresh_minutes = minutes
+
         global_metals = data.get("global_metals")
         if global_metals is not None:
             if not isinstance(global_metals, dict):
@@ -88,6 +102,10 @@ class SiteSettingsAPIView(views.APIView):
                 if not isinstance(global_metals["enabled"], bool):
                     raise ValidationError({"global_metals.enabled": "مقدار فعال‌بودن باید true یا false باشد."})
                 obj.global_metals_enabled = global_metals["enabled"]
+            if 'auto_refresh' in global_metals:
+                if not isinstance(global_metals['auto_refresh'], bool):
+                    raise ValidationError({'global_metals.auto_refresh': 'مقدار باید true یا false باشد.'})
+                obj.global_metals_auto_refresh = global_metals['auto_refresh']
             if "provider" in global_metals:
                 provider = str(global_metals["provider"]).strip()
                 allowed = {choice[0] for choice in SiteSettings.GLOBAL_METALS_PROVIDER_CHOICES}

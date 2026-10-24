@@ -301,12 +301,12 @@ CELERY_BEAT_SCHEDULE = {
     },
     "products-sync-ime-market-daily": {
         "task": "products.tasks.sync_ime_market",
-        "schedule": 86400.0,
+        "schedule": 300.0,
     },
     "products-sync-global-metals-hourly-check": {
         "task": "products.tasks.sync_global_metals",
         # The task checks the admin-managed refresh interval before contacting the provider.
-        "schedule": 3600.0,
+        "schedule": 300.0,
     },
 }
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = "staff"

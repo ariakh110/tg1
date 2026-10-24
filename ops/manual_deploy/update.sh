@@ -162,16 +162,14 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
   "$BACKEND_PYTHON" manage.py migrate --noinput
   "$BACKEND_PYTHON" manage.py seed_market_price_snapshots
-  if ! "$BACKEND_PYTHON" manage.py sync_ime_market; then
-    echo "WARNING: IME sync failed; the last successful market data remains available." >&2
-  fi
-  if ! "$BACKEND_PYTHON" manage.py sync_global_metals; then
-    echo "WARNING: global-metals sync failed; verify provider configuration." >&2
+  if ! "$BACKEND_PYTHON" manage.py sync_external_markets; then
+    echo "WARNING: market sync failed; the last successful data remains available. Check admin market settings." >&2
   fi
   "$BACKEND_PYTHON" manage.py collectstatic --noinput | tail -1
   cd "$APP_ROOT"
   systemctl restart tirexa-backend
   echo "==> tirexa-backend: $(systemctl is-active tirexa-backend)"
+  bash "$APP_ROOT/backend/ops/manual_deploy/install_market_timer.sh" "$APP_ROOT" "$BACKEND_PYTHON"
   for celery_service in tirexa-celery tirexa-celery-worker tirexa-celery-beat; do
     if systemctl cat "$celery_service.service" >/dev/null 2>&1; then
       systemctl restart "$celery_service"

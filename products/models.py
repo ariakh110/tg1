@@ -486,6 +486,8 @@ class MarketDataSyncState(models.Model):
         ERROR = "error", "Error"
 
     key = models.CharField(max_length=64, unique=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    lease_until = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.NEVER)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

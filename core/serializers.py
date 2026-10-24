@@ -24,10 +24,14 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 	sections = serializers.SerializerMethodField()
 	openai_configured = serializers.SerializerMethodField()
 	global_metals = serializers.SerializerMethodField()
+	commodity_exchange = serializers.SerializerMethodField()
 
 	class Meta:
 		model = models.SiteSettings
-		fields = ('site_name', 'google_oauth_client_id', 'google_tag_manager_id', 'openai_content_model', 'openai_configured', 'head_scripts', 'footer_scripts', 'sections', 'global_metals')
+		fields = ('site_name', 'google_oauth_client_id', 'google_tag_manager_id', 'openai_content_model', 'openai_configured', 'head_scripts', 'footer_scripts', 'sections', 'global_metals', 'commodity_exchange')
+
+	def get_commodity_exchange(self, obj):
+		return {'auto_refresh': obj.ime_auto_refresh, 'refresh_minutes': obj.ime_refresh_minutes}
 
 	def get_openai_configured(self, obj):
 		return bool(obj.openai_api_key)
@@ -36,6 +40,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 		from products.external_markets import available_global_metals
 		return {
 			'enabled': obj.global_metals_enabled,
+			'auto_refresh': obj.global_metals_auto_refresh,
 			'provider': obj.global_metals_provider,
 			'provider_label': obj.get_global_metals_provider_display(),
 			'api_key_configured': bool(obj.global_metals_api_key or getattr(settings, 'METALS_DEV_API_KEY', '')),
