@@ -122,6 +122,7 @@ def specification_snapshot(product):
         "thickness_mm": _clean_decimal(spec.thickness_mm),
         "width_mm": _clean_decimal(spec.width_mm),
         "length_mm": _clean_decimal(spec.length_mm),
+        "length_type": spec.length_type,
         "height_mm": _clean_decimal(spec.height_mm),
         "diameter_mm": _clean_decimal(spec.diameter_mm),
         "weight_kg_per_unit": _clean_decimal(spec.weight_kg_per_unit),
@@ -288,6 +289,8 @@ def normalize_cut_lines_selection(product, selection_details, *, allow_coil=Fals
     if product_is_coil(product) and not allow_coil:
         raise ValueError("cut_lines_require_sheet_product")
     spec = getattr(product, "specifications", None)
+    if getattr(spec, "length_type", "fixed") == "over":
+        raise ValueError("variable_length_requires_weight_quantity")
     thickness = Decimal(str(getattr(spec, "thickness_mm", "") or 0))
     if thickness <= 0:
         raise ValueError("sheet_thickness_required_for_cut_lines")
@@ -405,6 +408,8 @@ def estimate_sheet_unit_weight_kg(product, tier=None):
         ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     if spec.weight_kg_per_unit:
         return Decimal(str(spec.weight_kg_per_unit))
+    if spec.length_type == "over":
+        return None
     required = (spec.thickness_mm, spec.width_mm, spec.length_mm)
     if not all(required):
         return None

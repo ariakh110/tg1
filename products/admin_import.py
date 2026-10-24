@@ -101,6 +101,8 @@ HEADER_ALIASES = {
     "عرض": "width_mm",
     "length": "length_mm",
     "length_mm": "length_mm",
+    "length_type": "length_type",
+    "نوع طول": "length_type",
     "طول": "length_mm",
     "height": "height_mm",
     "height_mm": "height_mm",
@@ -158,6 +160,7 @@ SPEC_FIELDS = {
     "thickness_mm",
     "width_mm",
     "length_mm",
+    "length_type",
     "height_mm",
     "diameter_mm",
     "weight_kg_per_unit",
@@ -224,7 +227,7 @@ def build_product_name(row, category):
     if thickness:
         parts.append(f"{thickness} میل")
     if width and length:
-        parts.append(f"{width}x{length}")
+        parts.append(f"عرض {width} طول بیش از {length}" if row.get("length_type") == "over" else f"{width}x{length}")
     elif width:
         parts.append(f"عرض {width}")
     if process:
@@ -391,11 +394,23 @@ def find_product(row, category):
         product = Product.objects.filter(slug=row["slug"]).first()
         if product:
             return product
-    if row.get("name") and category:
-        return Product.objects.filter(name=row["name"], category=category).first()
-    if row.get("name"):
-        return Product.objects.filter(name=row["name"]).first()
-    return None
+    if not row.get("name"):
+        return None
+    candidates = Product.objects.filter(name=row["name"])
+    if category:
+        candidates = candidates.filter(category=category)
+    # A shared display name is not a product identifier. Match all supplied
+    # physical specifications before considering an implicit update.
+    supplied = {field: row[field] for field in SPEC_FIELDS if row.get(field) not in ("", None)}
+    if row.get("length_mm") not in ("", None):
+        supplied.setdefault("length_type", "fixed")
+    for field, value in supplied.items():
+        lookup = field if field in NUMERIC_FIELDS else field + "__iexact"
+        candidates = candidates.filter(**{"specifications__" + lookup: value})
+    matches = list(candidates.order_by("pk")[:2])
+    if len(matches) > 1:
+        raise ValueError("چند محصول با این نام و مشخصات وجود دارد؛ برای ویرایش، شناسه محصول را انتخاب کنید.")
+    return matches[0] if matches else None
 
 
 def upsert_product_row(row, *, default_seller_id=None, create_missing=True):

@@ -599,7 +599,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 city,
                 format_dimension(getattr(spec, "thickness_mm", None)) if spec else "",
                 format_dimension(getattr(spec, "width_mm", None)) if spec else "",
-                format_dimension(getattr(spec, "length_mm", None)) if spec else "",
+                (("بیش از " if spec.length_type == "over" else "") + format_dimension(spec.length_mm)) if spec and spec.length_mm is not None else "",
                 option_label("manufacturing_process", getattr(spec, "manufacturing_process", "")) if spec else "",
                 option_label("surface_finish", getattr(spec, "surface_finish", "")) if spec else "",
                 option_label("factory", getattr(spec, "factory", "")) if spec else "",

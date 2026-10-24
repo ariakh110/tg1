@@ -304,6 +304,7 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
             "thickness_mm",
             "width_mm",
             "length_mm",
+            "length_type",
             "weight_kg_per_unit",
             "surface_finish",
             "manufacturing_process",
@@ -365,6 +366,13 @@ class ProductSpecificationSerializer(serializers.ModelSerializer):
         for field, value in defaults.items():
             if field in self.fields and current_value(field) in (None, "") and value not in (None, ""):
                 attrs[field] = value
+
+        if current_value("length_type") == "over":
+            length = current_value("length_mm")
+            if length is None or length <= 0:
+                raise serializers.ValidationError({"length_mm": "برای ورق به طول، حد پایین طول باید عدد مثبت بر حسب میلی‌متر باشد."})
+            if category.resolved_product_kind() != "sheet" or current_value("manufacturing_process") != "sheet":
+                raise serializers.ValidationError({"length_type": "طول متغیر فقط برای ورق مجاز است."})
 
         required_fields = category.merged_required_spec_fields()
         missing = [

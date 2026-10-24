@@ -345,6 +345,7 @@ class ProductSpecification(models.Model):
     thickness_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     width_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     length_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    length_type = models.CharField(max_length=8, choices=[("fixed", "طول ثابت"), ("over", "به طول؛ بیش از")], default="fixed")
     height_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     diameter_mm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     factory = models.CharField(max_length=120, blank=True, default="")
