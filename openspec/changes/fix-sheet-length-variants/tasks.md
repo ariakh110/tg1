@@ -1,4 +1,4 @@
 - [x] Reproduce overwrites and variable-length gaps with failing tests.
 - [x] Fix matching, add length semantics and migration.
 - [x] Update admin, public presentation and weight safeguards.
-- [ ] Verify regressions and prepare release.
+- [x] Verify regressions and prepare release.
