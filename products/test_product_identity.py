@@ -14,7 +14,7 @@ class AdminProductIdentityTests(APITestCase):
         seller_user = get_user_model().objects.create_user("identity-seller")
         self.seller = Seller.objects.create(user=seller_user, company_name="Identity", business_type="Trading", location="Test")
         self.payload = {
-            "name": "ورق سیاه کاویان ۳۰ میل", "category_code": "sheet",
+            "name": "ÙˆØ±Ù‚ Ø³ÛŒØ§Ù‡ Ú©Ø§ÙˆÛŒØ§Ù† Û³Û° Ù…ÛŒÙ„", "category_code": "sheet",
             "seller_id": self.seller.pk, "price": "50000", "price_basis": "kg",
             "manufacturing_process": "sheet", "surface_finish": "black",
             "factory": "kavian", "steel_grade": "ST37", "cut_type": "cut",
@@ -77,3 +77,37 @@ class AdminProductIdentityTests(APITestCase):
     def test_variable_length_requires_a_positive_threshold(self):
         response = self.client.post("/api/products/admin-upsert/", {**self.payload, "length_type": "over", "length_mm": "0"}, format="json")
         self.assertEqual(response.status_code, 400, response.data)
+
+    def test_bulk_price_import_targets_length_variant_and_rejects_ambiguous_name(self):
+        from .admin_import import bulk_upsert_products
+        short = self.save()
+        variable = self.save(length_mm="7000", length_type="over", price="53000")
+        result = bulk_upsert_products([{
+            "name": self.payload["name"], "category_code": "sheet", "seller_id": self.seller.pk,
+            "length_mm": "7000", "length_type": "over", "price": "56000",
+        }], create_missing=False)
+        self.assertEqual(result["failed_rows"], 0, result)
+        self.assertEqual(result["results"][0]["product_id"], variable["product_id"])
+        self.assertEqual(PricingTier.objects.get(offer__product_id=short["product_id"]).unit_price, Decimal("50000"))
+        ambiguous = bulk_upsert_products([{"name": self.payload["name"], "price": "99999", "seller_id": self.seller.pk}], create_missing=False)
+        self.assertEqual(ambiguous["failed_rows"], 1)
+        self.assertEqual(PricingTier.objects.get(offer__product_id=variable["product_id"]).unit_price, Decimal("56000"))
+
+    def test_public_api_retains_variable_length_semantics(self):
+        result = self.save(length_mm="7000", length_type="over")
+        response = self.client.get(f"/api/products/{result['product_id']}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["specification"]["length_type"], "over")
+
+    def test_fixed_length_is_default_and_other_dimensions_are_identity(self):
+        original = self.save()
+        for changes in [{"width_mm": "2000"}, {"thickness_mm": "35"}, {"factory": "mobarakeh"}]:
+            with self.subTest(changes=changes):
+                variant = self.save(**changes)
+                self.assertNotEqual(variant["product_id"], original["product_id"])
+        self.assertEqual(ProductSpecification.objects.get(product_id=original["product_id"]).length_type, "fixed")
+
+    def test_variable_length_respects_inherited_category_defaults(self):
+        from .models import ProductCategory
+        ProductCategory.objects.create(name="Default sheet", code="default-variable-sheet", product_kind="sheet", spec_defaults={"manufacturing_process": "sheet"})
+        self.save(category_code="default-variable-sheet", manufacturing_process="", length_type="over", length_mm="7000")
