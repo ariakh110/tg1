@@ -24,10 +24,13 @@ class MarketChannelDraftsView(APIView):
         except ValueError:
             date = None
         kind = request.data.get("kind", "item")
+        traded_only = request.data.get('traded_only', False)
+        if type(traded_only) is not bool:
+            return Response({'detail': 'گزینه فقط کالاهای معامله‌شده باید true یا false باشد.'}, status=400)
         if date is None or date > timezone.localdate() or kind not in {"item", "summary"}:
             return Response({"detail": "تاریخ یا نوع گزارش نامعتبر است."}, status=400)
         try:
-            drafts = generate_drafts(date, str(request.data.get("group", "")), kind, request.user)
+            drafts = generate_drafts(date, str(request.data.get("group", "")), kind, request.user, traded_only=traded_only)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         return Response({"date": date.isoformat(), "results": [draft_payload(draft) for draft in drafts]})

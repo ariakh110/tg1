@@ -94,11 +94,13 @@ def message_body(rows, kind, date, cfg):
     return "\n".join(lines)
 
 
-def generate_drafts(date, group="", kind="item", actor=None):
+def generate_drafts(date, group="", kind="item", actor=None, traded_only=False):
     cfg = MessagingSettings.load()
     rows = CommodityExchangeTrade.objects.filter(trade_date=date).order_by("product_group", "producer_name", "symbol", "source_report_id")
     if group:
         rows = rows.filter(product_group=group)
+    if traded_only:
+        rows = rows.filter(traded_volume__gt=0)
     buckets = defaultdict(list)
     for row in rows:
         key = (row.product_group,) if kind == "summary" else (
