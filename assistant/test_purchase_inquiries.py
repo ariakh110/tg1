@@ -71,3 +71,49 @@ class PurchaseInquiryTests(APITestCase):
         cfg=MessagingSettings.load();cfg.sms_enabled=False;cfg.save()
         self.assertEqual(self.request_code().status_code,503)
         send.assert_not_called()
+
+    @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
+    def test_expired_code_is_rejected_and_phone_cooldown_cannot_be_bypassed_with_new_id(self, send):
+        from .models import PurchaseInquiryChallenge
+        self.assertEqual(self.request_code().status_code,200)
+        code=re.search(r'\b\d{6}\b',send.call_args.args[2]).group()
+        PurchaseInquiryChallenge.objects.filter(pk=self.body['request_id']).update(expires_at=timezone.now()-timedelta(seconds=1))
+        self.assertEqual(self.verify(code).status_code,400)
+        self.assertEqual(self.request_code(request_id=str(uuid.uuid4())).status_code,429)
+        self.assertEqual(send.call_count,1)
+
+    @patch('messaging.providers.kavenegar.send_lookup',return_value=SendResult(ok=True))
+    @patch('messaging.providers.kavenegar.send_sms')
+    def test_dedicated_otp_template_and_hashed_code(self, plain, lookup):
+        from .models import PurchaseInquiryChallenge
+        from django.contrib.auth.hashers import check_password
+        cfg=MessagingSettings.load();cfg.purchase_inquiry_otp_template='purchase-otp';cfg.save()
+        self.assertEqual(self.request_code().status_code,200)
+        plain.assert_not_called()
+        self.assertEqual(lookup.call_args.args[2],'purchase-otp')
+        code=lookup.call_args.args[3]
+        challenge=PurchaseInquiryChallenge.objects.get()
+        self.assertNotEqual(challenge.otp_hash,code)
+        self.assertTrue(check_password(code,challenge.otp_hash))
+
+    @patch('messaging.providers.kavenegar.send_sms')
+    def test_sms_daily_cap_and_cache_failure_fail_closed(self, send):
+        cfg=MessagingSettings.load();cfg.daily_send_cap=1;cfg.save()
+        OutboundMessage.objects.create(channel='sms',status='sent',recipient='09120000000')
+        self.assertEqual(self.request_code().status_code,503)
+        with patch('assistant.purchase_inquiries.caches') as cache:
+            cache.__getitem__.side_effect=RuntimeError('private storage detail')
+            response=self.request_code()
+        self.assertEqual(response.status_code,503)
+        self.assertNotIn('private storage detail',str(response.data))
+        send.assert_not_called()
+
+    @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
+    def test_verified_request_reaches_existing_crm_opportunity_flow(self, send):
+        from customers.models import CrmOpportunity
+        self.request_code()
+        code=re.search(r'\b\d{6}\b',send.call_args.args[2]).group()
+        with self.captureOnCommitCallbacks(execute=True):
+            response=self.verify(code)
+        self.assertEqual(response.status_code,201)
+        self.assertTrue(CrmOpportunity.objects.filter(source_type='assistant_inquiry').exists())

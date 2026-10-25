@@ -45,6 +45,7 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "sms_enabled", "provider", "kavenegar_api_key", "sender",
             "default_template", "purchase_template", "daily_send_cap",
+            "purchase_inquiry_otp_template",
             "telegram_enabled", "telegram_bot_token", "telegram_admin_chat_id", "telegram_api_base",
             "bale_webhook_enabled", "bale_admin_user_ids", "site_base_url",
             "safir_enabled", "safir_access_key", "safir_bot_id",

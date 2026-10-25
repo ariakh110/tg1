@@ -284,3 +284,17 @@ class AssistantInquiry(models.Model):
     def summary(self):
         parts = [self.product, self.grade, self.size, self.factory, self.quantity, self.city]
         return " - ".join(p for p in parts if p)
+
+
+class PurchaseInquiryChallenge(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    phone = models.CharField(max_length=11)
+    payload = models.JSONField(default=dict)
+    payload_hash = models.CharField(max_length=64)
+    otp_hash = models.CharField(max_length=128, blank=True)
+    expires_at = models.DateTimeField()
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    delivery = models.CharField(max_length=12, default='new')
+    inquiry = models.OneToOneField(AssistantInquiry, null=True, blank=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)

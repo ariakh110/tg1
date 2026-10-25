@@ -1,5 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from .purchase_inquiries import PurchaseOptionsView, PurchaseCodeView, PurchaseVerifyView
 
 from .views import (
     AdminAssistantSettingsView,
@@ -18,6 +19,9 @@ router.register(r"admin/inquiries", AdminInquiryViewSet, basename="assistant-inq
 app_name = "assistant"
 
 urlpatterns = [
+    path('purchase-inquiry/options/', PurchaseOptionsView.as_view()),
+    path('purchase-inquiry/code/', PurchaseCodeView.as_view()),
+    path('purchase-inquiry/verify/', PurchaseVerifyView.as_view()),
     path("chat/", AssistantChatView.as_view(), name="chat"),
     path("config/", AssistantConfigView.as_view(), name="config"),
     path("admin/settings/", AdminAssistantSettingsView.as_view(), name="admin-settings"),
