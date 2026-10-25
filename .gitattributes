@@ -2,3 +2,9 @@
 *.sqlite3 export-ignore
 *.dump export-ignore
 *.sh text eol=lf
+
+# Keep shared agent tools portable across Windows and Unix.
+.agents/** text eol=lf
+.claude/** text eol=lf
+_bmad/** text eol=lf
+docs/engineering/** text eol=lf

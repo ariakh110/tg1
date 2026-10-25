@@ -1,0 +1,27 @@
+{
+  "installed_date": "2026-10-25",
+  "bmad": {
+    "version": "6.12.4",
+    "installer": "bmad-method@6.12.4",
+    "module": "bmm",
+    "tools": [
+      "codex",
+      "claude-code"
+    ]
+  },
+  "superpowers": {
+    "repository": "https://github.com/obra/superpowers",
+    "commit": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
+    "version": "7.0.1",
+    "mode": "project-local skills; no plugin hooks"
+  },
+  "frontend_design": {
+    "repository": "https://github.com/anthropics/claude-code",
+    "commit": "318b7e6ac4e726e88a4ad326214866a93c373b1b",
+    "path": "plugins/frontend-design/skills/frontend-design"
+  },
+  "uv": {
+    "version": "0.13.5",
+    "windows_zip_sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
+  }
+}
