@@ -12,6 +12,7 @@ from .models import (
 @admin.register(MessagingSettings)
 class MessagingSettingsAdmin(admin.ModelAdmin):
     list_display = ("__str__", "provider", "sms_enabled", "updated_at")
+    readonly_fields = ('market_google_relay_key_hash', 'market_google_relay_last_poll_at')
 
 
 @admin.register(BaleUserBinding)

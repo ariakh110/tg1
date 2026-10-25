@@ -36,6 +36,9 @@ class MarketChannelDraftsView(APIView):
 class MarketChannelPublishView(APIView):
     permission_classes = [IsFullAdminUser]
 
+    def get(self, request, pk):
+        return Response(draft_payload(get_object_or_404(MarketChannelDraft, pk=pk)))
+
     def post(self, request, pk):
         platforms = request.data.get("platforms")
         if not isinstance(platforms, list) or not platforms or any(item not in PLATFORMS for item in platforms):

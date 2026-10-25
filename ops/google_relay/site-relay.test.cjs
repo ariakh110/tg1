@@ -4,11 +4,16 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.existsSync(__dirname + '/SiteRelay.gs') ? fs.readFileSync(__dirname + '/SiteRelay.gs', 'utf8') : '';
 
+test('complete pasteable bundle includes the tested relay implementation',()=>{
+  assert.ok(fs.readFileSync(__dirname+'/KavexChannelBot.private.gs','utf8').replace(/\r\n/g,'\n').endsWith(source.replace(/\r\n/g,'\n')));
+});
+
 function harness() {
   const props = new Map([['KX_SITE_RELAY_URL', 'https://example.test'], ['KX_SITE_RELAY_KEY', 'a1'.repeat(32)], ['KX_SITE_RELAY_CHAT_ID', '@approved']]);
   const calls = [], sent = [];
   const state = { jobs: [{ id: 'aaa', receipt: 'receipt', chat_id: '@approved', text: 'Exact approved text', expires_at: new Date(Date.now()+300000).toISOString() }], failAck: false, failSend: false };
   const ctx = vm.createContext({
+    Utilities: { sleep() {} },
     kxProps_: () => ({ getProperty: k => props.get(k) ?? null, setProperty: (k,v) => props.set(k,String(v)), deleteProperty: k=>props.delete(k) }),
     kxString_: v => v == null ? '' : String(v),
     kxAssert_: (value, message) => { if (!value) throw new Error(message); },
@@ -48,4 +53,15 @@ test('recovered sending checkpoint is reported as unknown without sending again'
 test('destination mismatch is rejected before any Telegram call',()=>{
   const h=harness();h.state.jobs[0].chat_id='@outsider';h.ctx.runKavexSiteRelay();
   assert.equal(h.sent.length,0);assert.equal(JSON.parse(h.calls.find(c=>c.url.endsWith('/ack/')).opts.payload).status,'failed');
+});
+
+test('rotating the key preserves pending receipt and pins its original site and destination',()=>{
+  const h=harness();const pending=JSON.stringify({id:'aaa',receipt:'receipt',status:'sent',message_id:'42'});
+  h.props.set('KX_SITE_RELAY_PENDING',pending);
+  let answers=['https://example.test','b2'.repeat(32),'@approved'];
+  h.ctx.SpreadsheetApp={getUi:()=>({ButtonSet:{OK_CANCEL:'both'},Button:{OK:'ok'},alert(){},prompt(){const text=answers.shift();return {getSelectedButton:()=> 'ok',getResponseText:()=>text};}})};
+  h.ctx.configureKavexSiteRelay();
+  assert.equal(h.props.get('KX_SITE_RELAY_KEY'),'b2'.repeat(32));assert.equal(h.props.get('KX_SITE_RELAY_PENDING'),pending);
+  answers=['https://another.test','c3'.repeat(32),'@approved'];
+  assert.throws(()=>h.ctx.configureKavexSiteRelay());assert.equal(h.props.get('KX_SITE_RELAY_URL'),'https://example.test');
 });

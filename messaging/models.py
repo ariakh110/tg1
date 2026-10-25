@@ -1,4 +1,5 @@
 import secrets
+import uuid
 
 from django.conf import settings
 from django.db import models
@@ -90,7 +91,9 @@ class MessagingSettings(models.Model):
     market_telegram_channel_id = models.CharField(max_length=120, default="@kavehmetal", blank=True)
     market_telegram_channel_url = models.URLField(default="https://t.me/kavehmetal", blank=True)
     market_telegram_api_base = models.URLField(default="https://api.telegram.org")
-    market_telegram_transport = models.CharField(max_length=10, choices=[("https", "HTTPS Bot API"), ("mtproto", "MTProto proxy")], default="https")
+    market_telegram_transport = models.CharField(max_length=10, choices=[("https", "HTTPS Bot API"), ("mtproto", "MTProto proxy"), ("google", "Google Apps Script")], default="https")
+    market_google_relay_key_hash = models.CharField(max_length=64, blank=True, default='')
+    market_google_relay_last_poll_at = models.DateTimeField(null=True, blank=True)
     market_telegram_api_id = models.PositiveIntegerField(null=True, blank=True)
     market_telegram_api_hash = models.CharField(max_length=32, default="", blank=True)
     market_telegram_proxies = models.JSONField(default=list, blank=True)
@@ -363,3 +366,14 @@ class MarketChannelPublication(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["draft", "platform"], name="unique_market_draft_platform")]
+
+
+class GoogleRelayJob(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    outbound = models.ForeignKey(OutboundMessage, on_delete=models.PROTECT, related_name='google_jobs')
+    status = models.CharField(max_length=12, default='pending', db_index=True,
+        choices=[(value, value) for value in ('pending', 'claimed', 'sent', 'failed', 'unknown', 'cancelled')])
+    receipt_hash = models.CharField(max_length=64, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    claimed_until = models.DateTimeField(null=True, blank=True)
+    result = models.JSONField(default=dict, blank=True)

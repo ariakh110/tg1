@@ -1,4 +1,5 @@
 import re
+import hashlib
 
 from rest_framework import serializers
 
@@ -14,6 +15,8 @@ from .models import (
 
 
 class MessagingSettingsSerializer(serializers.ModelSerializer):
+    market_google_relay_key = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=64)
+    market_google_relay_configured = serializers.SerializerMethodField()
     market_telegram_bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
     market_telegram_api_hash = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=32)
     market_telegram_api_hash_configured = serializers.SerializerMethodField()
@@ -54,8 +57,17 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
             "market_bale_bot_token", "market_bale_channel_id", "market_bale_channel_url",
             "market_telegram_transport", "market_telegram_api_id", "market_telegram_api_hash", "market_telegram_api_hash_configured", "market_telegram_proxies",
             "market_contact_phone", "market_vat_percent", "market_telegram_configured", "market_bale_configured",
+            "market_google_relay_key", "market_google_relay_configured", "market_google_relay_last_poll_at",
         )
-        read_only_fields = ("webhook_secret", "updated_at")
+        read_only_fields = ("webhook_secret", "updated_at", "market_google_relay_last_poll_at")
+
+    def get_market_google_relay_configured(self, obj):
+        return bool(obj.market_google_relay_key_hash)
+
+    def validate_market_google_relay_key(self, value):
+        if value and not re.fullmatch(r'[a-f0-9]{64}', value):
+            raise serializers.ValidationError('کلید اتصال باید ۶۴ نویسه هگز کوچک باشد؛ از دکمه ساخت کلید استفاده کنید.')
+        return value
 
     def get_api_key_configured(self, obj):
         return bool((obj.kavenegar_api_key or "").strip())
@@ -67,6 +79,9 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
         return bool((obj.safir_access_key or "").strip())
 
     def update(self, instance, validated_data):
+        relay_key = validated_data.pop('market_google_relay_key', '')
+        if relay_key:
+            instance.market_google_relay_key_hash = hashlib.sha256(relay_key.encode()).hexdigest()
         # کلیدهای خالی ⇒ مقدارِ فعلی دست‌نخورده بماند (تصادفی پاک نشود).
         for secret_field in ("kavenegar_api_key", "telegram_bot_token", "safir_access_key", "market_telegram_bot_token", "market_bale_bot_token", "market_telegram_api_hash"):
             value = validated_data.pop(secret_field, None)
@@ -75,6 +90,8 @@ class MessagingSettingsSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
     def get_market_telegram_configured(self, obj):
+        if obj.market_telegram_transport == 'google':
+            return bool(obj.market_google_relay_key_hash and obj.market_telegram_channel_id)
         return bool(obj.market_telegram_bot_token and obj.market_telegram_channel_id)
 
     def get_market_telegram_api_hash_configured(self, obj):

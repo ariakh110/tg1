@@ -2,6 +2,7 @@ from .market_views import MarketTelegramConnectionView, MarketChannelResolveView
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .market_views import MarketChannelDraftsView, MarketChannelPublishView
+from .google_relay import RelayClaimView, RelayAckView
 
 from .views import (
     BaleUserBindingViewSet,
@@ -27,6 +28,8 @@ router.register(r"groups", MessagingContactGroupViewSet, basename="messaging-con
 app_name = "messaging"
 
 urlpatterns = [
+    path('market-relay/claim/', RelayClaimView.as_view(), name='market-relay-claim'),
+    path('market-relay/ack/', RelayAckView.as_view(), name='market-relay-ack'),
     path("market-drafts/<int:pk>/resolve/", MarketChannelResolveView.as_view(), name="market-resolve"),
     path("market-telegram/test/", MarketTelegramConnectionView.as_view(), name="market-telegram-test"),
     path("market-drafts/", MarketChannelDraftsView.as_view(), name="market-drafts"),

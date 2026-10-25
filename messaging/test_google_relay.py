@@ -1,4 +1,5 @@
 import hashlib
+from datetime import timedelta
 from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -68,3 +69,33 @@ class GoogleRelayTests(APITestCase):
         self.assertEqual(OutboundMessage.objects.get().status, 'queued')
         payload.update(status='sent', message_id='2')
         self.assertEqual(self.relay('ack', payload).status_code, 409)
+
+    def test_claim_timeout_becomes_unknown_without_redelivery_and_manual_retry_is_new_attempt(self):
+        from .models import GoogleRelayJob
+        self.publish()
+        original = self.relay('claim').data['job']
+        GoogleRelayJob.objects.filter(pk=original['id']).update(claimed_until=timezone.now() - timedelta(seconds=1))
+        self.assertIsNone(self.relay('claim').data['job'])
+        self.assertTrue(OutboundMessage.objects.get().error)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f'/api/messaging/market-drafts/{self.draft.pk}/resolve/', {'platform': 'telegram', 'confirm_not_delivered': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(f'/api/messaging/market-drafts/{self.draft.pk}/publish/', {'platforms':['telegram'], 'retry_failed':True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        next_job = self.relay('claim').data['job']
+        self.assertNotEqual(next_job['id'], original['id'])
+        ack = {'id':original['id'], 'receipt':original['receipt'], 'status':'sent', 'message_id':'12'}
+        self.assertEqual(self.relay('ack',ack).status_code,409)
+
+    def test_disabled_google_mode_cannot_claim_and_secret_does_not_grant_admin_access(self):
+        self.cfg.market_telegram_transport='https'
+        self.cfg.save()
+        self.assertEqual(self.relay('claim').status_code,409)
+        response=self.client.get('/api/messaging/settings/',HTTP_AUTHORIZATION=f'Bearer {self.key}')
+        self.assertIn(response.status_code,(401,403))
+
+    def test_sent_ack_requires_positive_message_id(self):
+        self.publish()
+        job=self.relay('claim').data['job']
+        for message_id in ['', '-1', 'x']:
+            self.assertEqual(self.relay('ack',{'id':job['id'],'receipt':job['receipt'],'status':'sent','message_id':message_id}).status_code,400)

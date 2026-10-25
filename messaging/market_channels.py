@@ -11,7 +11,7 @@ from django.db import transaction
 from core.models import SiteSettings
 from products.external_markets import gregorian_to_jalali, trade_display_name
 from products.models import CommodityExchangeTrade
-from .models import MarketChannelDraft, MarketChannelPublication, MessagingSettings, OutboundMessage
+from .models import GoogleRelayJob, MarketChannelDraft, MarketChannelPublication, MessagingSettings, OutboundMessage
 
 
 PLATFORMS = ("telegram", "bale")
@@ -129,8 +129,14 @@ def generate_drafts(date, group="", kind="item", actor=None):
 
 
 def draft_payload(draft):
+    from .google_relay import expire_claims
+    expire_claims()
     publications = {item.platform: {"status": item.outbound.status, "error": item.outbound.error,
                     "message_id": item.outbound.provider_message_id} for item in draft.publications.select_related("outbound")}
+    for item in draft.publications.select_related('outbound'):
+        job = item.outbound.google_jobs.order_by('-created_at').first()
+        if job:
+            publications[item.platform]['relay_status'] = job.status
     return {"id": draft.id, "date": draft.report_date.isoformat(), "kind": draft.kind,
             "group": draft.product_group, "title": draft.title, "texts": draft.texts,
             "targets": draft.targets, "publications": publications}
@@ -163,7 +169,8 @@ def publish_draft(draft, platforms, actor, retry_failed=False):
     cfg = MessagingSettings.load()
     # Validate every selected platform before sending anything.
     for platform in platforms:
-        if not getattr(cfg, f"market_{platform}_bot_token") or not getattr(cfg, f"market_{platform}_channel_id"):
+        google = platform == 'telegram' and cfg.market_telegram_transport == 'google'
+        if (not cfg.market_google_relay_key_hash if google else not getattr(cfg, f"market_{platform}_bot_token")) or not getattr(cfg, f"market_{platform}_channel_id"):
             raise ValueError(f"تنظیمات کانال {platform} کامل نیست.")
         if platform == "telegram" and cfg.market_telegram_transport == "mtproto":
             from .telegram_transport import check_configuration, TelegramNotSent
@@ -191,6 +198,13 @@ def publish_draft(draft, platforms, actor, retry_failed=False):
                     body=draft.texts[platform], created_by=actor, meta={"market_draft_id": draft.pk},
                 )
                 MarketChannelPublication.objects.create(draft=locked, platform=platform, outbound=outbound)
+            if platform == 'telegram' and cfg.market_telegram_transport == 'google':
+                if not outbound.body or len(outbound.body) > 4000:
+                    raise ValueError('متن واسط گوگل باید بین ۱ تا ۴۰۰۰ نویسه باشد.')
+                outbound.provider = 'google_relay'
+                outbound.save(update_fields=['provider'])
+                GoogleRelayJob.objects.create(outbound=outbound)
+                continue
         try:
             if platform == "telegram" and cfg.market_telegram_transport == "mtproto":
                 from .telegram_transport import send_mtproto, TelegramNotSent
