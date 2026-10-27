@@ -256,6 +256,7 @@ class AssistantInquiry(models.Model):
     grade = models.CharField(max_length=60, blank=True, default="")      # گرید/آلیاژ
     factory = models.CharField(max_length=80, blank=True, default="")    # کارخانه/مبدا
     quantity = models.CharField(max_length=60, blank=True, default="")   # مقدار
+    requested_items = models.JSONField(default=list, blank=True)
     city = models.CharField(max_length=80, blank=True, default="")       # شهر
     note = models.CharField(max_length=255, blank=True, default="")
     raw_text = models.TextField(blank=True, default="")                  # متنِ اصلیِ مشتری

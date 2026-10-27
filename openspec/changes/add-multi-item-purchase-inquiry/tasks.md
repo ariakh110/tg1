@@ -1,0 +1,5 @@
+- [x] Backend nested request validation/options/immutable payload and legacy compatibility.
+- [x] Migration, full structured sales list and CRM source payload.
+- [x] Fast RTL list/contact/OTP editor and atomic TSV import.
+- [x] Regression/unit/browser/lint/build/migration verification and independent review.
+- [ ] User guide, handoff and release preparation.

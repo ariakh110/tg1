@@ -24,6 +24,85 @@ class PurchaseInquiryTests(APITestCase):
     def verify(self, code):
         return self.client.post('/api/assistant/purchase-inquiry/verify/',{'request_id':self.body['request_id'],'code':code},format='json')
 
+    def list_body(self, items=None):
+        return {key:value for key,value in {**self.body,'items':items or [
+            {'category_code':'sheet','specification':'ST52 اکسین 30 میل 2000x6000','quantity':'2.5','unit':'ton'},
+            {'category_code':'rebar','specification':'آجدار سایز 16','quantity':'30','unit':'branch'}]}.items()
+            if key not in ('product','size_mm','quantity_kg')}
+
+    @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
+    def test_multi_item_list_creates_one_complete_inquiry_and_crm_opportunity(self,send):
+        from customers.models import CrmOpportunity
+        body=self.list_body()
+        response=self.client.post('/api/assistant/purchase-inquiry/code/',body,format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        code=re.search(r'\b\d{6}\b',send.call_args.args[2]).group()
+        with self.captureOnCommitCallbacks(execute=True):
+            first=self.verify(code)
+        self.assertEqual(first.status_code,201,first.data)
+        self.assertEqual(self.verify(code).data['reference'],first.data['reference'])
+        inquiry=AssistantInquiry.objects.get()
+        self.assertEqual(len(inquiry.requested_items),2)
+        self.assertEqual(inquiry.requested_items[0]['quantity'],'2.5')
+        self.assertEqual(inquiry.requested_items[1]['unit'],'branch')
+        self.assertIn('اکسین',inquiry.raw_text)
+        opportunity=CrmOpportunity.objects.get(source_type='assistant_inquiry')
+        self.assertEqual(opportunity.metadata['requested_items'],inquiry.requested_items)
+        self.assertEqual(send.call_count,1)
+
+    @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
+    def test_fifty_items_and_immutable_list(self,send):
+        body=self.list_body();body['items']=[{**body['items'][0],'specification':f'ST52 {i}'} for i in range(50)]
+        response=self.client.post('/api/assistant/purchase-inquiry/code/',body,format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        changed={**body,'items':[{**body['items'][0],'quantity':'3'}]}
+        self.assertEqual(self.client.post('/api/assistant/purchase-inquiry/code/',changed,format='json').status_code,409)
+        code=re.search(r'\b\d{6}\b',send.call_args.args[2]).group()
+        self.assertEqual(self.verify(code).status_code,201)
+        self.assertEqual(len(AssistantInquiry.objects.get().requested_items),50)
+
+    @patch('messaging.providers.kavenegar.send_sms')
+    def test_invalid_lists_never_send_or_persist(self,send):
+        body=self.list_body();item=body['items'][0]
+        for items in ([],[item]*51,[{**item,'category_code':'missing'}],[{**item,'specification':''}],
+                      [{**item,'specification':'x'*201}],[{**item,'quantity':'0'}],[{**item,'unit':'unknown'}],
+                      [{**item,'quantity':'NaN'}],[{**item,'quantity':'2.123'}]):
+            response=self.client.post('/api/assistant/purchase-inquiry/code/',{**body,'items':items},format='json')
+            self.assertEqual(response.status_code,400,response.data)
+        mixed={**self.body,'items':[item]}
+        self.assertEqual(self.client.post('/api/assistant/purchase-inquiry/code/',mixed,format='json').status_code,400)
+        send.assert_not_called();self.assertFalse(AssistantInquiry.objects.exists())
+
+    def test_options_cover_active_categories_and_admin_list_is_read_only(self):
+        from products.models import ProductCategory
+        from .serializers import AssistantInquirySerializer
+        parent=ProductCategory.objects.create(name='Hidden family',code='hidden-family',is_active=False)
+        ProductCategory.objects.create(name='Hidden child',code='hidden-child',parent=parent,is_active=True)
+        ProductCategory.objects.create(name='Custom fasteners',code='custom-fasteners',is_active=True)
+        data=self.client.get('/api/assistant/purchase-inquiry/options/').data
+        codes={category['code'] for category in data['categories']}
+        self.assertIn('custom-fasteners',codes);self.assertNotIn('hidden-child',codes)
+        self.assertEqual(data['max_items'],50)
+        serializer=AssistantInquirySerializer()
+        self.assertTrue(serializer.fields['requested_items'].read_only)
+
+    @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
+    def test_crm_failure_rolls_back_verified_list_and_same_code_can_retry(self,send):
+        from customers.models import CrmOpportunity,Customer
+        from .models import PurchaseInquiryChallenge
+        response=self.client.post('/api/assistant/purchase-inquiry/code/',self.list_body(),format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        code=re.search(r'\b\d{6}\b',send.call_args.args[2]).group()
+        with patch('customers.opportunities.sync_assistant_inquiry_opportunity',side_effect=RuntimeError('private storage')):
+            failed=self.verify(code)
+        self.assertEqual(failed.status_code,503,failed.data)
+        self.assertNotIn('private storage',str(failed.data))
+        self.assertFalse(AssistantInquiry.objects.exists());self.assertFalse(CrmOpportunity.objects.exists())
+        self.assertFalse(Customer.objects.filter(phone='09123456789').exists())
+        self.assertIsNone(PurchaseInquiryChallenge.objects.get().inquiry_id)
+        self.assertEqual(self.verify(code).status_code,201)
+        self.assertEqual(CrmOpportunity.objects.filter(source_type='assistant_inquiry').count(),1)
+
     @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True,message_id='1'))
     def test_verification_creates_one_real_inquiry_and_customer_without_exposing_code(self, send):
         response=self.request_code()

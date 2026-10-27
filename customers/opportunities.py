@@ -297,6 +297,7 @@ def sync_assistant_inquiry_opportunity(inquiry_or_id, *, event_key=None):
         "grade": inquiry.grade,
         "factory": inquiry.factory,
         "quantity": inquiry.quantity,
+        "requested_items": inquiry.requested_items,
         "city": inquiry.city,
         "matched_price_toman": _safe_int(inquiry.matched_price),
     }

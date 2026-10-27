@@ -21,16 +21,23 @@ from rest_framework.views import APIView
 from customers.services import normalize_phone, upsert_lead
 from messaging.models import MessagingSettings, OutboundMessage
 from messaging.providers import kavenegar
-from products.models import ProductSpecification
+from products.models import ProductSpecification, ProductCategory
 from .models import AssistantInquiry, PurchaseInquiryChallenge
 
 PRODUCTS = {'sheet': 'ورق سیاه', 'rebar': 'میلگرد'}
+MAX_ITEMS = 50
+UNITS = {'kg':'کیلوگرم','ton':'تن','branch':'شاخه','sheet':'ورق','piece':'عدد','meter':'متر'}
 DIGITS = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
 
 
 class InquiryUnavailable(APIException):
     status_code = 503
     default_detail = 'ارسال کد تأیید فعلاً در دسترس نیست؛ کمی بعد تلاش کنید یا با فروش تماس بگیرید.'
+
+
+class InquiryRegistrationUnavailable(APIException):
+    status_code = 503
+    default_detail = 'ثبت لیست فعلاً انجام نشد؛ اطلاعات شما حفظ شده است. دوباره تأیید کنید.'
 
 
 def budget(scope, identity, seconds, limit, *, cooldown=False):
@@ -48,11 +55,43 @@ def budget(scope, identity, seconds, limit, *, cooldown=False):
         raise Throttled(wait=ttl, detail='تعداد تلاش‌ها زیاد است؛ پس از زمان اعلام‌شده دوباره تلاش کنید.')
 
 
+def available_categories():
+    """Resolve paths/kinds without querying ancestors for each option."""
+    categories=list(ProductCategory.objects.all().order_by('tree_id','lft'))
+    by_id={category.pk:category for category in categories}
+    result=[]
+    for category in categories:
+        chain=[]; current=category
+        while current:
+            chain.append(current)
+            current=by_id.get(current.parent_id)
+        if not category.code or any(not node.is_active for node in chain):
+            continue
+        kind=next((node.product_kind for node in chain if node.product_kind),'')
+        result.append({'id':category.pk,'code':category.code,'name':category.name,
+            'path':' / '.join(node.name for node in reversed(chain)),'kind':kind,
+            'default_unit':'branch' if kind in ('rebar','beam') else 'kg'})
+    return result
+
+
+class RequestedItemSerializer(serializers.Serializer):
+    category_code=serializers.CharField(max_length=80)
+    specification=serializers.CharField(max_length=200)
+    quantity=serializers.DecimalField(max_digits=11,decimal_places=2,min_value=Decimal('0.01'),max_value=100000000)
+    unit=serializers.ChoiceField(choices=list(UNITS))
+
+    def to_internal_value(self,data):
+        if isinstance(data,dict):
+            data={**data,'quantity':str(data.get('quantity','')).translate(DIGITS).replace('٫','.')}
+        return super().to_internal_value(data)
+
+
 class PurchaseInquirySerializer(serializers.Serializer):
     request_id = serializers.UUIDField()
-    product = serializers.ChoiceField(choices=list(PRODUCTS))
-    size_mm = serializers.DecimalField(max_digits=8, decimal_places=3, min_value=Decimal('0.01'), max_value=1000)
-    quantity_kg = serializers.DecimalField(max_digits=11, decimal_places=2, min_value=1, max_value=100000000)
+    product = serializers.ChoiceField(choices=list(PRODUCTS),required=False)
+    size_mm = serializers.DecimalField(max_digits=8, decimal_places=3, min_value=Decimal('0.01'), max_value=1000,required=False)
+    quantity_kg = serializers.DecimalField(max_digits=11, decimal_places=2, min_value=1, max_value=100000000,required=False)
+    items=RequestedItemSerializer(many=True,required=False,allow_empty=False,max_length=MAX_ITEMS)
     phone = serializers.CharField(max_length=30)
     name = serializers.CharField(max_length=120, required=False, allow_blank=True, default='')
     city = serializers.CharField(max_length=80, required=False, allow_blank=True, default='')
@@ -74,6 +113,18 @@ class PurchaseInquirySerializer(serializers.Serializer):
     def validate(self, data):
         if data.pop('website', ''):
             raise serializers.ValidationError('درخواست معتبر نیست.')
+        legacy={'product','size_mm','quantity_kg'}
+        if 'items' in data:
+            if legacy.intersection(data):
+                raise serializers.ValidationError('مشخصات تکی و لیست کالا را هم‌زمان ارسال نکنید.')
+            categories={item['code']:item for item in available_categories()}
+            for index,item in enumerate(data['items']):
+                category=categories.get(item['category_code'])
+                if not category:
+                    raise serializers.ValidationError({'items':f'قلم {index+1}: دسته‌بندی فعال و معتبر انتخاب کنید.'})
+                item['category_name']=category['name']
+        elif not legacy.issubset(data):
+            raise serializers.ValidationError('حداقل یک قلم کالا با مشخصات و مقدار وارد کنید.')
         return data
 
 
@@ -123,7 +174,8 @@ class PurchaseOptionsView(APIView):
             if kind == 'sheet':
                 rows = rows.filter(surface_finish='black')
             sizes[kind] = [format(value.normalize(), 'f') for value in rows.order_by(field).values_list(field, flat=True).distinct()[:100]]
-        return Response({'sizes': sizes})
+        return Response({'sizes': sizes,'categories':available_categories(),
+            'units':[{'value':key,'label':label} for key,label in UNITS.items()],'max_items':MAX_ITEMS})
 
 
 class PurchaseCodeView(APIView):
@@ -140,7 +192,7 @@ class PurchaseCodeView(APIView):
             raise InquiryUnavailable()
         request_id = data.pop('request_id')
         resend = data.pop('resend')
-        payload = {key: format(value.normalize(), 'f') if isinstance(value, Decimal) else value for key, value in data.items()}
+        payload = json.loads(json.dumps(data,default=lambda value:format(value.normalize(),'f') if isinstance(value,Decimal) else str(value)))
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         with transaction.atomic():
             challenge, _ = PurchaseInquiryChallenge.objects.get_or_create(pk=request_id,
@@ -200,11 +252,27 @@ class PurchaseVerifyView(APIView):
             if challenge.inquiry_id:
                 return Response({'ok': True, 'reference': f'KX-Q-{challenge.inquiry_id}'})
             payload = challenge.payload
-            inquiry = AssistantInquiry.objects.create(product=PRODUCTS[payload['product']],
-                size=payload['size_mm']+' میلی‌متر', quantity=payload['quantity_kg']+' کیلوگرم',
+            items=payload.get('items',[])
+            if items:
+                product=items[0]['category_name'][:120] if len(items)==1 else 'لیست خرید چندقلمی'
+                size=items[0]['specification'][:60] if len(items)==1 else ''
+                quantity=(items[0]['quantity']+' '+UNITS[items[0]['unit']]) if len(items)==1 else f'{len(items)} قلم کالا'
+                raw_text='\n'.join(f"{i+1}. {item['category_name']} | {item['specification']} | {item['quantity']} {UNITS[item['unit']]}" for i,item in enumerate(items))
+            else:
+                product=PRODUCTS[payload['product']];size=payload['size_mm']+' میلی‌متر'
+                quantity=payload['quantity_kg']+' کیلوگرم';raw_text=''
+            inquiry = AssistantInquiry.objects.create(product=product,size=size,quantity=quantity,requested_items=items,
                 city=payload['city'], contact_name=payload['name'], contact_phone=challenge.phone,
-                note='فرم استعلام خرید؛ موبایل با پیامک تأیید شده', raw_text='فرم استعلام خرید از '+payload['source_path'])
+                note='فرم استعلام خرید؛ موبایل با پیامک تأیید شده', raw_text='فرم استعلام خرید از '+payload['source_path']+'\n'+raw_text)
             upsert_lead(challenge.phone, name=payload['name'], city=payload['city'])
+            if items:
+                # Persist the new list and its sales opportunity in one transaction.
+                # The existing post-commit signal remains an idempotent projection.
+                from customers.opportunities import sync_assistant_inquiry_opportunity
+                try:
+                    sync_assistant_inquiry_opportunity(inquiry)
+                except Exception:
+                    raise InquiryRegistrationUnavailable() from None
             challenge.inquiry = inquiry
             challenge.save(update_fields=['inquiry'])
         return Response({'ok': True, 'reference': f'KX-Q-{inquiry.pk}'}, status=201)

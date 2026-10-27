@@ -97,11 +97,11 @@ class AssistantInquirySerializer(serializers.ModelSerializer):
             "id", "product", "size", "grade", "factory", "quantity", "city", "note",
             "raw_text", "matched_product", "matched_product_title", "matched_product_url",
             "matched_price", "contact_name", "contact_phone", "status", "status_display",
-            "summary", "created_at", "updated_at",
+            "summary", "requested_items", "created_at", "updated_at",
         )
         read_only_fields = (
             "product", "size", "grade", "factory", "quantity", "city", "note", "raw_text",
-            "matched_product", "matched_price", "created_at", "updated_at",
+            "matched_product", "matched_price", "requested_items", "created_at", "updated_at",
         )
 
     def get_matched_product_title(self, obj):

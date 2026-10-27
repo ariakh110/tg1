@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -60,7 +61,9 @@ class CrmActivityFollowUpTests(APITestCase):
         self.assertEqual(detail.data["activities"][0]["body"], "قیمت میلگرد ۱۴ را دادم")
 
     # --- follow-up dashboard buckets ---
-    def test_follow_ups_buckets_and_customer_annotation(self):
+    # Keep "two hours later" on the same day, including late-night test runs.
+    @patch('django.utils.timezone.now',return_value=datetime(2026,1,15,10,tzinfo=datetime_timezone.utc))
+    def test_follow_ups_buckets_and_customer_annotation(self, _clock):
         now = timezone.now()
         CustomerActivity.objects.create(customer=self.customer, kind="call", follow_up_at=now - timedelta(days=2))
         CustomerActivity.objects.create(customer=self.customer, kind="call", follow_up_at=now + timedelta(hours=2))
