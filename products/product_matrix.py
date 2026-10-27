@@ -12,8 +12,8 @@ from .serializers import ProductSpecificationSerializer
 
 MAX_ROWS = 100
 COMMON_FIELDS = {'category_code','seller_id','manufacturing_process','surface_finish','steel_grade','factory',
-                 'cut_type','price_basis','province','city','address'}
-ROW_FIELDS = {'key','thickness_mm','width_mm','length_mm','length_type','price','availability_status'}
+                 'cut_type','price_basis','province','city','address','naming_mode'}
+ROW_FIELDS = {'key','thickness_mm','width_mm','length_mm','length_type','price','availability_status','name'}
 DIGITS = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩','01234567890123456789')
 
 
@@ -67,6 +67,9 @@ def _prepare(data, *, lock=False):
     if any(not isinstance(value,(str,int)) or isinstance(value,bool) for value in common.values()):
         raise MatrixError({'detail':'مقادیر مشترک باید متن یا شناسه معتبر باشند.'})
     common={key:str(value).strip() for key,value in common.items()}
+    naming_mode=common.pop('naming_mode','auto')
+    if naming_mode not in ('auto','manual'):
+        raise MatrixError({'detail':'روش نام‌گذاری باید خودکار یا دستی باشد.'})
     for field in ('province','city','address'):
         limit=DeliveryLocation._meta.get_field(field).max_length
         if len(common.get(field,''))>limit:
@@ -126,7 +129,18 @@ def _prepare(data, *, lock=False):
             row={**common,**spec,'availability_status':availability}
             if price is not None:
                 row['price']=price
-            row['name']=build_product_name(row,category)
+            if naming_mode=='manual':
+                name=entry.get('name')
+                if not isinstance(name,str) or not name.strip():
+                    raise ValueError('نام محصول را در حالت دستی وارد کنید.')
+                name=name.strip()
+            else:
+                name=build_product_name(row,category)
+                if spec.get('steel_grade'):
+                    name+=' '+spec['steel_grade']
+            if len(name)>Product._meta.get_field('name').max_length:
+                raise ValueError('نام محصول حداکثر ۲۵۵ نویسه باشد.')
+            row['name']=name
             existing=_existing(category,spec)
             item.update(name=existing.name if existing else row['name'],status='exists' if existing else 'new')
             if existing:

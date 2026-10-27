@@ -23,6 +23,55 @@ class ProductMatrixTests(APITestCase):
     def counts(self):
         return [model.objects.count() for model in (Product,ProductSpecification,Seller,Offer,PricingTier,ProductAuditLog)]
 
+    def test_manual_names_and_auto_grade_do_not_change_identity(self):
+        automatic=self.request(rows=[self.rows[0]])
+        self.assertIn('ST37',automatic.data['rows'][0]['name'])
+        manual={**self.common,'naming_mode':'manual'}
+        rows=[{**self.rows[0],'name':'  ورق سفارشی کاویان ۳۰ میل  '}]
+        response=self.request('create',rows=rows,common=manual)
+        self.assertEqual(response.status_code,200,response.data)
+        product=Product.objects.get(pk=response.data['rows'][0]['product_id'])
+        self.assertEqual(product.name,'ورق سفارشی کاویان ۳۰ میل')
+        repeated=self.request('create',rows=[{**rows[0],'name':'Changed'}],common=manual)
+        self.assertEqual(repeated.data['created_count'],0)
+        product.refresh_from_db(); self.assertEqual(product.name,'ورق سفارشی کاویان ۳۰ میل')
+
+    def test_invalid_manual_names_reject_all_rows(self):
+        for name in ['', '   ', 'x'*256, None, 123, ['name']]:
+            with self.subTest(name=name):
+                before=self.counts()
+                response=self.request('create',common={**self.common,'naming_mode':'manual'},
+                    rows=[{**self.rows[0],'name':'Valid'},{**self.rows[1],'name':name}])
+                self.assertEqual(response.status_code,400,response.data)
+                self.assertEqual(self.counts(),before)
+        self.assertEqual(self.request(common={**self.common,'naming_mode':'unknown'}).status_code,400)
+
+    def test_oxin_st52_8_through_80_create_and_repeat(self):
+        common={**self.common,'surface_finish':'alloy','steel_grade':'ST52','factory':'oxin'}
+        rows=[{**self.rows[0],'key':str(t),'thickness_mm':str(t)} for t in range(8,81)]
+        preview=self.request(rows=rows,common=common)
+        self.assertEqual(preview.status_code,200,preview.data)
+        self.assertTrue(preview.data['valid'],preview.data)
+        self.assertEqual(preview.data['new_count'],73)
+        self.assertIn('ST52',preview.data['rows'][0]['name'])
+        response=self.request('create',rows=rows,common=common)
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data['created_count'],73)
+        self.assertEqual(Product.objects.filter(specifications__factory='oxin',specifications__steel_grade='ST52').count(),73)
+        repeated=self.request('create',rows=rows,common=common)
+        self.assertEqual(repeated.data['created_count'],0)
+        self.assertEqual(repeated.data['existing_count'],73)
+
+    def test_oxin_st52_user_dimensions_two_fixed_lengths(self):
+        thicknesses=[8,10,12,15,20,25,30,35,40,45,50,55,60,65,70,75,80]
+        common={**self.common,'surface_finish':'alloy','steel_grade':'ST52','factory':'oxin'}
+        rows=[{**self.rows[0],'key':f'{t}-{length}','thickness_mm':str(t),
+               'width_mm':'2000','length_mm':str(length)} for t in thicknesses for length in (6000,12000)]
+        response=self.request('create',rows=rows,common=common)
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data['created_count'],34)
+        self.assertEqual(ProductSpecification.objects.filter(width_mm=2000,length_mm=12000,steel_grade='ST52').count(),17)
+
     def test_preview_is_read_only_and_reports_two_length_variants(self):
         before=self.counts()
         response=self.request()

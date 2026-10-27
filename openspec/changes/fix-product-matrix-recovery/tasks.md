@@ -1,0 +1,5 @@
+- [x] Reproduce missing grade and unsupported manual names with regression tests; investigate silent-response handling.
+- [x] Implement additive naming and strict report validation with explicit outcome summaries.
+- [x] Test ST52 Oxin width 2000 at lengths 6000/12000, repeated identities and atomic rejection.
+- [x] Independent review; test and fix malformed error reports and JSON gateway reconciliation.
+- [ ] Complete final production build/browser verification and prepare release archives.
