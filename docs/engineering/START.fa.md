@@ -65,3 +65,7 @@ python docs/engineering/verify_toolchain.py --runtime
 این نصب ابزار توسعه است. ساخت یک ERP کامل، بازطراحی محصول و نصب روی سرور با این کار انجام نشده‌اند.
 
 منابع: [BMAD](https://github.com/bmad-code-org/BMAD-METHOD)، [Superpowers](https://github.com/obra/superpowers)، [Frontend Design](https://github.com/anthropics/claude-code/tree/main/plugins/frontend-design).
+
+## LangGraph stage coordination
+
+The owner selected local LangGraph stage tracking with work performed in the current Claude/Codex session on 2026-10-27. Read [the Persian operating guide](LANGGRAPH.fa.md) for commands, approvals and recovery.

@@ -23,5 +23,12 @@
   "uv": {
     "version": "0.13.5",
     "windows_zip_sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
+  },
+  "engineering_orchestrator": {
+    "langgraph": "1.2.18",
+    "sqlite_checkpointer": "3.1.2",
+    "runner": "backend:tools/engineering_flow",
+    "mode": "local stage/approval tracking; existing Claude/Codex execute work",
+    "dependency_lock": "backend:tools/engineering_flow/uv.lock"
   }
 }

@@ -30,3 +30,9 @@ Plain ChatGPT web cannot discover local folders: attach the spec, diagrams and h
 Update deliberately: inspect upstream changes, reinstall pinned sources, synchronize both trees and run the verifier. Preserve project instructions and custom BMAD configuration.
 
 Project-local Superpowers skills use their bare names; resolve upstream superpowers:<name> references to .agents/skills/<name>/SKILL.md (Codex) or .claude/skills/<name>/SKILL.md (Claude). This is a local-skill installation, not a namespaced plugin.
+
+## LangGraph stage coordination (2026-10-27)
+For substantial engineering work, use tools/engineering.ps1 and docs/engineering/LANGGRAPH.fa.md. LangGraph owns the persistent phase order and human-decision gates; BMAD authors requirements/architecture/UX/specs and the current Claude/Codex session performs work. Read status for an existing task before acting. Submit actual artifact receipts with its current checkpoint; never fabricate human approval or a test result. Store explicit prior approval for the same artifacts without requesting it again.
+Choose Superpowers as the implementation discipline within the pending stage. Do not start a second whole-task BMAD build coordinator that skips the current graph phase. A bmad-build run, if explicitly chosen, stays bounded to the approved implementation stage. The runner does not invoke models, execute shell actions or launch subagents; the host remains responsible for permitted actions. Existing OpenSpec rules, scoped user authorization, provider-send and deploy boundaries remain in force. Read LANGGRAPH.fa.md for revision/invalidation and local state limitations.
+
+Read docs/engineering/HANDOFF-LANGGRAPH.md for the completed toolchain adoption; retain existing feature handoffs as separate task context.

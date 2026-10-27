@@ -25,3 +25,6 @@ Thumbs.db
 db.local.sqlite3
 db.local.sqlite3-*
 media-local/
+
+# Local engineering checkpoints and lock files
+.engineering-state/
