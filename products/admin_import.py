@@ -413,7 +413,7 @@ def find_product(row, category):
     return matches[0] if matches else None
 
 
-def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
+def upsert_product_row(row, *, default_seller_id=None, create_missing=True, force_create=False):
     row = normalize_row(row)
     price_provided = "price" in row
     for field in NUMERIC_FIELDS:
@@ -421,7 +421,7 @@ def upsert_product_row(row, *, default_seller_id=None, create_missing=True):
             row[field] = parse_decimal(row[field], field)
 
     category = resolve_category(row)
-    product = find_product(row, category)
+    product = None if force_create else find_product(row, category)
     created_product = False
     explicit_name = (row.get("name") or "").strip()
     # نامِ خودکار فقط برای ساختِ محصولِ جدید است، نه برای بازنویسیِ محصولِ موجود.

@@ -49,6 +49,7 @@ from .admin_import import (
     read_price_file,
     upsert_product_row,
 )
+from .product_matrix import MatrixError, preview_product_matrix, create_product_matrix
 
 # ---------------- Pagination استاندارد برای viewset ها ----------------
 class StandardResultsSetPagination(PageNumberPagination):
@@ -236,6 +237,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     - همچنین annotate برای min_price تا فرانت سریع‌تر کمترین قیمت محصول را دریافت کند
     - برای خواندن عمومی است؛ نوشتن فقط برای admin (IsAdminOrReadOnly)
     """
+    # Per-action annotation; existing unannotated actions retain their access policy.
+    admin_section = None
     queryset = Product.objects.select_related("category").prefetch_related(
         "images",
         "documents",
@@ -421,6 +424,25 @@ class ProductViewSet(viewsets.ModelViewSet):
         offers = product.offers.select_related("seller").prefetch_related("pricing_tiers", "delivery_options").all()
         serializer = OfferReadSerializer(offers, many=True, context={"request": request})
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="admin-matrix-preview",
+            permission_classes=[IsAdminOrActiveAdminRole], admin_section="products")
+    def admin_matrix_preview(self, request):
+        try:
+            return Response(preview_product_matrix(request.data))
+        except MatrixError as exc:
+            return Response(exc.report, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["post"], url_path="admin-matrix-create",
+            permission_classes=[IsAdminOrActiveAdminRole], admin_section="products")
+    def admin_matrix_create(self, request):
+        try:
+            return Response(create_product_matrix(request.data, request.user))
+        except MatrixError as exc:
+            return Response(exc.report, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Product matrix transaction failed")
+            return Response({"detail":"ثبت ماتریس انجام نشد؛ هیچ تغییر ناقصی ذخیره نشد. پیش‌نمایش را دوباره بررسی کنید."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(
         detail=False,

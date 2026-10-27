@@ -1,0 +1,6 @@
+- [x] Inspect current identity, taxonomy, price, stock status and permissions.
+- [x] Record requirements, architecture, UX and implementation plan for the accepted matrix workflow.
+- [ ] Add tested server preview and atomic create-only service/actions.
+- [ ] Add tested matrix generation, validation and spreadsheet-paste helpers.
+- [ ] Integrate accessible RTL matrix form into product admin.
+- [ ] Verify backend/Node/browser/build, independent quality review, handoff and release preparation.
