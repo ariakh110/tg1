@@ -49,6 +49,8 @@ class PurchaseInquiryTests(APITestCase):
         opportunity=CrmOpportunity.objects.get(source_type='assistant_inquiry')
         self.assertEqual(opportunity.metadata['requested_items'],inquiry.requested_items)
         self.assertEqual(send.call_count,1)
+        from .models import PurchaseInquiryNotice
+        self.assertEqual(PurchaseInquiryNotice.objects.filter(inquiry=inquiry).count(),1)
 
     @patch('messaging.providers.kavenegar.send_sms',return_value=SendResult(ok=True))
     def test_fifty_items_and_immutable_list(self,send):

@@ -299,3 +299,19 @@ class PurchaseInquiryChallenge(models.Model):
     delivery = models.CharField(max_length=12, default='new')
     inquiry = models.OneToOneField(AssistantInquiry, null=True, blank=True, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PurchaseInquiryNotice(models.Model):
+    inquiry = models.OneToOneField(AssistantInquiry,on_delete=models.CASCADE,related_name='purchase_notice')
+    created_at = models.DateTimeField(auto_now_add=True)
+    bale_status = models.CharField(max_length=20,default='pending',db_index=True)
+    bale_deliveries = models.JSONField(default=dict)
+
+
+class PurchaseInquiryNoticeRead(models.Model):
+    notice = models.ForeignKey(PurchaseInquiryNotice,on_delete=models.CASCADE,related_name='reads')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE)
+    read_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints=[models.UniqueConstraint(fields=['notice','user'],name='unique_inquiry_notice_reader')]

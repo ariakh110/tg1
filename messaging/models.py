@@ -36,6 +36,7 @@ class MessagingSettings(models.Model):
         help_text="نامِ الگوی verify/lookup برای پیامکِ مراحلِ خرید. خالی ⇒ ارسالِ متنیِ ساده.",
     )
     purchase_inquiry_otp_template = models.CharField(max_length=80, blank=True, default='')
+    notify_on_purchase_inquiry = models.BooleanField(default=True)
     daily_send_cap = models.PositiveIntegerField(
         default=0, verbose_name="سقفِ ارسالِ روزانه",
         help_text="حداکثر پیامکِ ارسالی در هر شبانه‌روز (محافظِ هزینه). صفر یعنی بدونِ محدودیت.",

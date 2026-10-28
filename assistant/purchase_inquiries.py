@@ -275,4 +275,6 @@ class PurchaseVerifyView(APIView):
                     raise InquiryRegistrationUnavailable() from None
             challenge.inquiry = inquiry
             challenge.save(update_fields=['inquiry'])
+            from .inquiry_notices import create_inquiry_notice
+            create_inquiry_notice(inquiry)
         return Response({'ok': True, 'reference': f'KX-Q-{inquiry.pk}'}, status=201)

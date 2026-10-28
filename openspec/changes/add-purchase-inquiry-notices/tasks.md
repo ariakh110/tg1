@@ -1,0 +1,4 @@
+- [x] Atomic notice persistence, protected feed/per-user read and migrations.
+- [x] Claimed Bale background dispatch and independent toggle.
+- [x] Admin bell/deep-link focus/settings UX.
+- [x] Tests/review/build/browser and docs/release preparation.

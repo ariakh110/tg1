@@ -288,6 +288,10 @@ CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://127.0.0
 CELERY_TASK_IGNORE_RESULT = True
 CELERY_TIMEZONE = "Asia/Tehran"
 CELERY_BEAT_SCHEDULE = {
+    "purchase-inquiry-admin-notices": {
+        "task": "assistant.tasks.dispatch_purchase_inquiry_notices",
+        "schedule": 60.0,
+    },
     "offline-payments-check-deadlines": {
         "task": "offline_payments.tasks.check_payment_deadlines",
         "schedule": 60.0,
