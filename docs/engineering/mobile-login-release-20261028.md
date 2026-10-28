@@ -1,0 +1,5 @@
+# Mobile SMS login release receipt ? 2026-10-28
+Both committed release archives prepared using ops/manual_deploy/deploy.ps1 both -PrepareOnly. No server connection or deployment. Tar contents verified: accounts0009,core0010,messaging0015,mobile_login.py and MobileLoginForm/PhoneBindingPanel/mobileLoginApi. Local files C:/Users/aria/deploy/backend.tar.gz,frontend.tar.gz,update.sh.
+Tests306 backend/67 frontend; build/browser PASS, see mobile-login-verification-20261028.md. Fresh read-only review completed and both Important findings fixed in one TDD pass. No deferred minors. Scope accounts/core/messaging/assistant/products/customers; not every project test.
+Rulings: existing dev checkouts/scoped staging per standing preference, cost is risk of mixed staging (avoided, unrelated frontend docs preserved). Verified identity instead of implicit legacy phone linking, cost is one password/Google login and OTP bind for old accounts. Defaultoff until owner configuration avoids unsolicited SMS cost. No live delivery claim; deploy/provider config outside local validation.
+Do not archive OpenSpec before actual deployment. Activation guide learner/MobileLogin.SETUP.fa.md.

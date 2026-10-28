@@ -1,3 +1,3 @@
 - [x] Backend identity/challenge/config/API/security tests.
 - [x] Login/binding/settings UI and tests.
-- [ ] Review/verification/docs/release.
+- [x] Review/verification/docs/release.
