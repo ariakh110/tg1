@@ -99,3 +99,21 @@ class KYCDocument(models.Model):
 
     def __str__(self):
         return f"KYCDocument({self.kyc_request_id}) - {self.name}"
+
+
+class PhoneLoginIdentity(models.Model):
+    phone = models.CharField(max_length=11, unique=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='phone_login')
+    verified_at = models.DateTimeField(auto_now_add=True)
+
+
+class PhoneLoginChallenge(models.Model):
+    phone = models.CharField(max_length=11, unique=True)
+    request_id = models.UUIDField(unique=True)
+    code_hash = models.CharField(max_length=255)
+    expires_at = models.DateTimeField()
+    last_sent_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent = models.BooleanField(default=False)
+    consumed = models.BooleanField(default=False)
+    bind_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE)

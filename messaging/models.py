@@ -35,6 +35,7 @@ class MessagingSettings(models.Model):
         max_length=80, blank=True, default="", verbose_name="الگوی مراحلِ خرید (lookup)",
         help_text="نامِ الگوی verify/lookup برای پیامکِ مراحلِ خرید. خالی ⇒ ارسالِ متنیِ ساده.",
     )
+    login_otp_template = models.CharField(max_length=80, blank=True, default="")
     purchase_inquiry_otp_template = models.CharField(max_length=80, blank=True, default='')
     notify_on_purchase_inquiry = models.BooleanField(default=True)
     daily_send_cap = models.PositiveIntegerField(

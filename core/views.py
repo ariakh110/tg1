@@ -63,6 +63,11 @@ class SiteSettingsAPIView(views.APIView):
         if name is not None and str(name).strip():
             obj.site_name = str(name).strip()[:120]
 
+        if "sms_login_enabled" in data:
+            if not isinstance(data["sms_login_enabled"], bool):
+                raise ValidationError({"sms_login_enabled": "مقدار باید true یا false باشد."})
+            obj.sms_login_enabled = data["sms_login_enabled"]
+
         gid = data.get("google_oauth_client_id")
         if gid is not None:
             obj.google_oauth_client_id = str(gid).strip()[:255]
