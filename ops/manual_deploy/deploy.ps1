@@ -68,6 +68,18 @@ function Assert-NativeCommand {
   }
 }
 
+# A Windows checkout can contain CRLF even when Git exports shell files as LF.
+# Normalize the standalone uploader copy explicitly and omit a UTF-8 BOM.
+function Export-LfShellScript {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  $content = [System.IO.File]::ReadAllText($Source)
+  $content = $content.Replace("`r`n", "`n").Replace("`r", "`n")
+  [System.IO.File]::WriteAllText($Destination, $content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Write-ArchiveHash {
   param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -115,7 +127,7 @@ if (-not (Test-Path -LiteralPath $canonicalUpdater -PathType Leaf)) {
 }
 
 New-Item -ItemType Directory -Force $deployDir | Out-Null
-Copy-Item -LiteralPath $canonicalUpdater -Destination "$deployDir\update.sh" -Force
+Export-LfShellScript -Source $canonicalUpdater -Destination "$deployDir\update.sh"
 $files = @()
 
 if ($Target -eq "backend" -or $Target -eq "both") {

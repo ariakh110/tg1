@@ -1,0 +1,5 @@
+# Updater Windows line endings fix — 2026-10-28
+Owner reported Linux update.sh line4 set pipefail invalid option. Actual C:/Users/aria/deploy/update.sh and canonical worktree file had313 CRLF lines/no BOM. .gitattributes eol=lf covered Git archives, but deploy.ps1 copied worktree bytes with Copy-Item.
+Fixed standalone export boundary Export-LfShellScript normalizes CRLF/lone CR and writes UTF-8 without BOM. No updater logic or app behavior changed.
+Regression test_shell_export.ps1 RED missing boundary -> GREEN CRLF+BOM fixture/Unicode preservation/LF roundtrip. Actual deploy.ps1 both -PrepareOnly rebuilt outputs; exported updater byte assertion no CR/shebang passes. No server connection. Existing app packages unchanged until final docs/fix commit exported.
+Repair both server upload and installed updater with sed -i 's/\r$//' then rerun normal updater. Failure at updater line4 precedes its installation steps. No Django/Next tests rerun for this packaging-only edit. Full previous feature evidence in mobile-login-verification-20261028.md.

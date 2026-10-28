@@ -38,3 +38,16 @@ Then upload the generated archive files and `update.sh` from `%USERPROFILE%\depl
 The updater migrates only the public-domain keys in the existing backend and frontend environment files, including the backend `FRONTEND_BASE`. It preserves all secrets and writes a one-time `.pre-kavehmetal` backup beside each changed environment file.
 
 For frontend releases, the updater probes the local Nginx HTTPS listener and verifies that requests carrying the public origin IP or legacy `kavex.ir` Host receive `301` to `https://kavehmetal.com`, with path and query preserved. It also verifies the lowercase ST52 redirect and requires exactly one canonical sitemap directive in `robots.txt`. A valid Nginx TLS listener must therefore be configured before applying this domain-migration release. The defaults can be overridden with `CANONICAL_HOST`, `CANONICAL_ORIGIN`, `LEGACY_CANONICAL_HOST`, `ORIGIN_IP_HOST`, and `FRONTEND_API_URL`.
+
+### Windows line endings: invalid option name / pipefail
+
+The standalone updater copied by deploy.ps1 is normalized to UTF-8 without BOM and LF, independently of the checkout's line endings. Git archive already applies .gitattributes to archived shell helpers.
+
+For an updater uploaded before this fix, normalize both the uploaded source and installed copy, then retry:
+
+```bash
+sudo sed -i 's/\r$//' /home/deploy/kavehmetal-release/update.sh /srv/tirexa/update.sh
+sudo env APP_ROOT=/srv/tirexa bash /srv/tirexa/update.sh both
+```
+
+Regression: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ops/manual_deploy/test_shell_export.ps1. No real deployment is performed by that test.
