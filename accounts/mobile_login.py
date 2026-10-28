@@ -40,6 +40,13 @@ def enabled():
         raise PermissionDenied('ورود پیامکی غیرفعال است؛ از ورود با رمز عبور استفاده کنید.')
 
 
+def locked_enabled():
+    # Same row lock as the admin PATCH: disable and credential mutation serialize.
+    cfg = SiteSettings.objects.select_for_update().get(pk=SiteSettings.load().pk)
+    if not cfg.sms_login_enabled:
+        raise PermissionDenied('ورود پیامکی غیرفعال است؛ از ورود با رمز عبور استفاده کنید.')
+
+
 def budget(scope, identity, seconds, limit):
     now = int(time.time())
     key = f'mobile-login:v1:{scope}:{hashlib.sha256(str(identity).encode()).hexdigest()}:{now // seconds}'
@@ -78,6 +85,7 @@ class VerifyInput(serializers.Serializer):
 def issue_code(phone, bind_user_id):
     now = timezone.now()
     with transaction.atomic():
+        locked_enabled()
         cfg = MessagingSettings.objects.select_for_update().get(pk=MessagingSettings.load().pk)
         if not cfg.is_configured:
             raise LoginUnavailable()
@@ -120,11 +128,19 @@ def issue_code(phone, bind_user_id):
         result = None
     with transaction.atomic():
         PhoneLoginChallenge.objects.filter(pk=slot.pk, request_id=request_id).update(sent=ok)
+        raw = getattr(result, 'raw', None)
+        returned = raw.get('return') if isinstance(raw, dict) else None
+        rejection = returned.get('status') if isinstance(returned, dict) else None
+        # Only an explicit API rejection releases the paid-attempt reservation.
+        rejected = type(rejection) is int and 400 <= rejection < 500
+        reserved = not ok and not rejected
+        log.meta.update(login_cost_reserved=reserved,
+            delivery_state='sent' if ok else 'unknown' if reserved else 'rejected')
         log.status = 'sent' if ok else 'failed'
-        log.error = '' if ok else 'ارسال کد ورود انجام نشد یا نتیجه تأیید نشد.'
+        log.error = '' if ok else ('نتیجه ارسال نامشخص است؛ سهم هزینه حفظ شد.' if reserved else 'درخواست ارسال توسط ارائه‌دهنده رد شد.')
         log.provider_message_id = str(result.message_id or '')[:64] if result else ''
         log.cost = result.cost if result else None
-        log.save(update_fields=['status', 'error', 'provider_message_id', 'cost', 'updated_at'])
+        log.save(update_fields=['status', 'error', 'provider_message_id', 'cost', 'meta', 'updated_at'])
     if not ok:
         raise LoginUnavailable()
     return {'request_id': str(request_id), 'expires_in': 300, 'resend_after': 60}
@@ -134,6 +150,7 @@ def consume_code(data, bind_user_id):
     """All credential changes and code consumption commit together."""
     invalid = {'detail': 'کد نادرست، مصرف‌شده یا منقضی است؛ دوباره درخواست کد کنید.'}
     with transaction.atomic():
+        locked_enabled()
         slot = PhoneLoginChallenge.objects.select_for_update().filter(request_id=data['request_id']).first()
         if not slot or slot.bind_user_id != bind_user_id or not slot.sent or slot.consumed or slot.expires_at <= timezone.now() or slot.attempts >= 5:
             return Response(invalid, status=400)

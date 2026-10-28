@@ -39,11 +39,12 @@ def _today_sent_count():
     return OutboundMessage.objects.filter(
         created_at__gte=start,
         channel=OutboundMessage.CHANNEL_SMS,
-        status__in=(
+    ).filter(
+        Q(status__in=(
             OutboundMessage.STATUS_QUEUED,
             OutboundMessage.STATUS_SENT,
             OutboundMessage.STATUS_DELIVERED,
-        ),
+        )) | Q(meta__login_cost_reserved=True),
     ).count()
 
 

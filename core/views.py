@@ -1,5 +1,6 @@
 from json import JSONDecodeError
 from django.http import JsonResponse
+from django.db import transaction
 from .serializers import ContactSerializer, SiteSettingsSerializer
 from .models import SiteSettings
 from rest_framework.parsers import JSONParser
@@ -55,8 +56,9 @@ class SiteSettingsAPIView(views.APIView):
     def get(self, request):
         return Response(SiteSettingsSerializer(SiteSettings.load()).data)
 
+    @transaction.atomic
     def patch(self, request):
-        obj = SiteSettings.load()
+        obj = SiteSettings.objects.select_for_update().get(pk=SiteSettings.load().pk)
         data = request.data if isinstance(request.data, dict) else {}
 
         name = data.get("site_name")

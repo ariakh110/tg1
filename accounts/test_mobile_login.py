@@ -110,3 +110,44 @@ class MobileLoginTests(APITestCase):
         with override_settings(REST_FRAMEWORK={'NUM_PROXIES':1}), patch('accounts.mobile_login.budget') as limit:
             self.client.post('/api/auth/mobile/code/',{'phone':self.phone},format='json',HTTP_X_FORWARDED_FOR='198.51.100.27',REMOTE_ADDR='127.0.0.1')
             self.assertIn(('issue-ip','198.51.100.27',3600,10),[call.args for call in limit.call_args_list])
+
+    def test_disable_between_early_check_and_reservation_denies_send(self):
+        from accounts.mobile_login import issue_code
+        def disable_then_issue(*args):
+            SiteSettings.objects.filter(pk=1).update(sms_login_enabled=False)
+            return issue_code(*args)
+        with patch('accounts.mobile_login.issue_code',side_effect=disable_then_issue):
+            self.assertEqual(self.issue().status_code,403)
+        self.send.assert_not_called()
+
+    def test_disable_between_early_check_and_consume_denies_login_and_binding(self):
+        from accounts.mobile_login import consume_code
+        for binding,phone in ((False,'09123456789'),(True,'09111111111')):
+            site=SiteSettings.load();site.sms_login_enabled=True;site.save()
+            if binding:self.client.force_authenticate(get_user_model().objects.create_user('binding-user'))
+            r=self.issue(phone,bind=binding)
+            def disable_then_consume(*args):
+                SiteSettings.objects.filter(pk=1).update(sms_login_enabled=False)
+                return consume_code(*args)
+            with patch('accounts.mobile_login.consume_code',side_effect=disable_then_consume):
+                result=self.verify(r,bind=binding)
+                self.assertEqual(result.status_code,403,result.data)
+                self.assertNotIn('access',result.data)
+        from accounts.models import PhoneLoginIdentity
+        self.assertEqual(PhoneLoginIdentity.objects.count(),0)
+
+    def test_ambiguous_send_keeps_shared_cost_reservation(self):
+        cfg=MessagingSettings.load();cfg.daily_send_cap=1;cfg.save()
+        self.send.side_effect=TimeoutError('secret-provider-response')
+        self.assertEqual(self.issue().status_code,503)
+        self.assertEqual(self.issue('09111111111').status_code,503)
+        self.assertEqual(self.send.call_count,1)
+        self.assertNotIn('secret-provider-response',str(list(OutboundMessage.objects.values())))
+
+    def test_explicit_provider_rejection_can_release_cost_reservation(self):
+        cfg=MessagingSettings.load();cfg.daily_send_cap=1;cfg.save()
+        self.send.return_value=SendResult(ok=False,raw={'return':{'status':401}})
+        self.assertEqual(self.issue().status_code,503)
+        self.send.return_value=SendResult(ok=True,message_id='2')
+        self.assertEqual(self.issue('09111111111').status_code,200)
+        self.assertEqual(self.send.call_count,2)
