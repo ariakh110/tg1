@@ -1,3 +1,3 @@
-- [ ] Authenticated inquiry/identity/history/profile tests and API.
-- [ ] Minimal account shell/home/profile/inquiry UI and widget.
-- [ ] Browser/tests/review/docs/release.
+- [x] Authenticated inquiry/identity/history/profile tests and API.
+- [x] Minimal account shell/home/profile/inquiry UI and widget.
+- [x] Browser/tests/review/docs/release.
