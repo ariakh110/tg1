@@ -315,3 +315,11 @@ class PurchaseInquiryNoticeRead(models.Model):
 
     class Meta:
         constraints=[models.UniqueConstraint(fields=['notice','user'],name='unique_inquiry_notice_reader')]
+
+
+class AccountPurchaseSubmission(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    payload_hash = models.CharField(max_length=64)
+    inquiry = models.OneToOneField(AssistantInquiry, null=True, blank=True, on_delete=models.PROTECT, related_name='account_submission')
+    created_at = models.DateTimeField(auto_now_add=True)

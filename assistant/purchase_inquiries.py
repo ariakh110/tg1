@@ -232,6 +232,34 @@ class PurchaseVerifySerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
+def persist_purchase_inquiry(payload, phone, *, note, user=None):
+    """Caller transaction includes inquiry, CRM and durable manager notice."""
+    items=payload.get('items',[])
+    if items:
+        product=items[0]['category_name'][:120] if len(items)==1 else 'لیست خرید چندقلمی'
+        size=items[0]['specification'][:60] if len(items)==1 else ''
+        quantity=(items[0]['quantity']+' '+UNITS[items[0]['unit']]) if len(items)==1 else f'{len(items)} قلم کالا'
+        raw_text='\n'.join(f"{i+1}. {item['category_name']} | {item['specification']} | {item['quantity']} {UNITS[item['unit']]}" for i,item in enumerate(items))
+    else:
+        product=PRODUCTS[payload['product']];size=payload['size_mm']+' میلی‌متر'
+        quantity=payload['quantity_kg']+' کیلوگرم';raw_text=''
+    inquiry = AssistantInquiry.objects.create(product=product,size=size,quantity=quantity,requested_items=items,
+        city=payload['city'], contact_name=payload['name'], contact_phone=phone,
+        note=note, raw_text='فرم استعلام خرید از '+payload['source_path']+'\n'+raw_text)
+    upsert_lead(phone, name=payload['name'], city=payload['city'], user=user)
+    if items:
+        # Persist the new list and its sales opportunity in one transaction.
+        # The existing post-commit signal remains an idempotent projection.
+        from customers.opportunities import sync_assistant_inquiry_opportunity
+        try:
+            sync_assistant_inquiry_opportunity(inquiry)
+        except Exception:
+            raise InquiryRegistrationUnavailable() from None
+    from .inquiry_notices import create_inquiry_notice
+    create_inquiry_notice(inquiry)
+    return inquiry
+
+
 class PurchaseVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -252,29 +280,8 @@ class PurchaseVerifyView(APIView):
             if challenge.inquiry_id:
                 return Response({'ok': True, 'reference': f'KX-Q-{challenge.inquiry_id}'})
             payload = challenge.payload
-            items=payload.get('items',[])
-            if items:
-                product=items[0]['category_name'][:120] if len(items)==1 else 'لیست خرید چندقلمی'
-                size=items[0]['specification'][:60] if len(items)==1 else ''
-                quantity=(items[0]['quantity']+' '+UNITS[items[0]['unit']]) if len(items)==1 else f'{len(items)} قلم کالا'
-                raw_text='\n'.join(f"{i+1}. {item['category_name']} | {item['specification']} | {item['quantity']} {UNITS[item['unit']]}" for i,item in enumerate(items))
-            else:
-                product=PRODUCTS[payload['product']];size=payload['size_mm']+' میلی‌متر'
-                quantity=payload['quantity_kg']+' کیلوگرم';raw_text=''
-            inquiry = AssistantInquiry.objects.create(product=product,size=size,quantity=quantity,requested_items=items,
-                city=payload['city'], contact_name=payload['name'], contact_phone=challenge.phone,
-                note='فرم استعلام خرید؛ موبایل با پیامک تأیید شده', raw_text='فرم استعلام خرید از '+payload['source_path']+'\n'+raw_text)
-            upsert_lead(challenge.phone, name=payload['name'], city=payload['city'])
-            if items:
-                # Persist the new list and its sales opportunity in one transaction.
-                # The existing post-commit signal remains an idempotent projection.
-                from customers.opportunities import sync_assistant_inquiry_opportunity
-                try:
-                    sync_assistant_inquiry_opportunity(inquiry)
-                except Exception:
-                    raise InquiryRegistrationUnavailable() from None
+            inquiry = persist_purchase_inquiry(payload, challenge.phone,
+                note='فرم استعلام خرید؛ موبایل با پیامک تأیید شده')
             challenge.inquiry = inquiry
             challenge.save(update_fields=['inquiry'])
-            from .inquiry_notices import create_inquiry_notice
-            create_inquiry_notice(inquiry)
         return Response({'ok': True, 'reference': f'KX-Q-{inquiry.pk}'}, status=201)

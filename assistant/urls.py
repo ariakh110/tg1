@@ -1,5 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from .account_inquiries import AccountInquiryContext, AccountInquirySubmit, AccountInquiryList
 from .purchase_inquiries import PurchaseOptionsView, PurchaseCodeView, PurchaseVerifyView
 from .inquiry_notices import PurchaseNoticeFeed,PurchaseNoticeRead
 
@@ -20,6 +21,9 @@ router.register(r"admin/inquiries", AdminInquiryViewSet, basename="assistant-inq
 app_name = "assistant"
 
 urlpatterns = [
+    path('purchase-inquiry/account-context/', AccountInquiryContext.as_view()),
+    path('purchase-inquiry/account-submit/', AccountInquirySubmit.as_view()),
+    path('purchase-inquiry/mine/', AccountInquiryList.as_view()),
     path('admin/purchase-notices/',PurchaseNoticeFeed.as_view()),
     path('admin/purchase-notices/<int:pk>/read/',PurchaseNoticeRead.as_view()),
     path('purchase-inquiry/options/', PurchaseOptionsView.as_view()),

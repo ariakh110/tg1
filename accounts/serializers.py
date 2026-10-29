@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.urls import reverse
 from rest_framework import serializers
 
@@ -16,12 +17,25 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class ProfileSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(source="user.first_name", required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(source="user.last_name", required=False, allow_blank=True, max_length=150)
     user = UserSerializer(read_only=True)
     seller = SellerSerializer(source="user.seller_profile", read_only=True)
 
     class Meta:
         model = Profile
-        fields = ("id", "user", "phone", "country", "language", "vat_number", "seller")
+        fields = ("id", "user", "first_name", "last_name", "phone", "country", "language", "vat_number", "seller")
+
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        names = validated_data.pop('user', {})
+        instance = super().update(instance, validated_data)
+        if names:
+            for field, value in names.items():
+                setattr(instance.user, field, value)
+            instance.user.save(update_fields=list(names))
+        return instance
 
 
 class UserRoleSerializer(serializers.ModelSerializer):
