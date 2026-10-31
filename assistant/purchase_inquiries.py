@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 from customers.services import normalize_phone, upsert_lead
 from messaging.models import MessagingSettings, OutboundMessage
 from messaging.providers import kavenegar
+from messaging.otp_delivery import ready, channels, send_bale_code
 from products.models import ProductSpecification, ProductCategory
 from .models import AssistantInquiry, PurchaseInquiryChallenge
 
@@ -87,6 +88,7 @@ class RequestedItemSerializer(serializers.Serializer):
 
 
 class PurchaseInquirySerializer(serializers.Serializer):
+    channel = serializers.ChoiceField(choices=["sms", "bale"], default="sms")
     request_id = serializers.UUIDField()
     product = serializers.ChoiceField(choices=list(PRODUCTS),required=False)
     size_mm = serializers.DecimalField(max_digits=8, decimal_places=3, min_value=Decimal('0.01'), max_value=1000,required=False)
@@ -128,19 +130,21 @@ class PurchaseInquirySerializer(serializers.Serializer):
         return data
 
 
-def send_purchase_code(phone, code, request_id):
+def send_purchase_code(phone, code, request_id, channel="sms"):
     # Reserve a redacted log row before the paid request; never store code/raw provider data.
     with transaction.atomic():
         cfg = MessagingSettings.objects.select_for_update().get(pk=MessagingSettings.load().pk)
-        if not cfg.is_configured:
+        if not ready(cfg, channel):
             raise InquiryUnavailable()
         from messaging.service import _today_sent_count
-        if cfg.daily_send_cap and _today_sent_count() >= cfg.daily_send_cap:
+        if channel == 'sms' and cfg.daily_send_cap and _today_sent_count() >= cfg.daily_send_cap:
             raise InquiryUnavailable()
-        log = OutboundMessage.objects.create(channel='sms', provider='kavenegar', recipient=phone,
+        log = OutboundMessage.objects.create(channel=channel, provider='safir' if channel == 'bale' else 'kavenegar', recipient=phone,
             purpose='otp', body='کد تأیید استعلام خرید (محرمانه)', meta={'purchase_request_id': str(request_id)})
     try:
-        if cfg.purchase_inquiry_otp_template:
+        if channel == 'bale':
+            result = send_bale_code(cfg, phone, code, request_id)
+        elif cfg.purchase_inquiry_otp_template:
             result = kavenegar.send_lookup(cfg.kavenegar_api_key, phone, cfg.purchase_inquiry_otp_template, code)
         else:
             result = kavenegar.send_sms(cfg.kavenegar_api_key, phone,
@@ -152,13 +156,13 @@ def send_purchase_code(phone, code, request_id):
     log.status = 'sent' if ok else 'failed'
     log.error = '' if ok else 'ارسال کد تأیید انجام نشد یا نتیجه تأیید نشد.'
     log.provider_message_id = str(result.message_id or '')[:64] if result else ''
-    log.cost = result.cost if result else None
+    log.cost = getattr(result, "cost", None) if result else None
     log.save(update_fields=['status', 'error', 'provider_message_id', 'cost', 'updated_at'])
     return ok
 
 
 def challenge_response(challenge):
-    return {'request_id': str(challenge.pk), 'expires_in': max(0, int((challenge.expires_at-timezone.now()).total_seconds())),
+    return {'request_id': str(challenge.pk), 'channel': challenge.payload.get('channel', 'sms'), 'expires_in': max(0, int((challenge.expires_at-timezone.now()).total_seconds())),
         'resend_after': max(0, 60-int((timezone.now()-challenge.last_sent_at).total_seconds())) if challenge.last_sent_at else 60}
 
 
@@ -174,7 +178,7 @@ class PurchaseOptionsView(APIView):
             if kind == 'sheet':
                 rows = rows.filter(surface_finish='black')
             sizes[kind] = [format(value.normalize(), 'f') for value in rows.order_by(field).values_list(field, flat=True).distinct()[:100]]
-        return Response({'sizes': sizes,'categories':available_categories(),
+        return Response({'otp_channels':channels(MessagingSettings.load()),'sizes': sizes,'categories':available_categories(),
             'units':[{'value':key,'label':label} for key,label in UNITS.items()],'max_items':MAX_ITEMS})
 
 
@@ -188,7 +192,7 @@ class PurchaseCodeView(APIView):
         data = serializer.validated_data
         budget('request-minute', BaseThrottle().get_ident(request), 60, 5)
         budget('request-day', BaseThrottle().get_ident(request), 86400, 30)
-        if not MessagingSettings.load().is_configured:
+        if not ready(MessagingSettings.load(), data['channel']):
             raise InquiryUnavailable()
         request_id = data.pop('request_id')
         resend = data.pop('resend')
@@ -215,7 +219,7 @@ class PurchaseCodeView(APIView):
             challenge.attempts = 0
             challenge.delivery = 'sending'
             challenge.save()
-        ok = send_purchase_code(data['phone'], code, request_id)
+        ok = send_purchase_code(data['phone'], code, request_id, data['channel'])
         PurchaseInquiryChallenge.objects.filter(pk=request_id).update(delivery='sent' if ok else 'failed')
         if not ok:
             raise InquiryUnavailable()
@@ -273,6 +277,8 @@ class PurchaseVerifyView(APIView):
             challenge = PurchaseInquiryChallenge.objects.select_for_update().filter(pk=data['request_id']).first()
             if not challenge or challenge.delivery != 'sent' or challenge.attempts >= 5 or (not challenge.inquiry_id and challenge.expires_at <= timezone.now()):
                 return Response({'detail': 'کد منقضی یا نامعتبر است؛ دوباره کد بگیرید.'}, status=400)
+            if not challenge.inquiry_id and not ready(MessagingSettings.load(), challenge.payload.get('channel', 'sms')):
+                raise InquiryUnavailable()
             if not check_password(data['code'], challenge.otp_hash):
                 challenge.attempts += 1
                 challenge.save(update_fields=['attempts'])
@@ -281,7 +287,7 @@ class PurchaseVerifyView(APIView):
                 return Response({'ok': True, 'reference': f'KX-Q-{challenge.inquiry_id}'})
             payload = challenge.payload
             inquiry = persist_purchase_inquiry(payload, challenge.phone,
-                note='فرم استعلام خرید؛ موبایل با پیامک تأیید شده')
+                note='فرم استعلام خرید؛ موبایل با '+('بله' if payload.get('channel') == 'bale' else 'پیامک')+' تأیید شده')
             challenge.inquiry = inquiry
             challenge.save(update_fields=['inquiry'])
         return Response({'ok': True, 'reference': f'KX-Q-{inquiry.pk}'}, status=201)

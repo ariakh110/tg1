@@ -66,7 +66,7 @@ def _result_from_payload(payload):
     return SendResult(ok=False, status="failed", error="پاسخِ سفیر نامعتبر بود.", raw=payload or {})
 
 
-def send_message(access_key, bot_id, phone98, text, *, request_id="", is_secure=False):
+def send_message(access_key, bot_id, phone98, text, *, request_id="", is_secure=False, _otp=None):
     """ارسالِ یک پیامِ متنیِ بله به یک شمارهٔ موبایل (فرمتِ ۹۸). خروجی `SendResult`."""
     if not (access_key or "").strip() or not str(bot_id or "").strip():
         return SendResult(ok=False, status="failed", error="کلید یا bot_id سفیر تنظیم نشده است.")
@@ -82,6 +82,8 @@ def send_message(access_key, bot_id, phone98, text, *, request_id="", is_secure=
         "phone_number": str(phone98),
         "message_data": {"is_secure": bool(is_secure), "message": {"text": text}},
     }
+    if _otp is not None:
+        body["message_data"] = {"otp_message": {"otp": _otp}}
     if request_id:
         body["request_id"] = str(request_id)
 
@@ -105,3 +107,10 @@ def send_message(access_key, bot_id, phone98, text, *, request_id="", is_secure=
     except Exception as exc:  # noqa: BLE001 — هیچ خطایی نباید جریانِ اصلی را بشکند
         return SendResult(ok=False, status="failed", error=f"ارسالِ سفیر ناموفق: {type(exc).__name__}: {exc}")
     return _result_from_payload(payload)
+
+
+def send_otp(access_key, bot_id, phone98, code, *, request_id=""):
+    """Native Safir OTP; never convert to integer (leading zeroes matter)."""
+    if not isinstance(code, str) or len(code) != 6 or not code.isascii() or not code.isdigit():
+        return SendResult(ok=False, status="failed", error="کد تأیید باید شش رقم باشد.")
+    return send_message(access_key, bot_id, phone98, "", request_id=request_id, _otp=code)

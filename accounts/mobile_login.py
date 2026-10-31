@@ -24,6 +24,7 @@ from core.models import SiteSettings
 from customers.services import normalize_phone
 from messaging.models import MessagingSettings, OutboundMessage
 from messaging.providers import kavenegar
+from messaging.otp_delivery import ready, channels, send_bale_code
 from .models import PhoneLoginChallenge, PhoneLoginIdentity, Profile
 
 DIGITS = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
@@ -68,6 +69,7 @@ def canonical_phone(value):
 
 
 class CodeInput(serializers.Serializer):
+    channel = serializers.ChoiceField(choices=["sms", "bale"], default="sms")
     phone = serializers.CharField(max_length=30)
     def validate_phone(self, value):
         return canonical_phone(value)
@@ -82,15 +84,15 @@ class VerifyInput(serializers.Serializer):
         return super().to_internal_value(data)
 
 
-def issue_code(phone, bind_user_id):
+def issue_code(phone, bind_user_id, channel="sms"):
     now = timezone.now()
     with transaction.atomic():
         locked_enabled()
         cfg = MessagingSettings.objects.select_for_update().get(pk=MessagingSettings.load().pk)
-        if not cfg.is_configured:
+        if not ready(cfg, channel):
             raise LoginUnavailable()
         from messaging.service import _today_sent_count
-        if cfg.daily_send_cap and _today_sent_count() >= cfg.daily_send_cap:
+        if channel == 'sms' and cfg.daily_send_cap and _today_sent_count() >= cfg.daily_send_cap:
             raise LoginUnavailable()
         slot, _ = PhoneLoginChallenge.objects.get_or_create(phone=phone, defaults={
             'request_id': uuid.uuid4(), 'code_hash': '', 'expires_at': now,
@@ -111,13 +113,16 @@ def issue_code(phone, bind_user_id):
         slot.sent = False
         slot.consumed = False
         slot.bind_user_id = bind_user_id
+        slot.delivery_channel = channel
         slot.save()
         request_id = slot.request_id
-        log = OutboundMessage.objects.create(channel='sms', provider='kavenegar', recipient=phone,
+        log = OutboundMessage.objects.create(channel=channel, provider='safir' if channel == 'bale' else 'kavenegar', recipient=phone,
             purpose='otp', status='queued', body='کد ورود سایت (محرمانه)',
             meta={'login_request_id': str(request_id)})
     try:
-        if cfg.login_otp_template:
+        if channel == 'bale':
+            result = send_bale_code(cfg, phone, code, request_id)
+        elif cfg.login_otp_template:
             result = kavenegar.send_lookup(cfg.kavenegar_api_key, phone, cfg.login_otp_template, code)
         else:
             result = kavenegar.send_sms(cfg.kavenegar_api_key, phone,
@@ -139,11 +144,11 @@ def issue_code(phone, bind_user_id):
         log.status = 'sent' if ok else 'failed'
         log.error = '' if ok else ('نتیجه ارسال نامشخص است؛ سهم هزینه حفظ شد.' if reserved else 'درخواست ارسال توسط ارائه‌دهنده رد شد.')
         log.provider_message_id = str(result.message_id or '')[:64] if result else ''
-        log.cost = result.cost if result else None
+        log.cost = getattr(result, "cost", None) if result else None
         log.save(update_fields=['status', 'error', 'provider_message_id', 'cost', 'meta', 'updated_at'])
     if not ok:
         raise LoginUnavailable()
-    return {'request_id': str(request_id), 'expires_in': 300, 'resend_after': 60}
+    return {'request_id': str(request_id), 'expires_in': 300, 'resend_after': 60, 'channel': channel}
 
 
 def consume_code(data, bind_user_id):
@@ -151,9 +156,12 @@ def consume_code(data, bind_user_id):
     invalid = {'detail': 'کد نادرست، مصرف‌شده یا منقضی است؛ دوباره درخواست کد کنید.'}
     with transaction.atomic():
         locked_enabled()
+        cfg = MessagingSettings.objects.select_for_update().get(pk=MessagingSettings.load().pk)
         slot = PhoneLoginChallenge.objects.select_for_update().filter(request_id=data['request_id']).first()
         if not slot or slot.bind_user_id != bind_user_id or not slot.sent or slot.consumed or slot.expires_at <= timezone.now() or slot.attempts >= 5:
             return Response(invalid, status=400)
+        if not ready(cfg, slot.delivery_channel):
+            raise LoginUnavailable()
         slot.attempts += 1
         valid = check_password(data['code'], slot.code_hash)
         slot.consumed = valid
@@ -197,7 +205,7 @@ class MobileCodeView(APIView):
         serializer = CodeInput(data=request.data); serializer.is_valid(raise_exception=True)
         budget('issue-ip', BaseThrottle().get_ident(request), 3600, 10)
         try:
-            return Response(issue_code(serializer.validated_data['phone'], request.user.pk if self.binding else None))
+            return Response(issue_code(serializer.validated_data['phone'], request.user.pk if self.binding else None, serializer.validated_data['channel']))
         except IntegrityError:
             raise LoginUnavailable() from None
 
@@ -234,3 +242,10 @@ class MobileBindingView(APIView):
     def get(self, request):
         phone = PhoneLoginIdentity.objects.filter(user=request.user).values_list('phone', flat=True).first()
         return Response({'phone': phone})
+
+
+class MobileChannelsView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    def get(self, request):
+        return Response({'channels': channels(MessagingSettings.load()) if SiteSettings.load().sms_login_enabled else []})

@@ -108,6 +108,7 @@ class PhoneLoginIdentity(models.Model):
 
 
 class PhoneLoginChallenge(models.Model):
+    delivery_channel = models.CharField(max_length=8, default="sms", choices=[("sms", "SMS"), ("bale", "Bale")])
     phone = models.CharField(max_length=11, unique=True)
     request_id = models.UUIDField(unique=True)
     code_hash = models.CharField(max_length=255)

@@ -73,6 +73,8 @@ class MessagingSettings(models.Model):
     )
 
     # --- سفیر (Safir): ارسالِ پیامِ بله به مشتری با شمارهٔ موبایل (مثلِ پیامک ولی در بله) ---
+    bale_otp_enabled = models.BooleanField(default=False)
+    channel_posts_enabled = models.BooleanField(default=False)
     safir_enabled = models.BooleanField(default=False, verbose_name="ارسالِ پیامِ بله (سفیر) فعال است")
     # کلیدِ دسترسیِ سازمان از پنلِ کسب‌وکارِ بله؛ محرمانه (write-only در سریالایزر).
     safir_access_key = models.CharField(max_length=255, blank=True, default="", verbose_name="Api Access Key سفیر")

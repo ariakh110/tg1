@@ -1,5 +1,5 @@
 from django.urls import path
-from .mobile_login import MobileCodeView, MobileVerifyView, BindCodeView, BindVerifyView, MobileBindingView
+from .mobile_login import MobileCodeView, MobileVerifyView, BindCodeView, BindVerifyView, MobileBindingView, MobileChannelsView
 from .views import (
     ProfileDetailView,
     RegisterAPIView,
@@ -13,6 +13,7 @@ from products.views import SellerDetailView
 # `tg1/urls.py` includes this file under `path('api/', include('accounts.urls'))`
 # so the final routes become /api/auth/register/ and /api/auth/profile/.
 urlpatterns = [
+    path("auth/mobile/channels/", MobileChannelsView.as_view()),
     path("auth/mobile/code/", MobileCodeView.as_view()),
     path("auth/mobile/verify/", MobileVerifyView.as_view()),
     path("auth/mobile/bind/code/", BindCodeView.as_view()),

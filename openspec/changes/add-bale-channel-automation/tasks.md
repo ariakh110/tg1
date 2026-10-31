@@ -1,0 +1,3 @@
+- [ ] Native Safir OTP and selectable login/binding/inquiry with regression tests.
+- [ ] Durable schedule API, snapshots and timer with mocked tests.
+- [ ] Admin/customer UI, browser checks, review/docs/release.
