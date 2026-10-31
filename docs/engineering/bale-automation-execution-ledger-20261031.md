@@ -1,0 +1,12 @@
+Ruling: existing dev checkouts per standing authorization; scoped commits preserve unrelated frontend docs. No live sends/deploy.
+Ruling: Telegram channel transports supported; personal OTP is Bale/SMS only per explicit answer; no unsafe phone-to-Telegram assumption.
+
+Task1: Safir native method/endpoint RED and login503, guest503 ->44 focused tests GREEN. No codes/raw in logs, explicit channel, verified identity unchanged. Backend commit fe57cf4.
+Task2: missing schedule API/module RED ->24 schedule/market/OTP GREEN; daily snapshot, unknown no-retry, global/daywindow and Google queue verified. Commit090cc00.
+Task3: helper import RED ->72 nodeGREEN; buildPASS, modified lintPASS;326 backendGREEN. New mocked browser Bale failure no SMS fallback, explicit SMS, guestBale, adminpreview/save/master PASS. Previous guest/mobilelogin/account browsers PASS. Reviewed desktop/mobile screenshots. Copy now says mobile login for bothmethods.
+
+Final review /root/bale_automation_final_review: 0Critical,3Important,1Minor. Accepted Important: independent transport config failures; reserve-render starvation after site name change; pending save/preview overwrites text. All got RED regressions before fix.
+Ruling: regrade Minor late Google unknown summary as Important: false certainty that no post was sent can lead operator to duplicate a post. Added RED failed-vs-unknown regression and prioritize unknown across all destination summaries in same fix pass.
+Review declined rulings: real Safir/Bot delivery/credit/access, production database locks, migrations/timer/timezone not live-verified; no live sends/deploy. Already-reserved sends/Google queue remain started; disable blocks new reservations only (cost: a queued item may still send). Existing late ACK terminal-unknown policy retained (cost: delivered post can remain unconfirmed; operator checks channel). Existing full-admin manual market retry retained (cost: operator can resend after own check); no new UI retry. Login/inquiry quota namespaces remain separate but each shares across Bale/SMS (cost: budgets are per flow, not whole-site pooled). No general repair of direct DB corruption/malicious provider proof; admin API validates and OTP fails closed.
+
+Final: fixed all4 findings (3Important+regraded summary) — backend3 regressions RED→GREEN, delayed UI regression RED→GREEN, suites329/329backend,72/72node,fourbrowser/build/lintPASS. No re-review; no deferred minors.

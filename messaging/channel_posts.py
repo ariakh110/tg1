@@ -50,12 +50,31 @@ class ScheduleSerializer(serializers.ModelSerializer):
 
 def run_payload(run):
     data = draft_payload(run.draft)
-    states = [item.get('relay_status') or item['status'] for item in data['publications'].values()]
+    publications = data['publications']
+    # Every destination has a visible outcome, including failures before provider calls.
+    for platform in run.draft.texts:
+        if platform not in publications:
+            publications[platform] = run.platform_errors.get(platform) or {
+                'status': 'unknown' if run.status == 'unknown' else run.status,
+                'error': run.error, 'message_id': ''}
+    states = []
+    for item in publications.values():
+        state = item.get('relay_status') or item['status']
+        if state == 'queued' and item.get('error'):
+            state = 'unknown'
+        states.append(state)
     status = run.status
-    if status == 'queued' and states:
-        status = 'sent' if all(s=='sent' for s in states) else 'unknown' if 'unknown' in states else 'failed' if 'failed' in states else 'queued'
-    return {'id':run.pk,'title':run.draft.title,'date':run.local_date,'status':status,'error':run.error,
-            'publications':data['publications'],'text':run.draft.texts.get('bale') or run.draft.texts.get('telegram','')}
+    if 'unknown' in states:
+        status = 'unknown'
+    elif 'failed' in states or 'cancelled' in states:
+        status = 'failed'
+    elif any(state in ('queued','pending','claimed') for state in states):
+        status = 'queued'
+    elif states and all(state == 'sent' for state in states):
+        status = 'sent'
+    error = 'نتیجه یک کانال نامشخص است؛ کانال را بررسی کنید. تکرار خودکار انجام نمی‌شود.' if status == 'unknown' else run.error
+    return {'id':run.pk,'title':run.draft.title,'date':run.local_date,'status':status,'error':error,
+            'publications':publications,'text':run.draft.texts.get('bale') or run.draft.texts.get('telegram','')}
 
 
 class ChannelPostViewSet(viewsets.ModelViewSet):
@@ -96,13 +115,22 @@ def reserve(schedule_id, now):
             schedule = ChannelPostSchedule.objects.select_for_update().get(pk=schedule_id)
             if not cfg.channel_posts_enabled or not due(schedule,local) or ChannelPostRun.objects.filter(schedule=schedule,local_date=local.date()).exists():
                 return None
-            text = render(schedule.body,now)
+            render_error = ''
+            try:
+                text = render(schedule.body,now)
+            except serializers.ValidationError:
+                # A site-name update may invalidate an earlier valid template. Record
+                # the unsent source template and continue with other schedules.
+                text = schedule.body
+                render_error = 'متن نهایی پس از جایگزینی متغیرها معتبر نیست؛ قالب را پیش از نوبت بعدی اصلاح کنید.'
             draft = MarketChannelDraft.objects.create(
                 fingerprint=hashlib.sha256(f'channel-post:{schedule.pk}:{local.date()}'.encode()).hexdigest(),
                 report_date=local.date(),kind='recurring',product_group='',title=schedule.title,
                 texts={p:text for p in schedule.platforms},targets={p:getattr(cfg,f'market_{p}_channel_id') for p in schedule.platforms},
                 created_by=schedule.created_by)
-            return ChannelPostRun.objects.create(schedule=schedule,local_date=local.date(),draft=draft)
+            return ChannelPostRun.objects.create(schedule=schedule,local_date=local.date(),draft=draft,
+                status='failed' if render_error else 'reserved',error=render_error,
+                platform_errors={p:{'status':'failed','error':render_error,'message_id':''} for p in schedule.platforms} if render_error else {})
     except IntegrityError:
         return None  # Unique date key remains the final concurrent reservation guard.
 
@@ -118,20 +146,22 @@ def dispatch_due(now=None):
         run = reserve(pk,now)
         if run is None:
             continue
-        try:
-            result = publish_draft(run.draft,list(run.draft.texts),run.schedule.created_by)
-            items = result['publications'].values()
-            if any(item['status']=='queued' and item.get('error') for item in items):
-                run.status='unknown';run.error='نتیجه ارسال نامشخص است؛ کانال را بررسی کنید. تکرار خودکار انجام نمی‌شود.'
-            elif any(item['status']=='failed' for item in items):
-                run.status='failed';run.error='ارسال توسط پیام‌رسان پذیرفته نشد؛ تنظیمات و دسترسی کانال را بررسی کنید.'
-            else:
-                run.status='queued' if any(item['status']=='queued' for item in items) else 'sent'
-        except (ValueError, serializers.ValidationError):
-            run.status='failed';run.error='تنظیمات یا متن کانال معتبر نیست؛ قبل از نوبت بعدی تنظیمات را اصلاح کنید.'
-        except Exception:
-            run.status='unknown';run.error='نتیجه اجرا مشخص نیست؛ کانال را بررسی کنید. تکرار خودکار انجام نمی‌شود.'
-        run.save(update_fields=['status','error'])
+        if run.status != 'failed':
+            for platform in run.draft.texts:
+                try:
+                    # Validate and dispatch independently: a broken destination must
+                    # never suppress a healthy channel's daily post.
+                    publish_draft(run.draft,[platform],run.schedule.created_by)
+                except (ValueError, serializers.ValidationError):
+                    run.platform_errors[platform] = {'status':'failed','message_id':'',
+                        'error':'تنظیمات این کانال کامل یا معتبر نیست؛ قبل از نوبت بعدی اصلاح کنید.'}
+                except Exception:
+                    run.platform_errors[platform] = {'status':'unknown','message_id':'',
+                        'error':'نتیجه این کانال مشخص نیست؛ کانال را بررسی کنید. تکرار خودکار انجام نمی‌شود.'}
+            summary = run_payload(run)
+            run.status = summary['status']
+            run.error = summary['error'] or ('یک کانال ارسال نشد؛ جزئیات مقصدها را بررسی کنید.' if run.status == 'failed' else '')
+            run.save(update_fields=['status','error','platform_errors'])
         processed += 1
         if processed >= 5:
             break

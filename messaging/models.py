@@ -398,6 +398,7 @@ class ChannelPostSchedule(models.Model):
 
 
 class ChannelPostRun(models.Model):
+    platform_errors = models.JSONField(default=dict)
     schedule = models.ForeignKey(ChannelPostSchedule, on_delete=models.PROTECT, related_name='runs')
     local_date = models.DateField()
     draft = models.OneToOneField(MarketChannelDraft, on_delete=models.PROTECT)

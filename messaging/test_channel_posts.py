@@ -57,3 +57,34 @@ class ChannelPostTests(APITestCase):
   r=self.client.get('/api/messaging/channel-posts/');self.assertEqual(r.status_code,200,r.data)
   rows=r.data if isinstance(r.data,list) else r.data['results'];self.assertTrue(any('صبح' in x['title'] and not x['enabled'] for x in rows))
   self.assertNotIn('bale-secret',str(r.data))
+
+ def test_one_bad_transport_never_suppresses_healthy_destination(self):
+  from messaging.channel_posts import dispatch_due,run_payload
+  from messaging.models import ChannelPostRun,ChannelPostSchedule
+  for broken in ('telegram','bale'):
+   self.cfg.market_bale_bot_token='' if broken=='bale' else 'bale-secret';self.cfg.market_telegram_bot_token='' if broken=='telegram' else 'tg-secret';self.cfg.save()
+   self.create(platforms=['telegram','bale'])
+   with patch('messaging.market_channels.bot_send',return_value='sent') as send:
+    dispatch_due(self.now);dispatch_due(self.now)
+   self.assertEqual(send.call_count,1);self.assertEqual(send.call_args.args[0],'telegram' if broken=='bale' else 'bale')
+   details=run_payload(ChannelPostRun.objects.order_by('-id').first())['publications']
+   self.assertEqual(details[broken]['status'],'failed')
+ def test_template_becomes_invalid_without_starving_other_schedules(self):
+  from messaging.channel_posts import dispatch_due
+  from messaging.models import ChannelPostRun
+  from core.models import SiteSettings
+  site=SiteSettings.load();site.site_name='x';site.save()
+  self.create(body='{{site_name}} '*200);self.create(title='سالم',body='سلام')
+  site.site_name='x'*22;site.save()
+  with patch('messaging.market_channels.bot_send',return_value='ok') as send:
+   dispatch_due(self.now);dispatch_due(self.now)
+  self.assertEqual(send.call_count,1);self.assertEqual(ChannelPostRun.objects.count(),2)
+  self.assertEqual(ChannelPostRun.objects.filter(status='failed').count(),1)
+ def test_late_google_ambiguity_takes_precedence_over_bale_rejection(self):
+  from messaging.channel_posts import dispatch_due,run_payload
+  from messaging.models import ChannelPostRun
+  from messaging.market_channels import BotRejected
+  self.cfg.market_telegram_transport='google';self.cfg.market_google_relay_key_hash='hash';self.cfg.save();self.create(platforms=['bale','telegram'])
+  with patch('messaging.market_channels.bot_send',side_effect=BotRejected('rejected')):dispatch_due(self.now)
+  job=GoogleRelayJob.objects.get();job.status='unknown';job.save()
+  data=run_payload(ChannelPostRun.objects.get());self.assertEqual(data['status'],'unknown');self.assertIn('بررسی',data['error'])
