@@ -1,3 +1,4 @@
+from .channel_posts import ChannelPostViewSet
 from .market_views import MarketTelegramConnectionView, MarketChannelResolveView
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
@@ -21,6 +22,7 @@ from .views import (
 )
 
 router = DefaultRouter()
+router.register(r"channel-posts", ChannelPostViewSet, basename="channel-post")
 router.register(r"messages", OutboundMessageViewSet, basename="outbound-message")
 router.register(r"bale-bindings", BaleUserBindingViewSet, basename="bale-user-binding")
 router.register(r"groups", MessagingContactGroupViewSet, basename="messaging-contact-group")

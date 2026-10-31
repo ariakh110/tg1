@@ -171,6 +171,7 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   echo "==> tirexa-backend: $(systemctl is-active tirexa-backend)"
   bash "$APP_ROOT/backend/ops/manual_deploy/install_market_timer.sh" "$APP_ROOT" "$BACKEND_PYTHON"
   bash "$APP_ROOT/backend/ops/manual_deploy/install_inquiry_timer.sh" "$APP_ROOT" "$BACKEND_PYTHON"
+  bash "$APP_ROOT/backend/ops/manual_deploy/install_channel_posts_timer.sh" "$APP_ROOT" "$BACKEND_PYTHON"
   for celery_service in tirexa-celery tirexa-celery-worker tirexa-celery-beat; do
     if systemctl cat "$celery_service.service" >/dev/null 2>&1; then
       systemctl restart "$celery_service"

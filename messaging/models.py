@@ -382,3 +382,28 @@ class GoogleRelayJob(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     claimed_until = models.DateTimeField(null=True, blank=True)
     result = models.JSONField(default=dict, blank=True)
+
+
+class ChannelPostSchedule(models.Model):
+    title = models.CharField(max_length=160)
+    body = models.TextField(max_length=3500)
+    send_time = models.TimeField()
+    weekdays = models.JSONField(default=list)
+    platforms = models.JSONField(default=list)
+    enabled = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        ordering = ['send_time', 'id']
+
+
+class ChannelPostRun(models.Model):
+    schedule = models.ForeignKey(ChannelPostSchedule, on_delete=models.PROTECT, related_name='runs')
+    local_date = models.DateField()
+    draft = models.OneToOneField(MarketChannelDraft, on_delete=models.PROTECT)
+    status = models.CharField(max_length=12, default='reserved')
+    error = models.CharField(max_length=300, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['schedule', 'local_date'], name='unique_channel_post_day')]
+        ordering = ['-created_at', '-id']
