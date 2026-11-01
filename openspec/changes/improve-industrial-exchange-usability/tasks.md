@@ -1,0 +1,3 @@
+- [ ] Industrial taxonomy, sponge backfill, normalized/date/status APIs and regression tests.
+- [ ] Table-first dashboard, labelled filters/recovery/readable optional map with node/browser tests.
+- [ ] Final fresh review, single TDD fix pass, evidence/docs/PrepareOnly release and workflow receipts.

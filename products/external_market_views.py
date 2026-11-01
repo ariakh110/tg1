@@ -1,7 +1,9 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Max, Sum, Q, F, Count
+from django.db.models import Max, Sum, Q, F, Count, Value
+from django.db.models.functions import Replace
+from .commodity_categories import INDUSTRIAL_GROUPS, normalize_commodity_text
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import permissions, status
@@ -94,15 +96,18 @@ class CommodityExchangeSummaryAPIView(APIView):
     def get(self, request):
         latest_date = CommodityExchangeTrade.objects.aggregate(value=Max("trade_date"))["value"]
         selected_date = latest_date
-        if request.query_params.get('date'):
+        all_dates = request.query_params.get('date') == 'all'
+        if request.query_params.get('date') and not all_dates:
             try:
                 selected_date = parse_date(request.query_params['date'])
             except ValueError:
                 selected_date = None
             if selected_date is None:
                 return Response({'detail': 'تاریخ باید به صورت YYYY-MM-DD باشد.'}, status=400)
-        latest = CommodityExchangeTrade.objects.none()
-        if selected_date:
+        latest = CommodityExchangeTrade.objects.all() if all_dates else CommodityExchangeTrade.objects.none()
+        if all_dates:
+            selected_date = None
+        elif selected_date:
             latest = CommodityExchangeTrade.objects.filter(trade_date=selected_date)
         totals = latest.aggregate(
             offered_volume=Sum("offered_volume"),
@@ -113,6 +118,7 @@ class CommodityExchangeSummaryAPIView(APIView):
         groups = list(
             latest.values("product_group")
             .annotate(
+                records=Count("id"),
                 trade_count=Sum("traded_volume"),
                 offered_volume=Sum("offered_volume"),
                 demand_volume=Sum("demand_volume"),
@@ -123,6 +129,15 @@ class CommodityExchangeSummaryAPIView(APIView):
         for group in groups:
             for key, value in list(group.items()):
                 group[key] = _value(value)
+        global_groups = {row['product_group']:row for row in CommodityExchangeTrade.objects.values('product_group').annotate(latest_date=Max('trade_date'))}
+        scope_counts = {row['product_group']:row['records'] for row in groups}
+        from .external_markets import gregorian_to_jalali
+        available_groups = []
+        for name in dict.fromkeys([*INDUSTRIAL_GROUPS,*global_groups]):
+            day = global_groups.get(name, {}).get('latest_date')
+            available_groups.append({'name':name,'records':scope_counts.get(name,0),'latest_date':_value(day),
+                                     'latest_date_jalali':gregorian_to_jalali(day) if day else None})
+        producers = list(latest.exclude(producer_name='').values_list('producer_name',flat=True).order_by('producer_name').distinct())
         hierarchy = {}
         for item in latest.values("product_group", "producer_name", "symbol", "goods_name").annotate(records=Count("id")):
             producers = hierarchy.setdefault(item["product_group"], {})
@@ -136,6 +151,10 @@ class CommodityExchangeSummaryAPIView(APIView):
             {
                 "latest_trade_date": _value(latest_date),
                 "selected_date": _value(selected_date),
+                "date_scope": "all" if all_dates else "day",
+                "available_groups": available_groups,
+                "producers": producers,
+                "market_scope": "industrial",
                 "today": timezone.localdate().isoformat(),
                 "has_today_data": CommodityExchangeTrade.objects.filter(trade_date=timezone.localdate()).exists(),
                 "available_dates": [{'date': _value(row['trade_date']), 'label': row['trade_date_jalali']} for row in CommodityExchangeTrade.objects.values('trade_date', 'trade_date_jalali').order_by('-trade_date').distinct()[:366]],
@@ -166,22 +185,42 @@ class CommodityExchangeTradeListAPIView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         queryset = CommodityExchangeTrade.objects.all()
-        search = (request.query_params.get("search") or "").strip()
+        def normalized(field):
+            expression = F(field)
+            for old,new in [('ي','ی'),('ك','ک'),('\u200c',' '),('\u200f',''),('\u200e','')]:
+                expression=Replace(expression,Value(old),Value(new))
+            return expression
+        search = normalize_commodity_text(request.query_params.get('search'))
+        if search:
+            queryset = queryset.annotate(search_goods=normalized('goods_name'),search_producer=normalized('producer_name'),search_symbol=normalized('symbol'))
         for term in search.split():
-            queryset = queryset.filter(
-                Q(goods_name__icontains=term)
-                | Q(symbol__icontains=term)
-                | Q(producer_name__icontains=term)
-                | Q(raw__icontains=term)
-            )
+            variants = {term,term.translate(str.maketrans('0123456789','۰۱۲۳۴۵۶۷۸۹')),term.translate(str.maketrans('0123456789','٠١٢٣٤٥٦٧٨٩'))}
+            terms = Q()
+            for value in variants:
+                terms |= Q(search_goods__icontains=value)|Q(search_symbol__icontains=value)|Q(search_producer__icontains=value)|Q(raw__icontains=value)
+            queryset=queryset.filter(terms)
         for field in ("product_group", "producer_name", "symbol"):
             value = (request.query_params.get(field) or "").strip()
             if value:
                 queryset = queryset.filter(**{field: value})
-        if request.query_params.get("date_from"):
-            queryset = queryset.filter(trade_date__gte=request.query_params["date_from"])
-        if request.query_params.get("date_to"):
-            queryset = queryset.filter(trade_date__lte=request.query_params["date_to"])
+        bounds = {}
+        for key in ('date_from','date_to'):
+            value=request.query_params.get(key)
+            if value:
+                try: day=parse_date(value)
+                except ValueError: day=None
+                if day is None:
+                    return Response({'detail':'تاریخ باید به صورت YYYY-MM-DD باشد.'},status=400)
+                bounds[key]=day
+        if bounds.get('date_from') and bounds.get('date_to') and bounds['date_from']>bounds['date_to']:
+            return Response({'detail':'تاریخ شروع باید قبل از پایان باشد.'},status=400)
+        for key,day in bounds.items():
+            queryset=queryset.filter(**{'trade_date__gte' if key=='date_from' else 'trade_date__lte':day})
+        trade_status=request.query_params.get('trade_status','all')
+        if trade_status not in ('all','traded','untraded'):
+            return Response({'detail':'وضعیت معامله معتبر نیست.'},status=400)
+        if trade_status=='traded':queryset=queryset.filter(traded_volume__gt=0)
+        elif trade_status=='untraded':queryset=queryset.filter(Q(traded_volume__lte=0)|Q(traded_volume__isnull=True))
         ordering = request.query_params.get("ordering", "-trade_date")
         sort_fields = {"goods_name", "symbol", "producer_name", "base_price", "weighted_price",
                        "offered_volume", "demand_volume", "traded_volume", "trade_date"}

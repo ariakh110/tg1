@@ -16,6 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from core.models import SiteSettings
+from .commodity_categories import classify_industrial_product
 
 from .models import (
     CommodityExchangeTrade,
@@ -200,14 +201,8 @@ def _ime_row_id(row):
 
 
 def classify_steel_product(row):
-    searchable = " ".join(
-        str(row.get(key) or "").lower()
-        for key in ("GoodsName", "Symbol", "PacketName", "Talar")
-    )
-    for group, words in STEEL_GROUPS.items():
-        if any(word in searchable for word in words):
-            return group
-    return None
+    # Compatibility name for callers; scope now includes industrial/mineral goods.
+    return classify_industrial_product(row)
 
 
 def _sync_state_start(key):
@@ -274,16 +269,20 @@ def sync_ime_market(from_jalali=None, to_jalali=None):
             source_rows.extend(_unwrap_ime_payload(payload))
         parsed = []
         seen_ids = set()
+        excluded_rows = 0
+        group_counts = {}
         for row in source_rows:
             if not isinstance(row, dict):
                 continue
             product_group = classify_steel_product(row)
             if not product_group:
+                excluded_rows += 1
                 continue
             report_id = _ime_row_id(row)
             if report_id in seen_ids:
                 continue
             seen_ids.add(report_id)
+            group_counts[product_group] = group_counts.get(product_group, 0) + 1
             published_date = row.get("date") or row.get("Date")
             goods_name = str(row.get("GoodsName") or "").strip()
             if not published_date or not goods_name:
@@ -327,7 +326,7 @@ def sync_ime_market(from_jalali=None, to_jalali=None):
         _sync_state_finish(
             state,
             count=len(parsed),
-            metadata={"from": from_jalali, "to": to_jalali, "source": IME_SOURCE_URL},
+            metadata={"from": from_jalali, "to": to_jalali, "source": IME_SOURCE_URL, "scope":"industrial", "source_rows":len(source_rows), "excluded_rows":excluded_rows, "groups":group_counts},
         )
         return len(parsed)
     except Exception as exc:
