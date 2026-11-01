@@ -11,7 +11,7 @@ def normalize_commodity_text(value):
 INDUSTRIAL_GROUPS = {
     'آهن اسفنجی': ('اسفنجی','sponge iron','dri','hbi'),
     'آلومینیوم': ('آلومینیوم','آلومینیم','آلومینا','aluminum','aluminium'),
-    'مس': ('مس','مسی','copper'),
+    'مس': ('مس','مسی','copper','برنج','برنجی','brass'),
     'سرب و روی': ('سرب','روی','zinc','lead'),
     'نیکل و قلع': ('نیکل','قلع','nickel','tin'),
     'فلزات گران‌بها': ('طلا','نقره','پلاتین','gold','silver','platinum'),
@@ -28,7 +28,7 @@ INDUSTRIAL_GROUPS = {
     'مواد معدنی': ('سنگ آهک','آهک','دولومیت','کک','زغال','زغالسنگ','سیلیس','بوکسیت','کائولن','خاک نسوز','باریت'),
     'سایر صنعتی و معدنی': (),
 }
-NON_INDUSTRIAL = ('پلی اتیلن','پلی‌اتیلن','پلی پروپیلن','پلیمر','پتروشیمی','قیر','نفت','گاز','بنزین','لوبکات','وکیوم','گندم','برنج','جو','ذرت','زعفران','پسته','خرما','شکر','شیر')
+NON_INDUSTRIAL = ('پلی اتیلن','پلی‌اتیلن','پلی پروپیلن','پلیمر','پتروشیمی','قیر','نفت','گاز','بنزین','لوبکات','وکیوم','گندم','جو','ذرت','زعفران','پسته','خرما','شکر','شیر','polyethylene','polypropylene','polymer','petrochemical','bitumen','petroleum','wheat','rice','corn')
 
 
 def contains(text, words):
@@ -38,9 +38,14 @@ def contains(text, words):
 def classify_industrial_product(row):
     goods = normalize_commodity_text(row.get('GoodsName'))
     hall = normalize_commodity_text(' '.join(str(row.get(key) or '') for key in ('Talar','PacketName','MainCatName','CategoryName')))
-    if contains(goods, NON_INDUSTRIAL) or contains(hall, ('پتروشیمی','کشاورزی','فرآورده های نفتی','فرآورده‌های نفتی')):
+    brass_shape = contains(goods, ('شمش','ورق','تسمه','مفتول','میله','لوله','billet','sheet','brass'))
+    if contains(goods, ('برنج',)) and not brass_shape:
+        return None
+    if contains(goods, NON_INDUSTRIAL) or contains(hall, ('پتروشیمی','کشاورزی','فرآورده های نفتی','فرآورده‌های نفتی','petrochemical','petrochemicals','agriculture','agricultural','petroleum')):
         return None
     searchable = goods+' '+normalize_commodity_text(row.get('Symbol')).replace('_',' ').replace('-',' ')
+    # روی is also a preposition; packaging is not evidence of zinc.
+    searchable = re.sub(r'(?<!\w)روی\s+(?:پالت|بندیل|کامیون|تریلر|واگن|سکو|زمین)(?!\w)', ' ', searchable)
     for group, words in INDUSTRIAL_GROUPS.items():
         if contains(searchable, words):
             return group

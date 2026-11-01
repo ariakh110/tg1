@@ -504,6 +504,7 @@ class MarketDataSyncState(models.Model):
 
 
 class CommodityExchangeTrade(models.Model):
+    is_industrial = models.BooleanField(default=True, db_index=True)
     source_report_id = models.PositiveBigIntegerField(unique=True)
     symbol = models.CharField(max_length=160, db_index=True)
     goods_name = models.CharField(max_length=255, db_index=True)

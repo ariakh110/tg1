@@ -5,9 +5,11 @@ from django.db import migrations
 
 def regroup(apps,schema_editor):
     Trade=apps.get_model('products','CommodityExchangeTrade')
-    for row in Trade.objects.only('id','goods_name','symbol','product_group').iterator(chunk_size=500):
+    for row in Trade.objects.only('id','goods_name','symbol','product_group','hall').iterator(chunk_size=500):
         name=(row.goods_name+' '+row.symbol).translate(str.maketrans({'ي':'ی','ك':'ک','\u200c':' ','_':' ','-':' '})).casefold()
-        if re.search(r'اسفنجی|(?<!\w)(?:sponge iron|dri|hbi)(?!\w)',name) and row.product_group!='آهن اسفنجی':
+        context=(row.goods_name+' '+row.hall).translate(str.maketrans({'ي':'ی','ك':'ک','\u200c':' '})).casefold()
+        denied = re.search(r'پلی[\s-]*(?:اتیلن|پروپیلن)|پتروشیمی|پلیمر|کشاورزی|polyethylene|polypropylene|polymer|petrochem|agricultur', context)
+        if not denied and re.search(r'اسفنجی|(?<!\w)(?:sponge iron|dri|hbi)(?!\w)',name) and row.product_group!='آهن اسفنجی':
             Trade.objects.filter(pk=row.pk).update(product_group='آهن اسفنجی')
 
 

@@ -1,0 +1,24 @@
+# Industrial exchange execution and handoff — 2026-11-01
+
+## Scope and references
+User authorized table-first usability and industrial/sponge discovery on commodity-exchange. BMAD design: industrial-exchange-design-20261101.md (immutable approved-stage artifact); OpenSpec change improve-industrial-exchange-usability; frontend implementation plan docs/superpowers/plans/2026-11-01-industrial-exchange.md. Workflow industrial-exchange-20261101, one inline executing-plans coordinator, TDD and one fresh whole-change reviewer. No live sync, deployment, SMS/Bale/Telegram send or template connection.
+
+## Implementation / schema addendum
+Industrial taxonomy normalizes Persian/Arabic text; positively identifies metals/minerals, contextual brass vs rice and zinc vs packaging, explicitly excludes petro/agri. Import retains raw official payload and units. Migration0025 guarded sponge regroup; migration0026 freezes taxonomy and adds indexed is_industrial projection, reclassifying existing industrial groups while preserving all rows/raw/prices/units. This is a derived scope flag, no new domain entity. Public summary, trade list and symbol history exclude flagged nonindustrial history. Future accepted imports set flagtrue. Private database history remains intact; other private report paths were not redesigned.
+
+API summary adds industrial catalog/latestdate pergroup/currentrecords, scoped producers array, explicit date=all. List validates ISO bounds/status and normalizes Arabic query; unknownproducer has exact __unknown__ sentinel. Existing range limits/importer two reports/idempotency preserved. Schema migration required, not frontend-only release.
+
+UI table first, explicit labelled controls, active filters/reset, statusfilter, oldergroupday recovery, allhistory scope, original units/zero vs missing, separate summary/table errors, aborted request guards and response keys prevent olddate/newheading mismatch. Map collapsed aftertable, highcontrast16px labels + keyboard text alternatives; path resolves against fresh hierarchy without silently clearing tablefilters. Shared account/inquiry/Bale behavior untouched.
+
+## Evidence
+Initial targeted45 tests GREEN after taxonomy/API/migration RED; exact unknownproducer regression RED→GREEN. Node helpers RED→GREEN. Browser identicalsearch stuck-loading regression RED→GREEN. Fresh finalreview flagged6 issues, accepted by effect: populatedsummary producers dictionary P1, backgroundday mismatch P2, stale mapchildren P2, brass/zinc ambiguity P2, oldnonindustrial scope P2, sponge migration falsepositive P2. A single fixpass added realAPI contract/migration/context regressions and maphelper/browser races; observed RED failures then GREEN. English polyethylene/rice sheet extra guard regression also observed RED→GREEN within same pass. No second reviewer.
+
+Fresh reviewer: industrial_exchange_final_review, gpt-6-astra high, read-only; no agents dispatched by reviewer. Declined-to-judge rulings: official completeness unverified and disclosed; preexisting history missingvolume aggregate/emptyproducer behavior outside this page task (not endorsed); visual inspection done by implementer; no production deployment claimed.
+
+Final validation: full Django462 tests; node76 tests; changed JS/JSX/tests ESLint; Django check and makemigrations--check--dry-run; gitdiff--check; npmrunbuild; frontend releaseversionpolicy. Final mocked browser on productionbuild verifies tablebeforemap/defaultclosed, older sponge, allhistory, repeatedsearch, status/producerexact, map unknownproducer, mapchild refresh, stale search response, summary/table errors, backgroundday consistency, mobile390 no documentoverflow, no pageerrors/writes. Screenshots in learner guide assets, fixtures only, no real tradevalues claimed. Production build log in local temp; initial build succeeded but wrapper printed Unicode poorly; final wrapper fixed and exited0.
+
+## Source limitation
+Read-only public API2026-11-01:102 latestday rows and60 historical sponge search matches under orechain, e.g BSC-DRI-00/KHSS-DRIBRI-00. Official IME endpoint unreachable in dev network: cannot assert every officialrow present. Scope expansion requires next successful existing sync (usual14days/max31), not synthetic trades. Existing sponge regroup does not recover neverimported othergroups. User approval of Bale templates is informational only; no IDs given and no template_id/text_fields integration added.
+
+## Delivery
+Scoped dev-ariakhayer commits and PrepareOnly botharchives, no serverconnection. Preserve unrelated frontend HANDOFF.md and PURCHASE_INQUIRY_CURRENT_STATE.fa.md. Guide: learner CommodityExchange.INDUSTRIAL.fa.md. After manual deployment of bothpackages/migrations, refresh page and perform existing authorized market sync from admin if needed; live sourcecoverage check remains ownerenvironment validation.

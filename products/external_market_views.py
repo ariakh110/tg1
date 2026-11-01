@@ -94,7 +94,7 @@ class CommodityExchangeSummaryAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        latest_date = CommodityExchangeTrade.objects.aggregate(value=Max("trade_date"))["value"]
+        latest_date = CommodityExchangeTrade.objects.filter(is_industrial=True).aggregate(value=Max("trade_date"))["value"]
         selected_date = latest_date
         all_dates = request.query_params.get('date') == 'all'
         if request.query_params.get('date') and not all_dates:
@@ -104,11 +104,11 @@ class CommodityExchangeSummaryAPIView(APIView):
                 selected_date = None
             if selected_date is None:
                 return Response({'detail': 'تاریخ باید به صورت YYYY-MM-DD باشد.'}, status=400)
-        latest = CommodityExchangeTrade.objects.all() if all_dates else CommodityExchangeTrade.objects.none()
+        latest = CommodityExchangeTrade.objects.filter(is_industrial=True).all() if all_dates else CommodityExchangeTrade.objects.filter(is_industrial=True).none()
         if all_dates:
             selected_date = None
         elif selected_date:
-            latest = CommodityExchangeTrade.objects.filter(trade_date=selected_date)
+            latest = CommodityExchangeTrade.objects.filter(is_industrial=True).filter(trade_date=selected_date)
         totals = latest.aggregate(
             offered_volume=Sum("offered_volume"),
             demand_volume=Sum("demand_volume"),
@@ -129,7 +129,7 @@ class CommodityExchangeSummaryAPIView(APIView):
         for group in groups:
             for key, value in list(group.items()):
                 group[key] = _value(value)
-        global_groups = {row['product_group']:row for row in CommodityExchangeTrade.objects.values('product_group').annotate(latest_date=Max('trade_date'))}
+        global_groups = {row['product_group']:row for row in CommodityExchangeTrade.objects.filter(is_industrial=True).values('product_group').annotate(latest_date=Max('trade_date'))}
         scope_counts = {row['product_group']:row['records'] for row in groups}
         from .external_markets import gregorian_to_jalali
         available_groups = []
@@ -137,7 +137,7 @@ class CommodityExchangeSummaryAPIView(APIView):
             day = global_groups.get(name, {}).get('latest_date')
             available_groups.append({'name':name,'records':scope_counts.get(name,0),'latest_date':_value(day),
                                      'latest_date_jalali':gregorian_to_jalali(day) if day else None})
-        producers = list(latest.exclude(producer_name='').values_list('producer_name',flat=True).order_by('producer_name').distinct())
+        producer_names = list(latest.values_list('producer_name',flat=True).order_by('producer_name').distinct())
         hierarchy = {}
         for item in latest.values("product_group", "producer_name", "symbol", "goods_name").annotate(records=Count("id")):
             producers = hierarchy.setdefault(item["product_group"], {})
@@ -153,12 +153,12 @@ class CommodityExchangeSummaryAPIView(APIView):
                 "selected_date": _value(selected_date),
                 "date_scope": "all" if all_dates else "day",
                 "available_groups": available_groups,
-                "producers": producers,
+                "producers": producer_names,
                 "market_scope": "industrial",
                 "today": timezone.localdate().isoformat(),
-                "has_today_data": CommodityExchangeTrade.objects.filter(trade_date=timezone.localdate()).exists(),
-                "available_dates": [{'date': _value(row['trade_date']), 'label': row['trade_date_jalali']} for row in CommodityExchangeTrade.objects.values('trade_date', 'trade_date_jalali').order_by('-trade_date').distinct()[:366]],
-                "latest_trade_date_jalali": CommodityExchangeTrade.objects.filter(trade_date=latest_date).values_list("trade_date_jalali", flat=True).first(),
+                "has_today_data": CommodityExchangeTrade.objects.filter(is_industrial=True).filter(trade_date=timezone.localdate()).exists(),
+                "available_dates": [{'date': _value(row['trade_date']), 'label': row['trade_date_jalali']} for row in CommodityExchangeTrade.objects.filter(is_industrial=True).values('trade_date', 'trade_date_jalali').order_by('-trade_date').distinct()[:366]],
+                "latest_trade_date_jalali": CommodityExchangeTrade.objects.filter(is_industrial=True).filter(trade_date=latest_date).values_list("trade_date_jalali", flat=True).first(),
                 "selected_date_jalali": latest.values_list("trade_date_jalali", flat=True).first(),
                 "records": latest.count(),
                 "symbols": latest.values("symbol").distinct().count(),
@@ -184,7 +184,7 @@ class CommodityExchangeTradeListAPIView(APIView):
             page, page_size = _pagination(request)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        queryset = CommodityExchangeTrade.objects.all()
+        queryset = CommodityExchangeTrade.objects.filter(is_industrial=True).all()
         def normalized(field):
             expression = F(field)
             for old,new in [('ي','ی'),('ك','ک'),('\u200c',' '),('\u200f',''),('\u200e','')]:
@@ -202,7 +202,7 @@ class CommodityExchangeTradeListAPIView(APIView):
         for field in ("product_group", "producer_name", "symbol"):
             value = (request.query_params.get(field) or "").strip()
             if value:
-                queryset = queryset.filter(**{field: value})
+                queryset = queryset.filter(**{field: '' if field == 'producer_name' and value == '__unknown__' else value})
         bounds = {}
         for key in ('date_from','date_to'):
             value=request.query_params.get(key)
@@ -250,7 +250,7 @@ class CommodityExchangeHistoryAPIView(APIView):
         if range_name not in ranges:
             return Response({"detail": "range نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
         start = timezone.localdate() - timedelta(days=ranges[range_name] - 1)
-        rows = CommodityExchangeTrade.objects.filter(symbol=symbol, trade_date__gte=start).order_by("trade_date", "source_report_id")
+        rows = CommodityExchangeTrade.objects.filter(is_industrial=True).filter(symbol=symbol, trade_date__gte=start).order_by("trade_date", "source_report_id")
         producer = request.query_params.get("producer_name")
         if producer:
             rows = rows.filter(producer_name=producer)

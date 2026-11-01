@@ -297,6 +297,7 @@ def sync_ime_market(from_jalali=None, to_jalali=None):
                         "symbol": str(row.get("Symbol") or "").strip() or goods_name,
                         "goods_name": goods_name,
                         "product_group": product_group,
+                        "is_industrial": True,
                         "producer_name": str(row.get("ProducerName") or "").strip(),
                         "hall": str(row.get("Talar") or row.get("PacketName") or "").strip(),
                         "contract_type": str(row.get("ContractType") or "").strip(),

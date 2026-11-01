@@ -14,7 +14,7 @@ class IndustrialExchangeTests(APITestCase):
   cases=[('آهن‌اسفنجي','آهن اسفنجی'),('اسفنجی بریکت','آهن اسفنجی'),('Sponge Iron DRI','آهن اسفنجی'),('ورق آلومینیوم','آلومینیوم'),('کنسانتره مس','مس'),('شمش سرب و روی','سرب و روی'),('سیمان پرتلند','سیمان و کلینکر'),('فروسیلیس','فروآلیاژها'),('میلگرد A3','میلگرد')]
   for text,expected in cases:
    self.assertEqual(classify_steel_product({'GoodsName':text,'Talar':'تالار صنعتی و معدنی'}),expected,text)
-  for name in ['پلی اتیلن','گندم','قیر','پسته']:
+  for name in ['پلی اتیلن','گندم','قیر','پسته','polyethylene sheet','rice sheet']:
    self.assertIsNone(classify_steel_product({'GoodsName':name,'Talar':'تالار صنعتی'}),name)
   self.assertEqual(classify_steel_product({'GoodsName':'کالای صنعتی ناشناخته','Talar':'تالار صنعتی و معدنی'}),'سایر صنعتی و معدنی')
   self.assertIsNone(classify_steel_product({'GoodsName':'کالای ناشناخته','Talar':'تالار پتروشیمی'}))
@@ -50,3 +50,41 @@ class IndustrialExchangeTests(APITestCase):
   migrate=import_module('products.migrations.0025_separate_sponge_iron').regroup
   migrate(apps,None);migrate(apps,None);row.refresh_from_db()
   self.assertEqual(row.product_group,'آهن اسفنجی');self.assertEqual((row.raw,row.traded_volume,row.trade_date,row.symbol),original)
+
+ def test_map_missing_producer_is_an_exact_filter(self):
+  known=self.row(70,'ورق',date(2026,11,1),'ورق و کلاف');unknown=self.row(71,'ورق بدون نام',date(2026,11,1),'ورق و کلاف');unknown.producer_name='';unknown.save()
+  result=self.client.get('/api/commodity-exchange/trades/',{'producer_name':'__unknown__'}).data
+  self.assertEqual(result['count'],1);self.assertEqual(result['results'][0]['source_report_id'],71)
+
+ def test_summary_producers_contract_is_a_list_for_populated_and_empty_scopes(self):
+  self.row(90,'ورق',date(2026,11,1),'ورق و کلاف')
+  for query in ['', '?date=all', '?date=2026-10-01']:
+   data=self.client.get('/api/commodity-exchange/summary/'+query).data
+   self.assertIsInstance(data['producers'],list)
+   self.assertEqual(data['producers'],[] if '2026-10-01' in query else ['فولاد كوير'])
+ def test_ambiguous_persian_words_keep_industrial_material_context(self):
+  for name,expected in [('شمش برنج','مس'),('ورق برنجی','مس'),('میلگرد روی پالت','میلگرد'),('شمش روی','سرب و روی'),('ورق روی اندود','سرب و روی')]:
+   self.assertEqual(classify_steel_product({'GoodsName':name,'Talar':'تالار صنعتی و معدنی'}),expected,name)
+  for name in ['برنج','برنج طارم','ورق پلی اتیلن اسفنجی']:
+   self.assertIsNone(classify_steel_product({'GoodsName':name,'Talar':'تالار صنعتی و معدنی'}),name)
+ def test_sponge_backfill_rejects_explicit_nonindustrial_goods(self):
+  row=self.row(91,'ورق پلی اتیلن اسفنجی',date(2026,10,1),'ورق و کلاف');row.hall='تالار پتروشیمی';row.save()
+  import_module('products.migrations.0025_separate_sponge_iron').regroup(apps,None)
+  row.refresh_from_db();self.assertEqual(row.product_group,'ورق و کلاف')
+ def test_legacy_nonindustrial_rows_are_retained_but_hidden_in_every_public_scope(self):
+  old=self.row(92,'ورق پلی اتیلن اسفنجی',date(2026,11,2),'ورق و کلاف');old.hall='تالار پتروشیمی';old.save()
+  valid=self.row(93,'شمش برنج',date(2026,11,1),'شمش و اسلب');valid.hall='تالار صنعتی و معدنی';valid.save()
+  original=deepcopy(old.raw)
+  migration=import_module('products.migrations.0026_commodity_industrial_scope')
+  migration.classify_history(apps,None);migration.classify_history(apps,None)
+  old.refresh_from_db();valid.refresh_from_db()
+  self.assertFalse(old.is_industrial);self.assertEqual(old.raw,original);self.assertEqual(valid.product_group,'مس')
+  self.assertEqual(CommodityExchangeTrade.objects.count(),2)
+  for query in ['', '?date=all']:
+   data=self.client.get('/api/commodity-exchange/summary/'+query).data
+   self.assertEqual(data['records'],1);self.assertEqual(data['latest_trade_date'],'2026-11-01')
+   self.assertEqual([x['date'] for x in data['available_dates']],['2026-11-01'])
+  data=self.client.get('/api/commodity-exchange/trades/').data
+  self.assertEqual(data['count'],1);self.assertEqual(data['results'][0]['source_report_id'],93)
+  data=self.client.get('/api/commodity-exchange/symbols/'+old.symbol+'/history/').data
+  self.assertEqual(data.get('points',[]),[])
