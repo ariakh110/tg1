@@ -12,7 +12,7 @@ from .api_views import ProductSummaryViewSet
 from .market_views import MarketProductHistoryAPIView, MarketProductListAPIView, MarketSummaryAPIView
 from .external_market_views import (
     CommodityExchangeSyncAPIView,
-    CommodityExchangeHistoryAPIView,
+    CommodityExchangeHistoryAPIView, CommodityExchangeLiveAPIView, CommodityExchangeLiveSyncAPIView,
     CommodityExchangeSummaryAPIView,
     CommodityExchangeTradeListAPIView,
     GlobalMetalCSVImportAPIView,
@@ -38,10 +38,12 @@ router.register(r'delivery-locations', DeliveryLocationViewSet, basename='delive
 router.register(r'sellers', SellerViewSet, basename='seller')
 router.register(r'products-summary', ProductSummaryViewSet, basename='product-summary')
 urlpatterns = [
+    path('admin/commodity-exchange/live/sync/', CommodityExchangeLiveSyncAPIView.as_view(), name='commodity-exchange-live-sync'),
     path('admin/commodity-exchange/sync/', CommodityExchangeSyncAPIView.as_view(), name='commodity-exchange-sync'),
     path('market/summary/', MarketSummaryAPIView.as_view(), name='market-summary'),
     path('market/products/', MarketProductListAPIView.as_view(), name='market-products'),
     path('market/products/<int:product_id>/history/', MarketProductHistoryAPIView.as_view(), name='market-product-history'),
+    path('commodity-exchange/live/', CommodityExchangeLiveAPIView.as_view(), name='commodity-exchange-live'),
     path('commodity-exchange/summary/', CommodityExchangeSummaryAPIView.as_view(), name='commodity-exchange-summary'),
     path('commodity-exchange/trades/', CommodityExchangeTradeListAPIView.as_view(), name='commodity-exchange-trades'),
     path('commodity-exchange/symbols/<path:symbol>/history/', CommodityExchangeHistoryAPIView.as_view(), name='commodity-exchange-history'),

@@ -51,7 +51,7 @@ class MarketRefreshTests(APITestCase):
     def test_daily_summary_never_relabels_old_trades_as_today(self):
         old = timezone.localdate() - timedelta(days=3)
         CommodityExchangeTrade.objects.create(source_report_id=17, symbol='A', goods_name='sheet',
-            product_group='sheet', trade_date=old, trade_date_jalali='1405/07/29')
+            product_group='ورق و کلاف', trade_date=old, trade_date_jalali='1405/07/29')
         response = self.client.get('/api/commodity-exchange/summary/')
         self.assertFalse(response.data['has_today_data'])
         self.assertEqual(response.data['latest_trade_date'], old.isoformat())
@@ -113,10 +113,10 @@ class MarketRefreshTests(APITestCase):
     def test_command_checks_both_providers_after_one_fails_and_records_heartbeat(self, refresh):
         from .external_markets import MarketSyncError
         from io import StringIO
-        refresh.side_effect = [MarketSyncError('source unavailable'), {'skipped': 'manual_mode'}]
+        refresh.side_effect = [MarketSyncError('source unavailable'), {'skipped': 'manual_mode'}, {'skipped': 'manual_mode'}]
         with self.assertRaises(CommandError):
             call_command('sync_external_markets', stdout=StringIO())
-        self.assertEqual(refresh.call_count, 2)
+        self.assertEqual(refresh.call_count, 3)
         self.assertIsNotNone(MarketDataSyncState.objects.get(key='market_scheduler').finished_at)
 
     @patch('products.tasks.sync_global_metals')

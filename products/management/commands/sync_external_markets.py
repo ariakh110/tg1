@@ -10,13 +10,16 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         errors = []
-        for key in ('ime', 'metals_dev'):
+        for key in ('ime', 'ime_live', 'metals_dev'):
             try:
                 self.stdout.write(f'{key}: {refresh_market(key)}')
             except MarketSyncError as exc:
                 errors.append(f'{key}: {exc}')
-        MarketDataSyncState.objects.update_or_create(key='market_scheduler', defaults={
-            'status': 'success', 'finished_at': timezone.now(), 'last_success_at': timezone.now(),
-        })
+        finished = timezone.now()
+        heartbeat = {'status':'error' if errors else 'success', 'finished_at':finished,
+                     'error_message':'دریافت یک یا چند بازار ناموفق بود.' if errors else ''}
+        if not errors:
+            heartbeat['last_success_at'] = finished
+        MarketDataSyncState.objects.update_or_create(key='market_scheduler', defaults=heartbeat)
         if errors:
             raise CommandError('; '.join(errors))

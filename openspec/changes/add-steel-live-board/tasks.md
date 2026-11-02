@@ -1,0 +1,4 @@
+- [x] Shared steel-only public scope and regression tests.
+- [x] Official snapshot adapter, read-only API, leased background schedule and tests.
+- [x] Steel-first two-tab UI and browser/unit/build checks.
+- [x] One final review/fixpass, handoff and PrepareOnly release.

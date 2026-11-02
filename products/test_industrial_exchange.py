@@ -73,12 +73,12 @@ class IndustrialExchangeTests(APITestCase):
   row.refresh_from_db();self.assertEqual(row.product_group,'ورق و کلاف')
  def test_legacy_nonindustrial_rows_are_retained_but_hidden_in_every_public_scope(self):
   old=self.row(92,'ورق پلی اتیلن اسفنجی',date(2026,11,2),'ورق و کلاف');old.hall='تالار پتروشیمی';old.save()
-  valid=self.row(93,'شمش برنج',date(2026,11,1),'شمش و اسلب');valid.hall='تالار صنعتی و معدنی';valid.save()
+  valid=self.row(93,'شمش فولاد',date(2026,11,1),'شمش و اسلب');valid.hall='تالار صنعتی و معدنی';valid.save()
   original=deepcopy(old.raw)
   migration=import_module('products.migrations.0026_commodity_industrial_scope')
   migration.classify_history(apps,None);migration.classify_history(apps,None)
   old.refresh_from_db();valid.refresh_from_db()
-  self.assertFalse(old.is_industrial);self.assertEqual(old.raw,original);self.assertEqual(valid.product_group,'مس')
+  self.assertFalse(old.is_industrial);self.assertEqual(old.raw,original);self.assertEqual(valid.product_group,'شمش و اسلب')
   self.assertEqual(CommodityExchangeTrade.objects.count(),2)
   for query in ['', '?date=all']:
    data=self.client.get('/api/commodity-exchange/summary/'+query).data

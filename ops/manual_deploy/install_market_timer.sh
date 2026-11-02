@@ -20,12 +20,12 @@ UMask=0077
 UNIT
 cat > /etc/systemd/system/tirexa-market-sync.timer <<'UNIT'
 [Unit]
-Description=Check Kaveh Metal market schedules every five minutes
+Description=Check Kaveh Metal market schedules every minute
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
-AccuracySec=15s
+OnUnitActiveSec=1min
+AccuracySec=5s
 Unit=tirexa-market-sync.service
 
 [Install]

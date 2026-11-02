@@ -206,29 +206,30 @@ def classify_steel_product(row):
 
 
 def _sync_state_start(key):
+    from .market_leases import owned_state
     state, _ = MarketDataSyncState.objects.get_or_create(key=key)
-    state.status = MarketDataSyncState.Status.RUNNING
-    state.started_at = timezone.now()
-    state.error_message = ""
-    state.save(update_fields=("status", "started_at", "error_message", "updated_at"))
+    patch = {'status':'running', 'started_at':timezone.now(), 'updated_at':timezone.now()}
+    if key != 'ime_live':
+        patch['error_message'] = ''
+    if not owned_state(state).update(**patch):
+        raise MarketSyncError('مالکیت اجرای دریافت تغییر کرده است.')
+    state.refresh_from_db()
     return state
 
 
 def _sync_state_finish(state, *, count, metadata=None):
-    state.status = MarketDataSyncState.Status.SUCCESS
-    state.finished_at = timezone.now()
-    state.last_success_at = state.finished_at
-    state.record_count = count
-    state.error_message = ""
-    state.metadata = metadata or {}
-    state.save()
+    from .market_leases import owned_state
+    finished = timezone.now()
+    if not owned_state(state).update(status='success', finished_at=finished,
+            last_success_at=finished, record_count=count, error_message='',
+            metadata=metadata or {}, updated_at=finished):
+        raise MarketSyncError('مالکیت اجرای دریافت تغییر کرده است.')
 
 
 def _sync_state_error(state, exc):
-    state.status = MarketDataSyncState.Status.ERROR
-    state.finished_at = timezone.now()
-    state.error_message = str(exc)[:2000]
-    state.save(update_fields=("status", "finished_at", "error_message", "updated_at"))
+    from .market_leases import owned_state
+    owned_state(state).update(status='error', finished_at=timezone.now(),
+                             error_message=str(exc)[:2000], updated_at=timezone.now())
 
 
 def _unwrap_ime_payload(payload):
@@ -320,15 +321,17 @@ def sync_ime_market(from_jalali=None, to_jalali=None):
                 )
             )
         with transaction.atomic():
+            from .market_leases import owned_state
+            owned_state(state).select_for_update().get()
             for report_id, defaults in parsed:
                 CommodityExchangeTrade.objects.update_or_create(
                     source_report_id=report_id, defaults=defaults
                 )
-        _sync_state_finish(
-            state,
-            count=len(parsed),
-            metadata={"from": from_jalali, "to": to_jalali, "source": IME_SOURCE_URL, "scope":"industrial", "source_rows":len(source_rows), "excluded_rows":excluded_rows, "groups":group_counts},
-        )
+            _sync_state_finish(
+                state,
+                count=len(parsed),
+                metadata={"from": from_jalali, "to": to_jalali, "source": IME_SOURCE_URL, "scope":"industrial", "source_rows":len(source_rows), "excluded_rows":excluded_rows, "groups":group_counts},
+            )
         return len(parsed)
     except Exception as exc:
         _sync_state_error(state, exc)
@@ -378,6 +381,8 @@ def sync_global_metals(force=False):
             observed_at = timezone.make_aware(observed_at, timezone.get_current_timezone())
         saved = 0
         with transaction.atomic():
+            from .market_leases import owned_state
+            owned_state(state).select_for_update().get()
             for sort_order, (_name, definition) in enumerate(METALS_DEV_INSTRUMENTS.items(), start=1):
                 code, name_fa, name_en, exchange, aliases = definition
                 raw_value = next((metals.get(alias) for alias in aliases if metals.get(alias) is not None), None)
@@ -410,9 +415,9 @@ def sync_global_metals(force=False):
                     },
                 )
                 saved += 1
-        _sync_state_finish(
-            state, count=saved, metadata={"provider": "Metals.Dev", "source": METALS_DEV_SOURCE_URL}
-        )
+            _sync_state_finish(
+                state, count=saved, metadata={"provider": "Metals.Dev", "source": METALS_DEV_SOURCE_URL}
+            )
         return saved
     except Exception as exc:
         _sync_state_error(state, exc)

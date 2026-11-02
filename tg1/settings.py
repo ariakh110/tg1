@@ -304,6 +304,7 @@ CELERY_BEAT_SCHEDULE = {
         "task": "sales.tasks.expire_delivery_offers",
         "schedule": 60.0,
     },
+    "products-sync-ime-live": {"task": "products.tasks.sync_ime_live", "schedule": 60.0},
     "products-sync-ime-market-daily": {
         "task": "products.tasks.sync_ime_market",
         "schedule": 300.0,

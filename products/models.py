@@ -479,6 +479,7 @@ class ProductPriceSnapshot(models.Model):
 
 
 class MarketDataSyncState(models.Model):
+    lease_token = models.CharField(max_length=36, blank=True, default="")
     class Status(models.TextChoices):
         NEVER = "never", "Never"
         RUNNING = "running", "Running"
