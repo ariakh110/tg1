@@ -1,4 +1,22 @@
-# Current engineering handoff: angle/channel seed implementation
+# Current engineering handoff: catalog board and amount-only editing
+
+2026-11-06: owner approved «بله، همین طرح را اجرا کن». Workflow task
+`catalog-board-price-only`; implementation on existing dev-ariakhayer branches.
+Backend48fa9ea/594902c/1ee3b9e/35fa37a; frontendbaff473/15b2225/e74ca20. Factory/family responsive
+board plus exact existing-tier amount-only editor implemented; no schema change.
+511 isolated Django tests,93 Node tests, touched ESLint and native Next build pass
+after one independent review and one six-finding TDD fix pass.14 local browser
+scenarios passed before final fixes; final browser/device smoke remains a release
+check because additional preview execution was blocked by host policy, not bypassed.
+No unresolved Important/Critical from review; two declared Minor notes remain.
+Query workflow status and final reports before continuing with integration.
+Task handoff: HANDOFF-CATALOG-BOARD.md. Reports: reports/catalog-board-*.md.
+Do not upload verification `.next` (built with loopback fixture URLs); build from
+source with real server environment only after separately authorized release.
+No live writes/deploy/provider sends/merge/push. Frontend unrelated HANDOFF.md and
+PURCHASE_INQUIRY_CURRENT_STATE.fa.md edits remain preserved and uncommitted.
+
+## Previous completed task: angle/channel seed implementation
 
 2026-11-05: user approved the offered design/implementation with «بله» and delegated
 workspace choice. Current dev-ariakhayer checkout retained. Implementation and 501

@@ -45,6 +45,10 @@ and execution. Local changes only; no deployment, production writes or sends.
   deprecation warning remains outside this feature. API base was loopback-only.
 - Independent review/fix outcome is recorded separately, not inferred from tests.
 
+A proposed extra production-preview server run was blocked by the host execution
+policy; it was not retried or bypassed. Browser receipts above are for `next dev`,
+and production build success is a separate check, not a production-browser claim.
+
 Screenshots in `catalog-board-visual/` are local fixture evidence, not deployed UI.
 No new dependency or schema migration. Both backend and frontend must be released
 together: the editor requires the new exact-tier API. Deploy is a separate choice.
