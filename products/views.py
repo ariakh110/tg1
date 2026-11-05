@@ -296,6 +296,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         if self.action == "list":
             return queryset.filter(is_active=True)
+        if self.action == "retrieve" and not request_has_admin_access(self.request, self):
+            return queryset.filter(is_active=True)
         return queryset
 
     def _filtered_admin_queryset(self):

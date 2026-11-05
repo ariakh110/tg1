@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-05",
+  "task": "angle-channel-catalog-seed",
+  "stage": "design_approval",
+  "finished": false,
+  "checkpoint": "1f1d92c4-be6a-6fa7-8005-18d204c984ba",
+  "application_importer_implemented": false,
+  "live_database_imported": false,
+  "release_hook_installed": false,
+  "matrix_extended": false,
+  "archive": {
+    "name": "farda-seed-review-2026-11-05.zip",
+    "bytes": 41363,
+    "sha256": "d515e8e34b47b9788f05d7d92c9c768cc699aa7ad4236ab7df43203e6ae35228",
+    "entries": 12,
+    "verified_manifest_file_hashes": 11
+  },
+  "review": "Same-coordinator data/design review, not an independent review or application import validation",
+  "next_action": "Obtain explicit design approval of independent angle/channel families, angle millimeter interpretation and inactive/inquiry/noindex defaults; then write and test the offline atomic create-only importer and reviewed one-shot update hook."
+}

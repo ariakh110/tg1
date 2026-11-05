@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-05",
+  "scope": "Offline research preparation and model field compatibility only; no application importer, live import, UI matrix change or release verification",
+  "checks": [
+    {
+      "command": "& .venv/Scripts/python.exe -X utf8 -m unittest discover -s docs/engineering/research/farda-angle-channel -p test_catalog.py -v",
+      "exit_code": 0,
+      "output": "test_all_source_rows_accounted_for (test_catalog.CatalogTests.test_all_source_rows_accounted_for) ... ok\r\ntest_decimal_notation_and_no_cartesian_invention (test_catalog.CatalogTests.test_decimal_notation_and_no_cartesian_invention) ... ok\r\ntest_grade_header_is_not_silently_dropped (test_catalog.CatalogTests.test_grade_header_is_not_silently_dropped) ... ok\r\ntest_invalid_unit_and_length_quarantined (test_catalog.CatalogTests.test_invalid_unit_and_length_quarantined) ... ok\r\ntest_safe_publication_and_no_foreign_price_or_offer (test_catalog.CatalogTests.test_safe_publication_and_no_foreign_price_or_offer) ... ok\r\ntest_saved_candidate_is_reproducible (test_catalog.CatalogTests.test_saved_candidate_is_reproducible) ... ok\r\ntest_seo_bounds_and_owned_canonical (test_catalog.CatalogTests.test_seo_bounds_and_owned_canonical) ... ok\r\ntest_unique_keys_slugs_and_scope (test_catalog.CatalogTests.test_unique_keys_slugs_and_scope) ... ok\r\n\r\n----------------------------------------------------------------------\r\nRan 8 tests in 0.030s\r\n\r\nOK\r\n"
+    },
+    {
+      "command": "& .venv/Scripts/python.exe docs/engineering/research/farda-angle-channel/validate_models.py",
+      "exit_code": 0,
+      "output": "{\"status\": \"pass\", \"candidate_products\": 149, \"categories\": 8, \"controlled_options\": 18, \"scope\": \"Model field names, value types, choices and lengths only; no database writes, relation lookup or seed-import execution\"}\r\n"
+    },
+    {
+      "command": "& .venv/Scripts/python.exe manage.py check --settings=tg1.settings_test",
+      "exit_code": 0,
+      "output": "System check identified no issues (0 silenced).\r\n"
+    },
+    {
+      "command": "node 'C:/Users/aria/AppData/Local/npm-cache/_npx/20f2b75ddc8bce88/node_modules/@fission-ai/openspec/bin/openspec.js' validate add-angle-channel-catalog-seed --strict",
+      "exit_code": 0,
+      "output": "Change 'add-angle-channel-catalog-seed' is valid\n"
+    }
+  ],
+  "red_green_evidence": [
+    "Initial missing prepare_seed import failed before compiler creation.",
+    "Collector grade-header fixture failed with 0 tables instead of 1; collector corrected and regression passed."
+  ]
+}

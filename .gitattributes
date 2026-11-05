@@ -2,6 +2,7 @@
 *.sqlite3 export-ignore
 *.dump export-ignore
 *.sh text eol=lf
+products/data/farda_sections_v1.json -text
 
 # Keep shared agent tools portable across Windows and Unix.
 .agents/** text eol=lf

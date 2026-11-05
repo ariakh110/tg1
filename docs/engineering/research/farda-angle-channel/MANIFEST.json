@@ -1,0 +1,61 @@
+{
+  "date": "2026-11-05",
+  "purpose": "review-only catalog seed candidate, not an installer",
+  "files": [
+    {
+      "name": "collect_catalog.py",
+      "sha256": "6fa09cef475cdd1fa9583ecb4a9d6dacbaba5269f1eb044ae68aa81d768d4390",
+      "bytes": 4229
+    },
+    {
+      "name": "prepare_seed.py",
+      "sha256": "df4ba2b9173de62728e1df088ff806419eb70824b4952873aa8959bb15f7b326",
+      "bytes": 10417
+    },
+    {
+      "name": "products-review.csv",
+      "sha256": "132b6d891b27d0302d56e7f0dd68f1a9fac8999c1ede1eb6265dfbb9dc1b01a8",
+      "bytes": 124101
+    },
+    {
+      "name": "quarantine-review.csv",
+      "sha256": "bad1b1971081da30092516f09e7a827b0ac0257a72945282bc92accf82a82b90",
+      "bytes": 1347
+    },
+    {
+      "name": "README.fa.md",
+      "sha256": "df86a1a6402bb9c0d5b20db22cf61a387d8639a2a40dd05e0d694cf21d02a13a",
+      "bytes": 7595
+    },
+    {
+      "name": "seed-candidate.json",
+      "sha256": "e9d903b8fe338bee4d72767311e9e236daf73f949280449af9fb750f19affa57",
+      "bytes": 747661
+    },
+    {
+      "name": "SELF-EVALUATION.md",
+      "sha256": "b6605c8f2ccb64e5c949dcfa2f7300dc0b3b6c829439deb500e1db0de7edb932",
+      "bytes": 1767
+    },
+    {
+      "name": "source-catalog.json",
+      "sha256": "8c3a9753140c3c9f5d51250b5b014b4e9a57c284fe784db12c181d905f187ebb",
+      "bytes": 134342
+    },
+    {
+      "name": "test_catalog.py",
+      "sha256": "dd8272699fd6c3754c84b4db367e411455d27785f048819212f1a4de81e1b26d",
+      "bytes": 4699
+    },
+    {
+      "name": "validate_models.py",
+      "sha256": "31ca37f65c432d5edc412f01ea5529927407b4468b4d8fa0f289762dc14e9e16",
+      "bytes": 1625
+    },
+    {
+      "name": "VALIDATION.json",
+      "sha256": "77d7ede0383a1d10d21757d81a6b05ca015750af999b3f0b0aa46202d57967cf",
+      "bytes": 2583
+    }
+  ]
+}
