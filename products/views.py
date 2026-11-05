@@ -246,7 +246,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "offers__seller",
         "offers__pricing_tiers",
         "offers__delivery_options",
-        "dynamic_specs",
+        "dynamic_specs__attribute",
         "related_products",
     ).annotate(min_price=Min('offers__pricing_tiers__unit_price'))  # حداقل قیمت از بین offers -> pricing_tiers
     permission_classes = [IsAdminOrReadOnly]

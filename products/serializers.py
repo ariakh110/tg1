@@ -627,6 +627,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     # نمایش خلاصه محصول (لیست)
     category = ProductCategorySerializer(read_only=True)
     specification = ProductSpecificationSerializer(source="specifications", read_only=True)
+    dynamic_specs = SpecificationValueSerializer(many=True, read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
     documents = ProductDocumentSerializer(many=True, read_only=True)
     offers = OfferReadSerializer(many=True, read_only=True)
@@ -655,6 +656,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "specification",
+            "dynamic_specs",
             "images",
             "documents",
             "offers",

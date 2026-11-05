@@ -1,0 +1,40 @@
+{
+  "checks": [
+    "desktop rebar",
+    "desktop sheet",
+    "desktop angle",
+    "desktop channel",
+    "desktop pipe",
+    "desktop profile",
+    "desktop beam",
+    "desktop billet",
+    "desktop custom-market",
+    "mobile rebar",
+    "mobile angle",
+    "mobile channel",
+    "mobile custom-market",
+    "admin paginated exact-tier save / blank guard / stale error"
+  ],
+  "errors": [],
+  "unexpected": [],
+  "writes": [
+    {
+      "prices": [
+        {
+          "tier_id": 7,
+          "price": "52000.50",
+          "expected_price": "50000.25"
+        }
+      ]
+    },
+    {
+      "prices": [
+        {
+          "tier_id": 7,
+          "price": "55000",
+          "expected_price": "52000.50"
+        }
+      ]
+    }
+  ]
+}
