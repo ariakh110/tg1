@@ -5,7 +5,7 @@ Keep receipts when removing products. Preview does not execute any writes.
 """
 import hashlib
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from django.core.exceptions import ValidationError
@@ -65,9 +65,22 @@ def _identity(category_code, specs, nominal):
     return (category_code, *values, nominal)
 
 
+def _nominal_value(value):
+    """Normalize identity only; never convert nominal size to measured height."""
+    text = str(value).strip()
+    try:
+        number = Decimal(text)
+        if number.is_finite():
+            return ('number', number)
+    except InvalidOperation:
+        pass
+    return ('text', text)
+
+
 def _row_identity(row):
     specs = {**row['specifications'], 'standard_id': row['specifications']['standard']}
-    nominal = tuple(sorted((v['name'], v['unit'] or '', v['value']) for v in row['dynamic_specs']))
+    nominal = tuple(sorted((v['name'], v['unit'] or '', _nominal_value(v['value']))
+                           for v in row['dynamic_specs']))
     return _identity(row['category_code'], specs, nominal)
 
 
@@ -78,7 +91,7 @@ def _product_identity(product):
         return None
     # Extra enrichment is not a reason to duplicate a product. Nominal size is
     # an identity component, but unrelated dynamic attributes and weight aren't.
-    nominal = tuple(sorted((v.attribute.name, v.attribute.unit or '', v.value)
+    nominal = tuple(sorted((v.attribute.name, v.attribute.unit or '', _nominal_value(v.value))
                            for v in product.dynamic_specs.all() if v.attribute.name == NOMINAL_NAME))
     return _identity(product.category.code if product.category else None,
                      {f: getattr(spec, f) for f in IDENTITY_FIELDS}, nominal)
@@ -121,7 +134,7 @@ def _preflight(package, digest):
                 conflict('category', item['code'])
     for item in package['factory_options'] + package['grade_options']:
         matches = list(ProductAttributeOption.objects.filter(
-            group=item['group'], value=item['value'], product_kind=item['product_kind'],
+            group=item['group'], value__iexact=item['value'], product_kind=item['product_kind'],
             parent__isnull=True))
         if matches and (len(matches) != 1 or any((
             matches[0].label != item['label'], matches[0].product_kind != item['product_kind'],
@@ -189,7 +202,7 @@ def _create(package, report, actor):
         categories[item['code']] = category
     for item in package['factory_options'] + package['grade_options']:
         if not ProductAttributeOption.objects.filter(
-            group=item['group'], value=item['value'], product_kind=item['product_kind'],
+            group=item['group'], value__iexact=item['value'], product_kind=item['product_kind'],
             parent__isnull=True).exists():
             ProductAttributeOption.objects.create(**item)
     attribute = SpecificationAttribute.objects.filter(name=NOMINAL_NAME).first()

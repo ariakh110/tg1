@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import Product
 from .serializers import ProductSummarySerializer  # فقط برای الهام، اینجا خلاصه می‌سازیم
 from .filters import ProductFilter
+from accounts.permissions import IsAdminOrActiveAdminRole
 
 
 class SummaryPagination(PageNumberPagination):
@@ -29,11 +30,14 @@ class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["id"]
 
     def get_queryset(self):
-        return (
+        queryset = (
             Product.objects.annotate(
                 min_price=Min("offers__pricing_tiers__unit_price")
             )
             .select_related("category", "specifications")
             .prefetch_related("offers", "images", "offers__delivery_options")
         )
+        if not IsAdminOrActiveAdminRole().has_permission(self.request, self):
+            queryset = queryset.filter(is_active=True)
+        return queryset
 

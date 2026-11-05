@@ -707,6 +707,11 @@ class ProductSpecificationViewSet(viewsets.ModelViewSet):
     ]
     search_fields = ["steel_grade", "material_type", "surface_finish", "manufacturing_process"]
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ("list", "retrieve") and not request_has_admin_access(self.request, self):
+            return queryset.filter(product__is_active=True)
+        return queryset
 
     def perform_create(self, serializer):
         product = serializer.validated_data["product"]
@@ -831,6 +836,12 @@ class SpecificationValueViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["product", "attribute"]
     search_fields = ["value"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ("list", "retrieve") and not request_has_admin_access(self.request, self):
+            return queryset.filter(product__is_active=True)
+        return queryset
 
 
 # ---------------- ProductImageViewSet ----------------

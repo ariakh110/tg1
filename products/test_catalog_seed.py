@@ -13,7 +13,9 @@ from products.models import (
     Product, ProductCategory, ProductSpecification, ProductAttributeOption,
     SpecificationAttribute, SpecificationValue, ProductAuditLog, Offer, PricingTier,
 )
-from products.views import ProductViewSet
+from products.views import ProductViewSet, ProductSpecificationViewSet, SpecificationValueViewSet
+from products.api_views import ProductSummaryViewSet
+from products.serializers import ProductAttributeOptionSerializer
 
 
 class CatalogSeedTests(TestCase):
@@ -216,3 +218,92 @@ class CatalogSeedTests(TestCase):
         self.assertEqual(response.data['seo_title'], product.seo_title)
         self.assertEqual(response.data['page_h1'], product.page_h1)
         self.assertEqual(response.data['offers'], [])
+
+    def test_public_related_list_and_detail_surfaces_hide_inactive_seed(self):
+        seed_sections(apply=True, actor='test')
+        channel = Product.objects.filter(specifications__material_type='channel').first()
+        active = Product.objects.create(name='Published', slug='published', is_active=True)
+        spec = ProductSpecification.objects.create(product=active, material_type='channel')
+        nominal = channel.dynamic_specs.get()
+        value = SpecificationValue.objects.create(product=active, attribute=nominal.attribute, value='99')
+        factory = APIRequestFactory()
+        normal_user = get_user_model().objects.create_user('catalog-reader')
+        admin = get_user_model().objects.create_superuser('seed-reader-admin', 'admin@example.test', 'pw')
+        for view_class, hidden_id, active_id in (
+            (ProductSummaryViewSet, channel.pk, active.pk),
+            (ProductSpecificationViewSet, channel.specifications.pk, spec.pk),
+            (SpecificationValueViewSet, nominal.pk, value.pk),
+        ):
+            with self.subTest(surface=view_class.__name__):
+                for user in (None, normal_user, admin):
+                    request = factory.get('/?page_size=1000')
+                    if user:
+                        force_authenticate(request, user=user)
+                    response = view_class.as_view({'get': 'list'}, pagination_class=None)(request)
+                    self.assertEqual(response.status_code, 200)
+                    rows = response.data.get('results', []) if isinstance(response.data, dict) else response.data
+                    ids = {r['id'] for r in rows}
+                    self.assertIn(active_id, ids)
+                    self.assertEqual(hidden_id in ids, user == admin)
+                    request = factory.get('/')
+                    if user:
+                        force_authenticate(request, user=user)
+                    detail = view_class.as_view({'get': 'retrieve'})(request, pk=hidden_id)
+                    self.assertEqual(detail.status_code, 200 if user == admin else 404)
+
+    def test_seed_grade_options_and_existing_billet_grade_remain_editable(self):
+        seed_sections(apply=True, actor='test')
+        for kind, value in (('angle', '5SP'), ('angle', 'ST52'), ('billet', '5SP')):
+            option = ProductAttributeOption.objects.get(group='steel_grade', product_kind=kind,
+                                                        value=value, parent=None)
+            serializer = ProductAttributeOptionSerializer(option, data={'sort_order': 77}, partial=True)
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            serializer.save()
+            option.refresh_from_db()
+            self.assertEqual(option.sort_order, 77)
+        duplicate = ProductAttributeOptionSerializer(data={
+            'group': 'steel_grade', 'product_kind': 'angle', 'value': '5sp', 'label': 'duplicate'})
+        self.assertFalse(duplicate.is_valid())
+
+    def test_case_variant_existing_factory_option_is_reused_unchanged(self):
+        item = self.package['factory_options'][0]
+        option = ProductAttributeOption.objects.create(**{**item, 'value': item['value'].upper()})
+        seed_sections(apply=True, actor='test')
+        self.assertEqual(ProductAttributeOption.objects.filter(group=item['group'],
+            product_kind=item['product_kind'], value__iexact=item['value'], parent=None).count(), 1)
+        option.refresh_from_db()
+        self.assertEqual(option.value, item['value'].upper())
+
+    def test_case_variant_duplicate_factory_options_block_whole_batch(self):
+        item = self.package['factory_options'][0]
+        ProductAttributeOption.objects.create(**item)
+        ProductAttributeOption.objects.create(**{**item, 'value': item['value'].upper()})
+        before = self.counts()
+        with self.assertRaises(SeedError):
+            seed_sections(apply=True, actor='test')
+        self.assertEqual(self.counts(), before)
+
+    def nominal_row(self):
+        return next(r for r in self.package['products']
+                    if r['dynamic_specs'] and r['dynamic_specs'][0]['value'] == '6.5')
+
+    def test_equivalent_numeric_nominal_identity_is_reused_without_rewriting(self):
+        row = self.nominal_row()
+        product = self.existing(row)
+        product.dynamic_specs.update(value='6.50')
+        self.assertEqual(seed_sections()['skipped_count'], 1)
+        report = seed_sections(apply=True, actor='test')
+        self.assertEqual(report['created_count'], 148)
+        self.assertEqual(product.dynamic_specs.get().value, '6.50')
+
+    def test_two_equivalent_numeric_nominal_identities_are_atomic_conflict(self):
+        row = self.nominal_row()
+        product = self.existing(row)
+        other = Product.objects.create(category=product.category, name='Same size', slug='second-nominal')
+        ProductSpecification.objects.create(product=other, **row['specifications'])
+        SpecificationValue.objects.create(product=other, attribute=product.dynamic_specs.get().attribute,
+                                          value='6.50')
+        before = self.counts()
+        with self.assertRaises(SeedError):
+            seed_sections(apply=True, actor='test')
+        self.assertEqual(self.counts(), before)

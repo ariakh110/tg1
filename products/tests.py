@@ -859,7 +859,15 @@ class AdminProductImportTests(APITestCase):
         index_states = {item["id"]: item["is_indexable"] for item in res.data["results"]}
         self.assertFalse(index_states[low_information.id])
         self.assertTrue(index_states[forced_index.id])
-        self.assertFalse(index_states[inactive.id])
+        self.assertNotIn(inactive.id, index_states)
+
+        # Publication filtering hides drafts from public feeds; an admin preview
+        # still exposes the effective noindex state of an inactive product.
+        self.client.force_authenticate(self.admin)
+        admin_res = self.client.get("/api/products-summary/", {"page_size": 1000})
+        self.assertEqual(admin_res.status_code, status.HTTP_200_OK, admin_res.data)
+        admin_states = {item["id"]: item["is_indexable"] for item in admin_res.data["results"]}
+        self.assertFalse(admin_states[inactive.id])
 
     def test_admin_can_manage_category_visual_and_navigation_visibility(self):
         media_root = tempfile.mkdtemp(prefix="category-icons-")

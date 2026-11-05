@@ -242,6 +242,10 @@ class ProductAttributeOptionSerializer(serializers.ModelSerializer):
             value__iexact=value,
             parent=parent,
         )
+        if parent is None:
+            # NULL-parent options are roots of independent product families.
+            # Non-null parents retain the database's group/value/parent scope.
+            duplicate_options = duplicate_options.filter(product_kind=product_kind)
         if self.instance is not None:
             duplicate_options = duplicate_options.exclude(pk=self.instance.pk)
         if duplicate_options.exists():
