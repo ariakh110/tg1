@@ -5,6 +5,7 @@ import shutil
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from decimal import Decimal
 from django.core.management import call_command
 from django.utils import timezone
 from PIL import Image
@@ -1118,7 +1119,7 @@ class AdminProductImportTests(APITestCase):
         self.assertEqual(product.availability_status, Product.AVAILABILITY_INQUIRY)
         self.assertFalse(PricingTier.objects.filter(offer__product=product).exists())
 
-    def test_admin_bulk_price_blank_clears_price_only(self):
+    def test_admin_bulk_price_blank_is_rejected_without_any_catalog_change(self):
         category = ProductCategory.objects.get(code="sheet-black-mobarakeh")
         product = Product.objects.create(
             category=category,
@@ -1163,16 +1164,15 @@ class AdminProductImportTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
-        self.assertEqual(res.data["updated_prices"], 1)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, res.data)
         product.refresh_from_db()
         self.assertEqual(product.name, "Bulk blank price product")
         self.assertEqual(product.description, "Keep description")
-        self.assertEqual(product.availability_status, Product.AVAILABILITY_INQUIRY)
+        self.assertEqual(product.availability_status, Product.AVAILABILITY_IN_STOCK)
         self.assertEqual(product.specifications.steel_grade, "ST37")
         delivery = offer.delivery_options.get()
         self.assertEqual(delivery.city, "Mobarakeh")
-        self.assertFalse(PricingTier.objects.filter(offer__product=product).exists())
+        self.assertEqual(PricingTier.objects.get(offer__product=product).unit_price, Decimal('45000'))
 
     def test_admin_can_create_coil_without_length_or_price(self):
         self.client.force_authenticate(self.admin)

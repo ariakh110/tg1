@@ -1,0 +1,4 @@
+- [x] Inspect current UI, price entrypoints and references; obtain explicit design approval.
+- [ ] Implement/test atomic existing-tier price-only service, admin endpoints and panel.
+- [ ] Implement/test factory/family board, mobile/desktop visual checks.
+- [ ] Full verification, independent review, fix pass and handoff; no deployment.

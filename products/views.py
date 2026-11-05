@@ -50,6 +50,7 @@ from .admin_import import (
     upsert_product_row,
 )
 from .product_matrix import MatrixError, preview_product_matrix, create_product_matrix
+from .price_updates import price_row, update_prices
 
 # ---------------- Pagination استاندارد برای viewset ها ----------------
 class StandardResultsSetPagination(PageNumberPagination):
@@ -650,34 +651,19 @@ class ProductViewSet(viewsets.ModelViewSet):
         workbook.save(response)
         return response
 
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="admin-bulk-prices",
-        permission_classes=[IsAdminOrActiveAdminRole],
-    )
+    @action(detail=False, methods=["get"], url_path="admin-price-rows",
+            permission_classes=[IsAdminOrActiveAdminRole])
+    def admin_price_rows(self, request):
+        queryset = PricingTier.objects.select_related('offer__product', 'offer__seller').order_by(
+            'offer__product__name', 'offer__seller_id', 'pk')
+        page = self.paginate_queryset(queryset)
+        rows = [price_row(tier) for tier in (page if page is not None else queryset)]
+        return self.get_paginated_response(rows) if page is not None else Response(rows)
+
+    @action(detail=False, methods=["post"], url_path="admin-bulk-prices",
+            permission_classes=[IsAdminOrActiveAdminRole])
     def admin_bulk_prices(self, request):
-        """آپدیت گروهی قیمت محصولات از جدول پنل: prices=[{product_id, price}]."""
-        items = request.data.get("prices")
-        if not isinstance(items, list) or not items:
-            return Response({"detail": "فهرست قیمت‌ها خالی است."}, status=status.HTTP_400_BAD_REQUEST)
-        rows = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            pid = item.get("product_id")
-            if pid in (None, "") or "price" not in item:
-                continue
-            price = item.get("price")
-            rows.append({"product_id": pid, "price": price})
-        if not rows:
-            return Response({"detail": "هیچ قیمت معتبری ارسال نشد."}, status=status.HTTP_400_BAD_REQUEST)
-        result = bulk_upsert_products(
-            rows,
-            default_seller_id=resolve_store_seller_id(request),
-            create_missing=False,
-        )
-        return Response(result, status=status.HTTP_200_OK)
+        return Response(update_prices(request.data.get('prices'), request.user))
 
 
 # ---------------- ProductSpecificationViewSet ----------------
