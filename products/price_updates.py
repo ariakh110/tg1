@@ -40,6 +40,9 @@ def price_row(tier):
         'tier_name': tier.tier_name, 'condition_label': tier.condition_label,
         'price_basis': tier.price_basis, 'unit_price': format(tier.unit_price, '.2f'),
         'minimum_quantity': tier.minimum_quantity, 'maximum_quantity': tier.maximum_quantity,
+        'dimension_width_mm': format(tier.dimension_width_mm, '.2f') if tier.dimension_width_mm is not None else None,
+        'dimension_length_mm': format(tier.dimension_length_mm, '.2f') if tier.dimension_length_mm is not None else None,
+        'is_negotiable': tier.is_negotiable,
         'price_verified_at': tier.price_verified_at.isoformat() if tier.price_verified_at else None,
         'product_active': tier.offer.product.is_active, 'offer_active': tier.offer.is_active,
     }

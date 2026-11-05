@@ -114,6 +114,25 @@ class PriceOnlyTests(APITestCase):
         self.assertEqual(self.post([{'tier_id': self.tier.pk, 'price': '53000'}]).status_code, 403)
         self.assertEqual(self.snapshot(), before)
 
+    def test_admin_rows_preserve_distinguishing_dimension_and_quantity_conditions(self):
+        twin = PricingTier.objects.create(offer=self.offer, tier_name=self.tier.tier_name,
+            unit_price=self.tier.unit_price, price_basis='ton', minimum_quantity=10,
+            maximum_quantity=100, condition_label=self.tier.condition_label,
+            dimension_width_mm='120', dimension_length_mm='240', is_negotiable=False)
+        response = self.client.get('/api/products/admin-price-rows/')
+        self.assertEqual(response.status_code, 200)
+        rows = {row['tier_id']: row for row in response.data['results']}
+        first, second = rows[self.tier.pk], rows[twin.pk]
+        self.assertEqual(first['dimension_width_mm'], '100.00')
+        self.assertEqual(first['dimension_length_mm'], '200.00')
+        self.assertEqual(first['minimum_quantity'], 7)
+        self.assertEqual(first['maximum_quantity'], 99)
+        self.assertTrue(first['is_negotiable'])
+        self.assertEqual(second['dimension_width_mm'], '120.00')
+        self.assertEqual(second['dimension_length_mm'], '240.00')
+        self.assertEqual(second['minimum_quantity'], 10)
+        self.assertFalse(second['is_negotiable'])
+
     def test_write_failure_rolls_back_all_prices_and_audits(self):
         before = self.snapshot()
         original = PricingTier.save
