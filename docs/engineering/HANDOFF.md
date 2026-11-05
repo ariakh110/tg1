@@ -1,17 +1,21 @@
 # Current engineering handoff: angle/channel seed implementation
 
 2026-11-05: user approved the offered design/implementation with «بله» and delegated
-workspace choice. Current dev-ariakhayer checkout retained. Implementation and 495
+workspace choice. Current dev-ariakhayer checkout retained. Implementation and 501
 backend tests pass locally. Command defaults to read-only; release helper previews
 then applies the pinned inactive/noindex/inquiry package once after migrations.
 149 products (84 angles/65 channels), 8 categories, 18 scoped options; no prices,
-offers or invented weights. No schema/matrix change. Public inactive detail now
-404 for non-admin, retaining admin preview, to enforce unpublished defaults.
+offers or invented weights. No schema/matrix change. Public inactive detail,
+summary, specifications and dynamic values are hidden from non-admin, retaining
+admin preview. Scope/case option identity and numeric nominal matching are fixed.
 
 Current report: docs/engineering/reports/farda-seed-implementation.md.
 Plan: docs/superpowers/plans/2026-11-05-farda-sections-seed.md.
 Workflow task: angle-channel-catalog-seed; query tools/engineering.ps1 status before
-continuing. Final independent review/handoff receipts are pending at this snapshot.
+continuing. One independent review and one TDD fix pass completed:3 Important
+fixed;1 Minor (two extra rollback injection locations) deferred. Final full suite
+501/501 (36.177s);53 focused pass. Runtime commits f5eee1f/e68c255/a10fc4e.
+Task-specific final handoff: docs/engineering/HANDOFF-FARDA-SEED.md.
 No live DB import, deployment, provider sends, branch switch/merge or push.
 Preserve audit receipts: replay must not resurrect deleted or edited rows.
 No frontend files changed; its unrelated handoff modifications were preserved.

@@ -10,4 +10,4 @@
 - [x] 2.2 Implement offline atomic create-only seed command with audit and review gating.
 - [x] 2.3 Verify taxonomy/spec/dynamic-size/API/SSR behavior without fake offers and without changing sheet matrices.
 - [x] 2.4 Add and test an explicit one-shot release entrypoint using the reviewed package hash.
-- [ ] 2.5 Complete spec/security reviews and handoff; deployment remains separately authorized.
+- [x] 2.5 Complete spec/security reviews and handoff; deployment remains separately authorized.
