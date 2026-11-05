@@ -161,6 +161,7 @@ if [[ "$TARGET" == "backend" || "$TARGET" == "both" ]]; then
   echo "==> Installing backend dependencies..."
   "$BACKEND_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
   "$BACKEND_PYTHON" manage.py migrate --noinput
+  bash ops/manual_deploy/seed_farda_sections.sh "$BACKEND_PYTHON"
   "$BACKEND_PYTHON" manage.py seed_market_price_snapshots
   if ! "$BACKEND_PYTHON" manage.py sync_external_markets; then
     echo "WARNING: market sync failed; the last successful data remains available. Check admin market settings." >&2

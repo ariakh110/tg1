@@ -29,6 +29,8 @@ sample data, not a safe production catalog importer.
 
 ## Authorization and status
 
-The owner's current request authorizes preparing this data/design for a subsequent
-update. Design approval for the concrete integration is pending; no approval,
-live import, release hook or deployment is represented as completed.
+The owner subsequently approved the concrete integration with «بله» and delegated
+workspace choice. Local implementation now exists (service/CLI/tests and offline
+next-update helper). The earlier preparation wording above is historical; see
+docs/engineering/reports/farda-seed-implementation.md for current verified status.
+No live import, push, merge or deployment was performed or authorized by this work.
