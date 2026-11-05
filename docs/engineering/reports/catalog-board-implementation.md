@@ -41,7 +41,8 @@ and execution. Local changes only; no deployment, production writes or sends.
 - Browser fixture API is loopback-only and contains artificial data, never live data.
   A deliberate stale-price HTTP400 and an aborted background GET are expected.
 - Django system check clean; migration consistency and OpenSpec strict checked.
-- Production frontend build: see final verification/review report for exit status.
+- Native `npm run build` (Next16.4.2/Turbopack): exit0; baseline middleware-to-proxy
+  deprecation warning remains outside this feature. API base was loopback-only.
 - Independent review/fix outcome is recorded separately, not inferred from tests.
 
 Screenshots in `catalog-board-visual/` are local fixture evidence, not deployed UI.

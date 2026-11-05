@@ -9,3 +9,4 @@ products/data/farda_sections_v1.json -text
 .claude/** text eol=lf
 _bmad/** text eol=lf
 docs/engineering/** text eol=lf
+docs/engineering/reports/catalog-board-visual/*.png binary
