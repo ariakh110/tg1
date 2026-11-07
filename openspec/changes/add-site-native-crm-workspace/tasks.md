@@ -11,7 +11,7 @@
 - [ ] 1.2 Add `CrmLead`, source/idempotency fields, qualification state, and lead intake service
 - [x] 1.3 Add `CrmOpportunity` and opportunity stage history with owner, value, need, next action, close reason, and source link
 - [ ] 1.4 Add pipeline-stage configuration and failure reasons with stable system codes
-- [ ] 1.5 Add dedicated assigned follow-ups and migrate existing open activity follow-ups
+- [x] 1.5 Add dedicated assigned follow-ups and migrate existing open activity follow-ups
 - [ ] 1.6 Extend activities with opportunity, direction, result, external key, and attachment metadata
 - [x] 1.7 Add additive schema migration and idempotent backfill for existing direct orders and assistant inquiries
 - [ ] 1.8 Add feature-flag rollout and operational rollback controls
@@ -49,7 +49,7 @@
 
 - [ ] 5.1 Add follow-up sequences, CRM message templates, contact consent, campaigns, and task rules
 - [ ] 5.2 Add typed custom field definitions/values with server validation
-- [ ] 5.3 Add whitelisted automation triggers/actions, idempotency, retry, and execution audit
+- [x] 5.3 Add whitelisted automation triggers/actions, idempotency, retry, and execution audit
 - [ ] 5.4 Add SLA reminders, overdue escalation, lifecycle scoring, and daily/weekly Bale reports
 
 ## 6. Excel Round-Trip (Lower Priority)

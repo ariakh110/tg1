@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrActiveAdminRole, IsFullAdminUser
-from customers.models import Customer
+from customers.models import CrmContactChannel, Customer
 
 from . import service
 from .models import BaleUserBinding, MessagingContactGroup, MessagingSettings, OutboundMessage
@@ -41,6 +41,19 @@ KAVENEGAR_STATUS_MAP = {
 }
 
 
+def _crm_customer_for_phone(raw_phone):
+    normalized = service.normalize_phone(raw_phone)
+    if len(normalized) != 11 or not normalized.startswith("09"):
+        return None
+    variants = [
+        normalized,
+        f"+98{normalized[1:]}",
+        f"98{normalized[1:]}",
+        f"0098{normalized[1:]}",
+    ]
+    return Customer.objects.filter(phone__in=variants).order_by("pk").first()
+
+
 class MessagingSettingsView(APIView):
     """خواندن/به‌روزرسانیِ تنظیماتِ پیام‌رسانی (فقط ادمین)."""
 
@@ -66,9 +79,15 @@ class MessagingSendView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else {}
+        if data.get("confirmed") is not True:
+            return Response({"detail": "پیش از ارسال، گیرنده و متن را صریحاً تأیید کنید."}, status=400)
         message = str(data.get("message", "")).strip()[:MAX_BODY_LEN]
         if not message:
             return Response({"detail": "متنِ پیام خالی است."}, status=status.HTTP_400_BAD_REQUEST)
+
+        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
+            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
 
         customer = None
         recipient = str(data.get("recipient", "")).strip()
@@ -77,13 +96,30 @@ class MessagingSendView(APIView):
             customer = Customer.objects.filter(pk=customer_id).first()
             if not customer:
                 return Response({"detail": "مشتری یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
+            if not customer.is_active:
+                return Response({"detail": "ارسال به مشتری غیرفعال مجاز نیست."}, status=400)
             recipient = customer.phone
+        elif recipient:
+            customer = _crm_customer_for_phone(recipient)
+            if customer:
+                if not customer.is_active:
+                    return Response({"detail": "ارسال به مشتری غیرفعال مجاز نیست."}, status=400)
+                recipient = customer.phone
         if not recipient:
             return Response({"detail": "گیرنده (customer_id یا recipient) لازم است."}, status=status.HTTP_400_BAD_REQUEST)
-
-        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
-        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
-            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+        expected_recipient = service.normalize_phone(data.get("expected_recipient"))
+        if not expected_recipient or expected_recipient != service.normalize_phone(recipient):
+            return Response(
+                {"detail": "شماره پس از تأیید تغییر کرده است؛ گیرنده را دوباره بررسی و ارسال را تأیید کن."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if customer and not CrmContactChannel.objects.filter(
+            customer=customer, channel=channel, consent=CrmContactChannel.CONSENT_GRANTED
+        ).exists():
+            return Response(
+                {"detail": "رضایت ارسال این کانال در پرونده مشتری ثبت نشده یا لغو شده است."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if channel == OutboundMessage.CHANNEL_BALE:
             msg = service.send_bale(recipient, message, customer=customer, created_by=request.user)
         else:
@@ -99,7 +135,10 @@ class MessagingAudiencePreviewView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else {}
-        audience = service.resolve_audience(data)
+        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
+            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+        audience = service.resolve_audience(data, channel=channel)
         if not audience["selector_count"]:
             return Response(
                 {"detail": "حداقل یک مشتری، گروه، دسته محصول یا فیلتر مخاطب انتخاب کنید."},
@@ -117,22 +156,35 @@ class MessagingBulkSendView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else {}
+        if data.get("confirmed") is not True:
+            return Response({"detail": "پیش از ارسال، مخاطبان و متن کمپین را صریحاً تأیید کنید."}, status=400)
         message = str(data.get("message", "")).strip()[:MAX_BODY_LEN]
         if not message:
             return Response({"detail": "متنِ پیام خالی است."}, status=status.HTTP_400_BAD_REQUEST)
 
-        audience = service.resolve_audience(data)
+        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
+        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
+            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+        audience = service.resolve_audience(data, channel=channel)
         if not audience["selector_count"]:
             return Response(
                 {"detail": "حداقل یک مشتری، گروه، دسته محصول یا فیلتر مخاطب انتخاب کنید."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not audience["valid_count"]:
-            return Response({"detail": "هیچ مشتریِ منطبقی یافت نشد."}, status=status.HTTP_400_BAD_REQUEST)
-
-        channel = str(data.get("channel", OutboundMessage.CHANNEL_SMS)).strip() or OutboundMessage.CHANNEL_SMS
-        if channel not in (OutboundMessage.CHANNEL_SMS, OutboundMessage.CHANNEL_BALE):
-            return Response({"detail": "کانال ارسال نامعتبر است."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "detail": "هیچ مخاطب دارای رضایت معتبر برای این کانال یافت نشد.",
+                    "consent_excluded_count": audience["consent_excluded_count"],
+                    "consent_excluded_by_reason": audience["consent_excluded_by_reason"],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if data.get("expected_audience_hash") != audience["audience_hash"]:
+            return Response(
+                {"detail": "مخاطبان یا رضایت کانال پس از پیش‌نمایش تغییر کرده‌اند؛ دوباره پیش‌نمایش بگیر."},
+                status=status.HTTP_409_CONFLICT,
+            )
         campaign_limit = (
             MAX_BALE_CAMPAIGN_RECIPIENTS
             if channel == OutboundMessage.CHANNEL_BALE
@@ -174,7 +226,10 @@ class MessagingBulkSendView(APIView):
         summary.pop("messages", None)  # خلاصه برگردان، نه همهٔ ردیف‌ها
         summary["audience"] = {
             key: audience[key]
-            for key in ("valid_count", "invalid_count", "duplicate_count", "source_counts")
+            for key in (
+                "valid_count", "invalid_count", "duplicate_count", "source_counts",
+                "consent_excluded_count", "consent_excluded_by_reason",
+            )
         }
         return Response(summary, status=status.HTTP_201_CREATED)
 
@@ -225,9 +280,21 @@ class MessagingNotifyStepView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else {}
+        if data.get("confirmed") is not True:
+            return Response({"detail": "پیش از ارسال پیام مرحله خرید، آن را صریحاً تأیید کنید."}, status=400)
         customer = Customer.objects.filter(pk=data.get("customer_id")).first()
         if not customer:
             return Response({"detail": "مشتری یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
+        if not customer.is_active:
+            return Response({"detail": "ارسال به مشتری غیرفعال مجاز نیست."}, status=400)
+        if service.normalize_phone(data.get("expected_recipient")) != service.normalize_phone(customer.phone):
+            return Response({"detail": "شماره مشتری پس از تأیید تغییر کرده است؛ دوباره بررسی کن."}, status=409)
+        if not CrmContactChannel.objects.filter(
+            customer=customer,
+            channel=OutboundMessage.CHANNEL_SMS,
+            consent=CrmContactChannel.CONSENT_GRANTED,
+        ).exists():
+            return Response({"detail": "رضایت پیامک این مشتری ثبت نشده یا لغو شده است."}, status=403)
         step = str(data.get("step", "")).strip()
         if step not in service.PURCHASE_STEPS:
             return Response(

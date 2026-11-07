@@ -1,8 +1,13 @@
 from rest_framework.routers import DefaultRouter
+from django.urls import path
 
 from .views import (
     CrmOpportunityViewSet,
     CrmSyncEventViewSet,
+    CrmAutomationRunViewSet,
+    CrmFollowUpViewSet,
+    CrmTaskViewSet,
+    CrmWorkQueueView,
     CustomerActivityViewSet,
     CustomerTransactionViewSet,
     CustomerViewSet,
@@ -14,6 +19,9 @@ router.register(r"transactions", CustomerTransactionViewSet, basename="crm-trans
 router.register(r"activities", CustomerActivityViewSet, basename="crm-activity")
 router.register(r"opportunities", CrmOpportunityViewSet, basename="crm-opportunity")
 router.register(r"sync-events", CrmSyncEventViewSet, basename="crm-sync-event")
+router.register(r"tasks", CrmTaskViewSet, basename="crm-task")
+router.register(r"follow-ups", CrmFollowUpViewSet, basename="crm-follow-up")
+router.register(r"automation-runs", CrmAutomationRunViewSet, basename="crm-automation-run")
 
 app_name = "customers"
-urlpatterns = router.urls
+urlpatterns = [path("work-queue/", CrmWorkQueueView.as_view(), name="crm-work-queue"), *router.urls]

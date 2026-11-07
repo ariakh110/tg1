@@ -232,6 +232,14 @@ class CustomerActivity(models.Model):
         related_name="activities",
         verbose_name="مشتری",
     )
+    opportunity = models.ForeignKey(
+        "CrmOpportunity",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="activities",
+        verbose_name="فرصت فروش",
+    )
     kind = models.CharField(
         max_length=10,
         choices=KIND_CHOICES,
@@ -244,6 +252,21 @@ class CustomerActivity(models.Model):
         default="",
         verbose_name="شرح",
         help_text="چه گفته شد / نتیجه چه بود.",
+    )
+    direction = models.CharField(
+        max_length=10,
+        choices=[("inbound", "دریافتی"), ("outbound", "ارسالی"), ("internal", "داخلی")],
+        default="internal",
+        db_index=True,
+        verbose_name="جهت تعامل",
+    )
+    result = models.CharField(max_length=120, blank=True, default="", verbose_name="نتیجه")
+    external_message_key = models.CharField(
+        max_length=180,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="شناسه پیام بیرونی",
     )
     occurred_at = models.DateTimeField(
         default=timezone.now,
@@ -434,6 +457,187 @@ class CrmOpportunity(models.Model):
 
     def __str__(self):
         return f"{self.title} - {self.get_stage_display()}"
+
+
+class CrmFollowUp(models.Model):
+    """A durable, assignable customer follow-up, optionally linked to its timeline activity."""
+
+    STATUS_PENDING = "pending"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "در انتظار"),
+        (STATUS_COMPLETED, "انجام‌شده"),
+        (STATUS_CANCELLED, "لغوشده"),
+    ]
+    CHANNEL_CALL = "call"
+    CHANNEL_SMS = "sms"
+    CHANNEL_BALE = "bale"
+    CHANNEL_MEETING = "meeting"
+    CHANNEL_OTHER = "other"
+    CHANNEL_CHOICES = [
+        (CHANNEL_CALL, "تماس"),
+        (CHANNEL_SMS, "پیامک"),
+        (CHANNEL_BALE, "بله"),
+        (CHANNEL_MEETING, "جلسه"),
+        (CHANNEL_OTHER, "سایر"),
+    ]
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="crm_follow_ups")
+    opportunity = models.ForeignKey(
+        CrmOpportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_follow_ups"
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_follow_ups"
+    )
+    source_activity = models.OneToOneField(
+        CustomerActivity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_follow_up",
+    )
+    title = models.CharField(max_length=255, blank=True, default="", verbose_name="اقدام بعدی")
+    channel = models.CharField(max_length=12, choices=CHANNEL_CHOICES, default=CHANNEL_CALL)
+    due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    result = models.TextField(blank=True, default="")
+    reminder_metadata = models.JSONField(default=dict, blank=True)
+    idempotency_key = models.CharField(max_length=180, unique=True, null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["due_at", "created_at", "id"]
+        indexes = [models.Index(fields=["status", "due_at"]), models.Index(fields=["owner", "status", "due_at"])]
+        verbose_name = "پیگیری CRM"
+        verbose_name_plural = "پیگیری‌های CRM"
+
+
+class CrmTask(models.Model):
+    """Internal CRM work. Tasks never send an external message."""
+
+    STATUS_OPEN = "open"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (STATUS_OPEN, "باز"),
+        (STATUS_COMPLETED, "انجام‌شده"),
+        (STATUS_CANCELLED, "لغوشده"),
+    ]
+
+    customer = models.ForeignKey(
+        Customer, null=True, blank=True, on_delete=models.CASCADE, related_name="crm_tasks"
+    )
+    opportunity = models.ForeignKey(
+        CrmOpportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_tasks"
+    )
+    source_order_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_tasks"
+    )
+    title = models.CharField(max_length=240)
+    description = models.TextField(blank=True, default="")
+    trigger = models.CharField(max_length=40, blank=True, default="", db_index=True)
+    due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_OPEN, db_index=True)
+    result = models.TextField(blank=True, default="")
+    idempotency_key = models.CharField(max_length=180, unique=True, null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["due_at", "created_at", "id"]
+        indexes = [models.Index(fields=["status", "due_at"]), models.Index(fields=["owner", "status", "due_at"])]
+        verbose_name = "کار CRM"
+        verbose_name_plural = "کارهای CRM"
+
+
+class CrmAutomationRun(models.Model):
+    """Durable audit and retry record for the small CRM automation whitelist."""
+
+    TRIGGER_CUSTOMER_CREATED = "customer.created"
+    TRIGGER_OPPORTUNITY_STAGE_CHANGED = "opportunity.stage_changed"
+    TRIGGER_CHOICES = [
+        (TRIGGER_CUSTOMER_CREATED, "سرنخ جدید"),
+        (TRIGGER_OPPORTUNITY_STAGE_CHANGED, "تغییر مرحله فرصت"),
+    ]
+    STATUS_PENDING = "pending"
+    STATUS_PROCESSING = "processing"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "در انتظار"),
+        (STATUS_PROCESSING, "در حال اجرا"),
+        (STATUS_SUCCEEDED, "انجام‌شده"),
+        (STATUS_FAILED, "ناموفق"),
+    ]
+
+    event_key = models.CharField(max_length=180, unique=True)
+    trigger = models.CharField(max_length=40, choices=TRIGGER_CHOICES, db_index=True)
+    customer = models.ForeignKey(
+        Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_automation_runs"
+    )
+    opportunity = models.ForeignKey(
+        CrmOpportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_automation_runs"
+    )
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["status", "updated_at"])]
+        verbose_name = "اجرای اتوماسیون CRM"
+        verbose_name_plural = "اجراهای اتوماسیون CRM"
+
+
+class CrmContactChannel(models.Model):
+    """Per-customer channel consent. Unknown or revoked consent never authorizes outbound messaging."""
+
+    CHANNEL_SMS = "sms"
+    CHANNEL_BALE = "bale"
+    CHANNEL_CHOICES = [(CHANNEL_SMS, "پیامک"), (CHANNEL_BALE, "بله")]
+    CONSENT_UNKNOWN = "unknown"
+    CONSENT_GRANTED = "granted"
+    CONSENT_REVOKED = "revoked"
+    CONSENT_CHOICES = [
+        (CONSENT_UNKNOWN, "نامشخص"),
+        (CONSENT_GRANTED, "مجاز"),
+        (CONSENT_REVOKED, "لغوشده"),
+    ]
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="contact_channels")
+    channel = models.CharField(max_length=8, choices=CHANNEL_CHOICES)
+    consent = models.CharField(max_length=8, choices=CONSENT_CHOICES, default=CONSENT_UNKNOWN, db_index=True)
+    source = models.CharField(max_length=80, blank=True, default="manual")
+    consented_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["channel", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "channel"], name="customers_unique_contact_channel")
+        ]
+        indexes = [models.Index(fields=["channel", "consent"])]
+        verbose_name = "رضایت کانال ارتباطی"
+        verbose_name_plural = "رضایت کانال‌های ارتباطی"
 
 
 class CrmOpportunityStageHistory(models.Model):

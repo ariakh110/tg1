@@ -151,7 +151,7 @@ def transition_opportunity(
     if changed_fields:
         locked.save(update_fields=[*changed_fields, "updated_at"])
 
-    CrmOpportunityStageHistory.objects.create(
+    history = CrmOpportunityStageHistory.objects.create(
         opportunity=locked,
         from_stage=from_stage if from_stage != to_stage else from_stage,
         to_stage=to_stage,
@@ -161,6 +161,25 @@ def transition_opportunity(
         actor_user=_authenticated_user(actor),
         metadata=metadata or {},
     )
+    if from_stage != to_stage or event == "CRM_OPPORTUNITY_CREATED":
+        opportunity_id = locked.pk
+        history_id = history.pk
+
+        def enqueue_stage_task():
+            try:
+                from .automation import enqueue_automation_event
+
+                from .models import CrmAutomationRun
+
+                enqueue_automation_event(
+                    event_key=f"opportunity.stage:{history_id}",
+                    trigger=CrmAutomationRun.TRIGGER_OPPORTUNITY_STAGE_CHANGED,
+                    opportunity=CrmOpportunity.objects.filter(pk=opportunity_id).first(),
+                )
+            except Exception:  # noqa: BLE001 - source stage changes must remain committed.
+                logger.exception("Could not enqueue CRM follow-up for opportunity %s", opportunity_id)
+
+        transaction.on_commit(enqueue_stage_task)
     return locked, from_stage != to_stage
 
 

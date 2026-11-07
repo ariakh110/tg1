@@ -11,7 +11,7 @@ from django.dispatch import receiver
 from assistant.models import AssistantInquiry
 from sales.models import StoreOrder
 
-from .models import CrmOpportunity, CrmSyncEvent
+from .models import CrmOpportunity, CrmSyncEvent, Customer
 from .opportunities import process_sync_event
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,30 @@ def _safe_enqueue(source_type, source_id, updated_at, payload=None):
         _enqueue(source_type, source_id, updated_at, payload=payload)
     except Exception:  # noqa: BLE001
         logger.exception("Could not enqueue CRM synchronization for %s:%s", source_type, source_id)
+
+
+def _safe_enqueue_new_customer(customer_id):
+    try:
+        customer = Customer.objects.filter(pk=customer_id).first()
+        if not customer:
+            return
+        from .automation import enqueue_automation_event
+        from .models import CrmAutomationRun
+
+        enqueue_automation_event(
+            event_key=f"customer.created:{customer.pk}",
+            trigger=CrmAutomationRun.TRIGGER_CUSTOMER_CREATED,
+            customer=customer,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not enqueue initial CRM task for customer %s", customer_id)
+
+
+@receiver(post_save, sender=Customer, dispatch_uid="customers.crm_customer_initial_task")
+def create_initial_customer_task(sender, instance, created, raw=False, **kwargs):
+    if created and not raw:
+        customer_id = instance.pk
+        transaction.on_commit(lambda: _safe_enqueue_new_customer(customer_id))
 
 
 @receiver(post_save, sender=StoreOrder, dispatch_uid="customers.sync_store_order_opportunity")

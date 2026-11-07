@@ -5,6 +5,7 @@
 اگر `sms_enabled` خاموش یا کلید نباشد، ارسال «خشک» (skipped) ثبت می‌شود — بدونِ تماس با
 سرویس و بدونِ خطا — تا کلِ جریان پیش از وجودِ اعتبار قابلِ آزمایش باشد.
 """
+import hashlib
 import re
 from collections import defaultdict
 
@@ -12,7 +13,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from customers.models import Customer, CustomerActivity
+from customers.models import CrmContactChannel, Customer, CustomerActivity
 from products.models import ProductCategory
 
 from .models import (
@@ -48,7 +49,7 @@ def _today_sent_count():
     ).count()
 
 
-def _log_activity(customer, message, status, created_by, channel_label="پیامک"):
+def _log_activity(customer, message, status, created_by, channel_label="پیامک", message_key=""):
     label = {
         OutboundMessage.STATUS_SENT: "ارسال شد",
         OutboundMessage.STATUS_SKIPPED: "خشک (سرویس غیرفعال)",
@@ -59,6 +60,9 @@ def _log_activity(customer, message, status, created_by, channel_label="پیام
         customer=customer,
         kind=CustomerActivity.KIND_MESSAGE,
         body=f"{channel_label} ({label}): {snippet}",
+        direction="outbound",
+        result=status,
+        external_message_key=(message_key or "")[:180],
         created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
     )
 
@@ -107,7 +111,7 @@ def send_sms(recipient, message, *, customer=None, purpose=OutboundMessage.PURPO
 
     msg.save()
     if customer and log_activity:
-        _log_activity(customer, body, msg.status, created_by)
+        _log_activity(customer, body, msg.status, created_by, message_key=msg.provider_message_id)
     return msg
 
 
@@ -141,7 +145,7 @@ def send_bale(recipient, message, *, customer=None, purpose=OutboundMessage.PURP
 
     msg.save()
     if customer and log_activity:
-        _log_activity(customer, body, msg.status, created_by, channel_label="بله")
+        _log_activity(customer, body, msg.status, created_by, channel_label="بله", message_key=msg.provider_message_id)
     return msg
 
 
@@ -242,8 +246,8 @@ def replace_group_members(group, *, customer_ids=None, phones=None):
     }
 
 
-def resolve_audience(selectors):
-    """Resolve CRM/group/product selectors into unique valid mobile recipients without sending."""
+def resolve_audience(selectors, *, channel=OutboundMessage.CHANNEL_SMS):
+    """Resolve unique recipients and require explicit consent for the selected channel."""
     selectors = selectors or {}
     customer_ids = _id_list(selectors.get("customer_ids"))
     group_ids = _id_list(selectors.get("group_ids"))
@@ -253,7 +257,7 @@ def resolve_audience(selectors):
     all_active = selectors.get("all_active") is True
     selector_count = sum(bool(value) for value in (customer_ids, group_ids, category_ids, stage, source, all_active))
 
-    recipients = {}
+    candidates = {}
     source_phones = defaultdict(set)
     invalid_count = 0
     duplicate_count = 0
@@ -265,14 +269,14 @@ def resolve_audience(selectors):
             invalid_count += 1
             return
         source_phones[audience_source].add(normalized)
-        if normalized in recipients:
+        if normalized in candidates:
             duplicate_count += 1
-            recipients[normalized]["sources"].add(audience_source)
-            if customer and not recipients[normalized]["customer"]:
-                recipients[normalized]["customer"] = customer
-                recipients[normalized]["name"] = name or customer.name
+            candidates[normalized]["sources"].add(audience_source)
+            if customer and not candidates[normalized]["customer"]:
+                candidates[normalized]["customer"] = customer
+                candidates[normalized]["name"] = name or customer.name
             return
-        recipients[normalized] = {
+        candidates[normalized] = {
             "phone": normalized,
             "customer": customer,
             "name": name or (customer.name if customer else ""),
@@ -327,13 +331,36 @@ def resolve_audience(selectors):
         for customer in filtered:
             add(customer.phone, customer, customer.name, "filters")
 
-    resolved = [
-        {
-            **item,
-            "sources": sorted(item["sources"]),
-        }
-        for item in recipients.values()
-    ]
+    # A group member imported as a raw phone may still match a CRM customer. Resolve it
+    # before consent checks so an unlinked group row cannot bypass a known revocation.
+    missing_customer_phones = [phone for phone, item in candidates.items() if not item["customer"]]
+    if missing_customer_phones:
+        for customer in Customer.objects.filter(is_active=True, phone__in=missing_customer_phones):
+            candidates[customer.phone]["customer"] = customer
+            candidates[customer.phone]["name"] = candidates[customer.phone]["name"] or customer.name
+
+    customer_ids_for_check = [item["customer"].pk for item in candidates.values() if item["customer"]]
+    consent_by_customer = dict(
+        CrmContactChannel.objects.filter(
+            customer_id__in=customer_ids_for_check,
+            channel=channel,
+        ).values_list("customer_id", "consent")
+    )
+    resolved = []
+    excluded_by_consent = {"unknown": 0, "revoked": 0, "unlinked": 0, "inactive": 0}
+    for item in candidates.values():
+        customer = item["customer"]
+        if not customer:
+            excluded_by_consent["unlinked"] += 1
+            continue
+        if not customer.is_active:
+            excluded_by_consent["inactive"] += 1
+            continue
+        consent = consent_by_customer.get(customer.pk, CrmContactChannel.CONSENT_UNKNOWN)
+        if consent != CrmContactChannel.CONSENT_GRANTED:
+            excluded_by_consent[consent if consent in excluded_by_consent else "unknown"] += 1
+            continue
+        resolved.append({**item, "sources": sorted(item["sources"])})
     sample = [
         {
             "customer_id": item["customer"].id if item["customer"] else None,
@@ -343,12 +370,18 @@ def resolve_audience(selectors):
         }
         for item in resolved[:10]
     ]
+    audience_hash = hashlib.sha256(
+        (channel + "|" + "\n".join(sorted(f"{item['customer'].pk}:{item['phone']}" for item in resolved))).encode("utf-8")
+    ).hexdigest()
     return {
         "selector_count": selector_count,
         "valid_count": len(resolved),
         "invalid_count": invalid_count,
         "duplicate_count": duplicate_count,
         "source_counts": {key: len(value) for key, value in source_phones.items()},
+        "consent_excluded_count": sum(excluded_by_consent.values()),
+        "consent_excluded_by_reason": excluded_by_consent,
+        "audience_hash": audience_hash,
         "sample": sample,
         "recipients": resolved,
     }
@@ -593,4 +626,6 @@ def log_incoming_sms(sender, text, raw=None):
         customer=customer,
         kind=CustomerActivity.KIND_MESSAGE,
         body=f"پیامکِ دریافتی: {snippet}",
+        direction="inbound",
+        result="received",
     )
