@@ -21,20 +21,22 @@
 - Django check و بررسی سازگاری migration، ESLint فایل‌های تغییرکرده و ترتیب عددی نوار در دادهٔ نمونه موفق شدند. Flutter analyze بدون خطا تمام شد.
 
 
-## WinSCP and PuTTY
+## Production receipt and future deployments
 
-Upload these three files from C:/Users/aria/deploy/crm-profile-reminders-ticker-20261127-r2 to /home/deploy/kavehmetal-release/ in binary mode:
+On 2026-11-27, the r2 release verified both archives, backed up PostgreSQL and backend source, applied customers.0012 and built the frontend. The live homepage returned HTTP 502 after activation because the staged directory belonged to www-data and the frontend service runs as tirexa-front. Correcting the directory ownership and restarting the frontend restored HTTP 200. External requests to the homepage and price ticker API also returned HTTP 200 after recovery. The database and backend backup are under /srv/tirexa/release-backups/crm-profile-20261127.boIPPz.
 
-- crm-profile-20261127-backend.tar.gz
-- crm-profile-20261127-frontend.tar.gz
-- deploy-crm-profile-20261127.sh
+The corrected r3 deployment helper reads the systemd service user and group. The frontend release retains the previous directory until the local HTTPS homepage returns HTTP 200. The deployment fixture verifies that HTTP 502 restores the previous frontend. This r3 package is for future use. The production release has already been recovered.
 
-Run this single command in PuTTY:
+## WinSCP and PuTTY for r3
+
+Upload the three files from C:/Users/aria/deploy/crm-profile-reminders-ticker-20261127-r3 to /home/deploy/kavehmetal-release/ in binary mode:
+
+- crm-profile-20261127-r3-backend.tar.gz
+- crm-profile-20261127-r3-frontend.tar.gz
+- deploy-crm-profile-20261127-r3.sh
 
 ```bash
-cd /home/deploy/kavehmetal-release && sudo systemd-run --unit=tirexa-crm-profile-deploy-20261127-r2 --collect /bin/bash "$PWD/deploy-crm-profile-20261127.sh" && sudo journalctl -u tirexa-crm-profile-deploy-20261127-r2 -n 40 -f
+cd /home/deploy/kavehmetal-release && sudo systemd-run --unit=tirexa-crm-profile-deploy-20261127-r3 --collect /bin/bash "$PWD/deploy-crm-profile-20261127-r3.sh" && sudo journalctl -u tirexa-crm-profile-deploy-20261127-r3 -n 40 -f
 ```
 
-The release prints "CRM profile 20261127 r2: verifying package" and finishes successfully with CRM_PROFILE_DEPLOY_EXIT=0. Ctrl+C exits the log view. The service continues if the terminal disconnects.
-
-The original attempt invoked the legacy update.sh and stopped before frontend deployment with exit 2. "No migrations to apply" from that run did not verify customers.0012. The revised filenames identify the scoped release. Archive digests and Bash syntax were checked locally. Production execution of r2 is pending.
+The release prints "CRM profile 20261127 r3: verifying package" and finishes successfully with CRM_PROFILE_DEPLOY_EXIT=0. Ctrl+C exits the log view. The service continues if the terminal disconnects.
