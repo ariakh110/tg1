@@ -124,16 +124,13 @@ def _market_products_queryset():
     )
 
 
-def _previous_snapshot(product_id, pricing_basis, observed_on):
-    return (
-        ProductPriceSnapshot.objects.filter(
-            product_id=product_id,
-            pricing_basis=pricing_basis,
-            observed_on__lt=observed_on,
-        )
-        .order_by("-observed_on", "-observed_at")
-        .first()
-    )
+def _prior_market_snapshot_history(product_id, pricing_basis, observed_on):
+    return ProductPriceSnapshot.objects.filter(
+        product_id=product_id,
+        pricing_basis=pricing_basis,
+        observed_on__lt=observed_on,
+        normalized_price_kg__gt=ZERO,
+    ).order_by("-observed_on", "-observed_at")
 
 
 def _select_effective_tier(product):
@@ -174,8 +171,20 @@ def build_market_rows(search=""):
         if needle and needle not in haystack:
             continue
 
-        previous = _previous_snapshot(product.id, tier.price_basis, observed_on)
-        previous_normalized = previous.normalized_price_kg if previous else None
+        latest_snapshot = None
+        previous = None
+        if normalized is not None:
+            snapshots = _prior_market_snapshot_history(
+                product.id, tier.price_basis, observed_on
+            ).values_list("normalized_price_kg", "observed_on")
+            for snapshot in snapshots.iterator():
+                if latest_snapshot is None:
+                    latest_snapshot = snapshot
+                if snapshot[0] != normalized:
+                    previous = snapshot
+                    break
+        comparison_snapshot = previous or latest_snapshot
+        previous_normalized = comparison_snapshot[0] if comparison_snapshot else None
         absolute_change = None
         percent_change = None
         direction = "new"
@@ -209,6 +218,7 @@ def build_market_rows(search=""):
                 "absolute_change": absolute_change,
                 "percent_change": percent_change,
                 "direction": direction,
+                "comparison_observed_on": comparison_snapshot[1] if comparison_snapshot else None,
                 "observed_at": verified_at,
                 "comparable": normalized is not None,
                 "comparison_note": "" if normalized is not None else "وزن واحد برای تبدیل قیمت این کالا ثبت نشده است.",
