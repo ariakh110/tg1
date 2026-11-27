@@ -7,7 +7,7 @@ idهای این لیست دقیقاً با `id`های نوار کناریِ پن
 
 from .models import RoleCode
 
-# مقدارِ ویژه: دسترسیِ کامل به همهٔ بخش‌ها (سوپریوزر/استاف و نقشِ ADMIN).
+# مقدارِ ویژه: دسترسیِ کامل به همهٔ بخش‌ها (سوپریوزر، استافِ غیر CRM_SALES و نقشِ ADMIN).
 ALL = "ALL"
 
 # همهٔ بخش‌های پنل ادمین (ترتیب = ترتیبِ نمایش).
@@ -59,12 +59,17 @@ def effective_admin_sections(user):
     """
     if not user or not getattr(user, "is_authenticated", False):
         return set()
-    if user.is_staff or user.is_superuser:
+    if user.is_superuser:
         return ALL
-
     active_roles = set(
         user.roles.filter(is_active=True).values_list("role", flat=True)
     )
+    # A CRM salesperson remains least-privileged even if a legacy account is
+    # marked Django staff. Their CRM access goes through the scoped mobile API.
+    if RoleCode.CRM_SALES in active_roles:
+        return set()
+    if user.is_staff:
+        return ALL
     allowed = set()
     for role in active_roles:
         sections = ROLE_SECTIONS.get(role)

@@ -1,8 +1,11 @@
-from django.db.models import Min
+from django.db.models import Min, Q
 from rest_framework import viewsets, filters as drf_filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Product
+from .market_hierarchy import MarketTaxonomy
+from .models import Product, ProductSpecification
 from .serializers import ProductSummarySerializer  # فقط برای الهام، اینجا خلاصه می‌سازیم
 from .filters import ProductFilter
 from accounts.permissions import IsAdminOrActiveAdminRole
@@ -41,3 +44,49 @@ class ProductSummaryViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(is_active=True)
         return queryset
 
+
+
+    @action(detail=False, methods=["get"])
+    def ticker(self, request):
+        products = list(
+            Product.objects.filter(is_active=True)
+            .annotate(
+                min_price=Min(
+                    "offers__pricing_tiers__unit_price",
+                    filter=Q(offers__is_active=True, offers__pricing_tiers__unit_price__gt=0),
+                )
+            )
+            .filter(min_price__gt=0)
+            .select_related("specifications")
+            .order_by("-updated_at", "-pk")[:16]
+        )
+        if not products:
+            return Response([])
+        taxonomy = MarketTaxonomy()
+        rows = []
+        for product in products:
+            try:
+                spec = product.specifications
+            except ProductSpecification.DoesNotExist:
+                spec = None
+            groups = taxonomy.describe(product, spec)
+            size = next(
+                (value for value in (
+                    getattr(spec, "thickness_mm", None),
+                    getattr(spec, "diameter_mm", None),
+                    getattr(spec, "height_mm", None),
+                    getattr(spec, "width_mm", None),
+                ) if value is not None and value > 0),
+                None,
+            )
+            rows.append({
+                "id": product.pk,
+                "name": product.name,
+                "min_price": product.min_price,
+                "factory": groups["factory"],
+                "factory_label": groups["factory_label"],
+                "product_kind": groups["product_kind_label"],
+                "subtype": groups["subtype_label"],
+                "size_mm": size,
+            })
+        return Response(rows)

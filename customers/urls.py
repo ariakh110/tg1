@@ -6,6 +6,7 @@ from .views import (
     CrmSyncEventViewSet,
     CrmAutomationRunViewSet,
     CrmFollowUpViewSet,
+    CrmPhoneIntakeView,
     CrmTaskViewSet,
     CrmWorkQueueView,
     CustomerActivityViewSet,
@@ -24,4 +25,8 @@ router.register(r"follow-ups", CrmFollowUpViewSet, basename="crm-follow-up")
 router.register(r"automation-runs", CrmAutomationRunViewSet, basename="crm-automation-run")
 
 app_name = "customers"
-urlpatterns = [path("work-queue/", CrmWorkQueueView.as_view(), name="crm-work-queue"), *router.urls]
+urlpatterns = [
+    path("work-queue/", CrmWorkQueueView.as_view(), name="crm-work-queue"),
+    path("phone-intake/", CrmPhoneIntakeView.as_view(), name="crm-phone-intake"),
+    *router.urls,
+]

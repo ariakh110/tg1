@@ -1767,6 +1767,22 @@ class SteelMarketDashboardTests(APITestCase):
         )
         return product, tier
 
+    def test_ticker_only_returns_public_positive_prices_and_structured_size(self):
+        product, active_tier = self.make_priced_product(name="میلگرد ۱۴")
+        self.make_priced_product(name="محصول پنهان", active=False)
+        self.make_priced_product(name="محصول بدون قیمت", price="0")
+        inactive_offer = Offer.objects.create(product=product, seller=self.seller, is_active=False)
+        PricingTier.objects.create(offer=inactive_offer, tier_name="غیرفعال", unit_price=1, minimum_quantity=1)
+
+        response = self.client.get("/api/products-summary/ticker/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data), 1)
+        row = response.data[0]
+        self.assertEqual(row["id"], product.pk)
+        self.assertEqual(row["factory"], "zob-ahan")
+        self.assertEqual(float(row["size_mm"]), 14)
+        self.assertEqual(float(row["min_price"]), float(active_tier.unit_price))
+
     def test_price_change_updates_one_tehran_daily_closing_snapshot(self):
         product, tier = self.make_priced_product()
         snapshot = ProductPriceSnapshot.objects.get(product=product, pricing_basis=PricingBasis.KG)

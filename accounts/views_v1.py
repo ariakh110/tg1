@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import KYCDocument, KYCRequest, KYCStatus, RoleCode, UserRole
+from .admin_sections import ALL, effective_admin_sections
 from .permissions import IsAdminOrActiveAdminRole
 from .serializers import (
     AdminSetActiveSerializer,
@@ -126,8 +127,8 @@ class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
         role = serializer.validated_data["role"]
         is_active = serializer.validated_data["is_active"]
         # دادن/گرفتنِ نقش‌های دارایِ دسترسیِ پنل ادمین (مدیر/بازاریاب) فقط برای سوپریوزر
-        if role in (RoleCode.ADMIN, RoleCode.MARKETER) and not request.user.is_superuser:
-            raise PermissionDenied("فقط سوپریوزر می‌تواند نقشِ مدیر یا بازاریاب را تغییر دهد.")
+        if role in (RoleCode.ADMIN, RoleCode.MARKETER, RoleCode.CRM_SALES) and not request.user.is_superuser:
+            raise PermissionDenied("فقط سوپریوزر می‌تواند نقش‌های دارای دسترسی CRM را تغییر دهد.")
         user_role, _created = UserRole.objects.get_or_create(user=target, role=role)
         user_role.is_active = is_active
         user_role.activated_at = timezone.now() if is_active else None
@@ -148,11 +149,7 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         queryset = self.queryset
-        is_admin_scope = user.is_staff or user.is_superuser or UserRole.objects.filter(
-            user=user,
-            role=RoleCode.ADMIN,
-            is_active=True,
-        ).exists()
+        is_admin_scope = effective_admin_sections(user) == ALL
         if not is_admin_scope:
             queryset = queryset.filter(user=user)
         status_param = self.request.query_params.get("status")
@@ -223,11 +220,7 @@ class KYCRequestViewSet(viewsets.ModelViewSet):
     )
     def upload_document(self, request, pk=None):
         kyc = self.get_object()
-        is_admin_scope = request.user.is_staff or request.user.is_superuser or UserRole.objects.filter(
-            user=request.user,
-            role=RoleCode.ADMIN,
-            is_active=True,
-        ).exists()
+        is_admin_scope = effective_admin_sections(request.user) == ALL
         if kyc.user != request.user and not is_admin_scope:
             return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
         if kyc.status != KYCStatus.PENDING:

@@ -1,5 +1,8 @@
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Min, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -10,6 +13,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import RoleCode
 from accounts.permissions import IsAdminOrActiveAdminRole
 
 from .automation import _single_active_sales_owner, process_automation_run
@@ -21,6 +25,7 @@ from .models import (
     CrmSyncEvent,
     CrmTask,
     Customer,
+    CustomerAssignmentHistory,
     CustomerActivity,
     CustomerTransaction,
 )
@@ -34,11 +39,14 @@ from .serializers import (
     CrmFollowUpSerializer,
     CrmSyncEventSerializer,
     CrmTaskSerializer,
+    CustomerAssignmentSerializer,
+    CustomerProfileSerializer,
     CustomerActivitySerializer,
     CustomerDetailSerializer,
     CustomerSerializer,
     CustomerTransactionSerializer,
 )
+from .services import normalize_phone
 
 # پیگیریِ باز = تاریخِ پیگیری دارد و هنوز انجام نشده.
 _OPEN_FOLLOW_UP = Q(activities__follow_up_at__isnull=False, activities__follow_up_done=False)
@@ -64,7 +72,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     ordering = ["-updated_at"]
 
     def get_queryset(self):
-        queryset = Customer.objects.prefetch_related("product_interests").annotate(
+        queryset = Customer.objects.select_related("assigned_to").prefetch_related("product_interests").annotate(
             next_follow_up_at=Coalesce(
                 Min("crm_follow_ups__due_at", filter=Q(crm_follow_ups__status=CrmFollowUp.STATUS_PENDING)),
                 Min("activities__follow_up_at", filter=_OPEN_LEGACY_FOLLOW_UP),
@@ -78,6 +86,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
             queryset = queryset.prefetch_related(
                 "transactions", "activities", "opportunities", "contact_channels", "crm_follow_ups", "crm_tasks"
             )
+        assigned_to = (self.request.query_params.get("assigned_to") or "").strip()
+        if assigned_to.lower() in {"unassigned", "null", "none"}:
+            queryset = queryset.filter(assigned_to__isnull=True)
+        elif assigned_to.isdigit():
+            queryset = queryset.filter(assigned_to_id=int(assigned_to))
         return queryset
 
     def get_serializer_class(self):
@@ -88,6 +101,49 @@ class CustomerViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         serializer.save(created_by=user if getattr(user, "is_authenticated", False) else None)
+
+    @action(detail=True, methods=["patch"], url_path="profile")
+    def profile(self, request, pk=None):
+        with transaction.atomic():
+            customer = get_object_or_404(Customer.objects.select_for_update(), pk=self.get_object().pk)
+            serializer = CustomerProfileSerializer(customer, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="assign")
+    def assign(self, request, pk=None):
+        payload = CustomerAssignmentSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        User = get_user_model()
+        assignee_id = payload.validated_data["assignee_id"]
+        assignee = User.objects.filter(pk=assignee_id).first() if assignee_id is not None else None
+        with transaction.atomic():
+            customer = Customer.objects.select_for_update().get(pk=pk)
+            previous = customer.assigned_to
+            if customer.assigned_to_id != (assignee.pk if assignee else None):
+                customer.assigned_to = assignee
+                customer.save(update_fields=["assigned_to", "updated_at"])
+                CustomerAssignmentHistory.objects.create(
+                    customer=customer,
+                    previous_assignee=previous,
+                    assignee=assignee,
+                    changed_by=request.user,
+                    reason=payload.validated_data.get("reason", ""),
+                )
+        customer = self.get_queryset().get(pk=customer.pk)
+        return Response(CustomerSerializer(customer, context={"request": request}).data)
+
+    @action(detail=False, methods=["get"], url_path="sales-assignees")
+    def sales_assignees(self, request):
+        User = get_user_model()
+        users = User.objects.filter(
+            is_active=True, roles__role=RoleCode.CRM_SALES, roles__is_active=True
+        ).distinct().order_by("first_name", "last_name", "username")
+        return Response([
+            {"id": user.pk, "name": (user.get_full_name() or "").strip() or user.get_username()}
+            for user in users
+        ])
 
     @action(detail=True, methods=["put"], url_path="contact-channels")
     def contact_channels(self, request, pk=None):
@@ -326,6 +382,172 @@ def _sync_activity_follow_up(activity, actor=None):
         follow_up.idempotency_key = f"activity:{activity.pk}:follow-up"[:180]
         follow_up.save(update_fields=["idempotency_key", "updated_at"])
     return follow_up
+
+
+class CrmPhoneIntakeSerializer(serializers.Serializer):
+    request_key = serializers.UUIDField()
+    phone = serializers.CharField(max_length=40)
+    name = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
+    company = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    summary = serializers.CharField(max_length=4000, required=False, allow_blank=True, default="")
+    next_action = serializers.CharField(max_length=240)
+    due_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    opportunity = serializers.PrimaryKeyRelatedField(
+        queryset=CrmOpportunity.objects.all(), required=False, allow_null=True
+    )
+    opportunity_title = serializers.CharField(max_length=240, required=False, allow_blank=True, default="")
+
+    def validate_phone(self, value):
+        digit_map = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+        normalized = normalize_phone(value.translate(digit_map))
+        if len(normalized) != 11 or not normalized.startswith("09") or not normalized.isascii() or not normalized.isdigit():
+            raise serializers.ValidationError("شمارهٔ موبایل معتبر وارد کنید.")
+        return normalized
+
+    def validate_next_action(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("اقدام بعدی را بنویسید.")
+        return value
+
+    def validate_opportunity_title(self, value):
+        return value.strip()
+
+    def validate(self, attrs):
+        if attrs.get("opportunity") and attrs.get("opportunity_title"):
+            raise serializers.ValidationError(
+                {"opportunity_title": "یک فرصت موجود را انتخاب کنید یا عنوان فرصت تازه را بنویسید؛ هر دو هم‌زمان نمی‌شود."}
+            )
+        return attrs
+
+
+class CrmPhoneIntakeView(APIView):
+    """Capture an inbound call and its internal next action as one CRM operation."""
+
+    permission_classes = [IsAdminOrActiveAdminRole]
+    admin_sections = ("crm", "crm-sales", "crm-followups")
+
+    @staticmethod
+    def _response(task, *, activity=None, customer_created=False, replayed=False):
+        task = CrmTask.objects.select_related("customer", "opportunity").get(pk=task.pk)
+        customer = task.customer
+        opportunity = task.opportunity
+        if replayed:
+            customer_created = task.trigger == "phone_intake_new"
+        return {
+            "replayed": replayed,
+            "customer_created": customer_created,
+            "customer": {"id": customer.pk, "name": customer.name, "phone": customer.phone},
+            "activity": {"id": activity.pk} if activity else None,
+            "opportunity": (
+                {
+                    "id": opportunity.pk,
+                    "title": opportunity.title,
+                    "source_type": opportunity.source_type,
+                    "source_id": opportunity.source_id,
+                }
+                if opportunity
+                else None
+            ),
+            "task": CrmTaskSerializer(task).data,
+        }
+
+    def post(self, request):
+        payload = CrmPhoneIntakeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        request_key = f"phone-intake:{data['request_key']}"
+
+        existing_task = CrmTask.objects.filter(idempotency_key=request_key).first()
+        if existing_task:
+            return Response(self._response(existing_task, replayed=True), status=status.HTTP_200_OK)
+
+        actor = request.user if request.user.is_authenticated else None
+        owner = _single_active_sales_owner()
+        try:
+            with transaction.atomic():
+                existing_task = CrmTask.objects.filter(idempotency_key=request_key).first()
+                if existing_task:
+                    return Response(self._response(existing_task, replayed=True), status=status.HTTP_200_OK)
+
+                customer, customer_created = Customer.objects.get_or_create(
+                    phone=data["phone"],
+                    defaults={
+                        "name": data["name"].strip(),
+                        "company": data["company"].strip(),
+                        "source": Customer.SOURCE_INCOMING_CALL,
+                        "stage": Customer.STAGE_NEW,
+                        "created_by": actor,
+                    },
+                )
+                if customer_created and not customer.name:
+                    raise serializers.ValidationError({"name": "برای مشتری تازه، نام را وارد کنید."})
+
+                opportunity = None
+                if data.get("opportunity"):
+                    opportunity = CrmOpportunity.objects.select_for_update().get(pk=data["opportunity"].pk)
+                    if opportunity.customer_id != customer.pk:
+                        raise serializers.ValidationError({"opportunity": "این فرصت متعلق به مشتری انتخاب‌شده نیست."})
+
+                activity = CustomerActivity.objects.create(
+                    customer=customer,
+                    opportunity=opportunity,
+                    kind=CustomerActivity.KIND_CALL,
+                    direction="inbound",
+                    body=data["summary"],
+                    created_by=actor,
+                )
+
+                opportunity_title = data["opportunity_title"]
+                if opportunity_title:
+                    opportunity = CrmOpportunity.objects.create(
+                        customer=customer,
+                        title=opportunity_title,
+                        stage=CrmOpportunity.STAGE_NEW_INQUIRY,
+                        source_type=CrmOpportunity.SOURCE_MANUAL,
+                        owner=owner,
+                        need_details=data["summary"],
+                        next_action=data["next_action"],
+                        next_follow_up_at=data["due_at"],
+                        created_by=actor,
+                    )
+                    transition_opportunity(
+                        opportunity,
+                        opportunity.stage,
+                        actor=actor,
+                        event="CRM_OPPORTUNITY_CREATED",
+                        metadata={"origin": "phone_intake"},
+                    )
+                    activity.opportunity = opportunity
+                    activity.save(update_fields=["opportunity", "updated_at"])
+
+                task = CrmTask.objects.create(
+                    customer=customer,
+                    opportunity=opportunity,
+                    source_order_id=(
+                        opportunity.source_id
+                        if opportunity and opportunity.source_type == CrmOpportunity.SOURCE_STORE_ORDER
+                        else ""
+                    ),
+                    owner=owner,
+                    title=data["next_action"],
+                    description=data["summary"],
+                    trigger="phone_intake_new" if customer_created else "phone_intake",
+                    due_at=data["due_at"],
+                    idempotency_key=request_key,
+                    created_by=actor,
+                )
+                response = self._response(
+                    task, activity=activity, customer_created=customer_created, replayed=False
+                )
+            return Response(response, status=status.HTTP_201_CREATED)
+        except IntegrityError:
+            # A concurrent retry may win the unique task idempotency key. Its
+            # transaction rolls back this attempt's customer/activity writes.
+            existing_task = CrmTask.objects.filter(idempotency_key=request_key).first()
+            if not existing_task:
+                raise
+            return Response(self._response(existing_task, replayed=True), status=status.HTTP_200_OK)
 
 
 class CrmTaskViewSet(viewsets.ModelViewSet):

@@ -461,7 +461,7 @@ class BaleUserBindingViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def eligible_users(self, request):
-        from accounts.admin_sections import ALL, effective_admin_sections
+        from customers.bale_reminders import can_receive_crm_bale_reminders
 
         rows = []
         from django.db.models import Q
@@ -474,14 +474,13 @@ class BaleUserBindingViewSet(viewsets.ModelViewSet):
             .filter(
                 Q(is_staff=True)
                 | Q(is_superuser=True)
-                | Q(roles__is_active=True, roles__role__in=[RoleCode.ADMIN, RoleCode.MARKETER])
+                | Q(roles__is_active=True, roles__role__in=[RoleCode.ADMIN, RoleCode.MARKETER, RoleCode.CRM_SALES])
             )
             .distinct()
             .order_by("username")
         )
         for user in users:
-            sections = effective_admin_sections(user)
-            if sections != ALL and not ({"crm", "crm-funnel"} & sections):
+            if not can_receive_crm_bale_reminders(user):
                 continue
             rows.append(
                 {

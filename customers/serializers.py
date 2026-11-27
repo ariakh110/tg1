@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 from products.models import ProductCategory
 
 from .models import (
@@ -14,6 +15,7 @@ from .models import (
     CustomerTransaction,
 )
 from .services import normalize_phone
+from accounts.models import RoleCode
 
 
 class CustomerActivitySerializer(serializers.ModelSerializer):
@@ -33,6 +35,7 @@ class CustomerActivitySerializer(serializers.ModelSerializer):
             "opportunity_title",
             "kind",
             "kind_display",
+            "channel",
             "body",
             "direction",
             "result",
@@ -97,12 +100,27 @@ class CustomerTransactionSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class CustomerProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Customer
+        fields = ("name", "company", "job_title", "decision_role")
+        extra_kwargs = {"name": {"required": False}}
+
+    def update(self, instance, validated_data):
+        if validated_data:
+            for field, value in validated_data.items():
+                setattr(instance, field, value)
+            instance.save(update_fields=[*validated_data, "updated_at"])
+        return instance
+
+
 class CustomerSerializer(serializers.ModelSerializer):
     balance = serializers.IntegerField(read_only=True)
     transaction_count = serializers.IntegerField(source="transactions.count", read_only=True)
     stage_display = serializers.CharField(source="get_stage_display", read_only=True)
     source_display = serializers.CharField(source="get_source_display", read_only=True)
     created_by_name = serializers.SerializerMethodField()
+    assigned_to_name = serializers.SerializerMethodField()
     # از annotate شدنِ کوئری در ویوست می‌آیند؛ روی نمونهٔ تکی ممکن است نباشند.
     next_follow_up_at = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     open_follow_up_count = serializers.IntegerField(read_only=True, required=False)
@@ -120,6 +138,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             "name",
             "phone",
             "company",
+            "job_title",
+            "decision_role",
             "city",
             "province",
             "note",
@@ -137,6 +157,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             "next_follow_up_at",
             "open_follow_up_count",
             "created_by_name",
+            "assigned_to",
+            "assigned_to_name",
             "created_at",
             "updated_at",
         ]
@@ -149,6 +171,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             "next_follow_up_at",
             "open_follow_up_count",
             "created_by_name",
+            "assigned_to",
+            "assigned_to_name",
             "created_at",
             "updated_at",
         ]
@@ -166,6 +190,12 @@ class CustomerSerializer(serializers.ModelSerializer):
         full = (user.get_full_name() or "").strip()
         return full or user.get_username()
 
+    def get_assigned_to_name(self, obj):
+        user = obj.assigned_to
+        if not user:
+            return ""
+        return (user.get_full_name() or "").strip() or user.get_username()
+
     def get_product_interest_details(self, obj):
         return [
             {
@@ -176,6 +206,25 @@ class CustomerSerializer(serializers.ModelSerializer):
             }
             for category in obj.product_interests.all()
         ]
+
+
+class CustomerAssignmentSerializer(serializers.Serializer):
+    assignee_id = serializers.IntegerField(required=True, allow_null=True)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+    def validate_assignee_id(self, value):
+        if value is None:
+            return value
+        user_model = get_user_model()
+        eligible = user_model.objects.filter(
+            pk=value,
+            is_active=True,
+            roles__role=RoleCode.CRM_SALES,
+            roles__is_active=True,
+        ).distinct()
+        if not eligible.exists():
+            raise serializers.ValidationError("کارشناس فروش فعال پیدا نشد.")
+        return value
 
 
 class CrmOpportunityStageHistorySerializer(serializers.ModelSerializer):

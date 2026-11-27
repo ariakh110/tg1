@@ -9,7 +9,16 @@ from django.utils import timezone
 
 from accounts.models import RoleCode
 
-from .models import CrmAutomationRun, CrmFollowUp, CrmOpportunity, CrmTask, Customer
+from .models import (
+    CrmAutomationRun,
+    CrmFollowUp,
+    CrmMobileCallCapture,
+    CrmOpportunity,
+    CrmOpportunityStageHistory,
+    CrmTask,
+    Customer,
+    CustomerActivity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +73,7 @@ def process_automation_run(run_or_id):
             run.save(update_fields=["status", "attempts", "last_error", "updated_at"])
 
         with transaction.atomic():
-            run = CrmAutomationRun.objects.select_for_update().select_related(
+            run = CrmAutomationRun.objects.select_for_update(of=("self",)).select_related(
                 "customer", "opportunity", "opportunity__owner"
             ).get(pk=run_id)
             if run.status == CrmAutomationRun.STATUS_SUCCEEDED:
@@ -74,16 +83,34 @@ def process_automation_run(run_or_id):
             if run.trigger == CrmAutomationRun.TRIGGER_CUSTOMER_CREATED:
                 customer = run.customer
                 if customer:
-                    CrmTask.objects.get_or_create(
-                        idempotency_key=f"{run.event_key}:initial-contact"[:180],
-                        defaults={
-                            "customer": customer,
-                            "owner": owner,
-                            "title": "تماس اولیه با سرنخ جدید",
-                            "description": "نیاز مشتری را بررسی و نتیجه تماس را در تایم‌لاین ثبت کنید.",
-                            "trigger": run.trigger,
-                        },
+                    phone_intake_already_actionable = (
+                        customer.source == Customer.SOURCE_INCOMING_CALL
+                        and CustomerActivity.objects.filter(
+                            customer=customer,
+                            kind=CustomerActivity.KIND_CALL,
+                            direction="inbound",
+                        ).exists()
+                        and CrmTask.objects.filter(
+                            customer=customer,
+                            idempotency_key__startswith="phone-intake:",
+                            status=CrmTask.STATUS_OPEN,
+                        ).exists()
                     )
+                    mobile_call_already_actionable = CrmMobileCallCapture.objects.filter(
+                        customer=customer,
+                        status=CrmMobileCallCapture.STATUS_LINKED,
+                    ).exists()
+                    if not phone_intake_already_actionable and not mobile_call_already_actionable:
+                        CrmTask.objects.get_or_create(
+                            idempotency_key=f"{run.event_key}:initial-contact"[:180],
+                            defaults={
+                                "customer": customer,
+                                "owner": owner,
+                                "title": "تماس اولیه با سرنخ جدید",
+                                "description": "نیاز مشتری را بررسی و نتیجه تماس را در تایم‌لاین ثبت کنید.",
+                                "trigger": run.trigger,
+                            },
+                        )
             elif run.trigger == CrmAutomationRun.TRIGGER_OPPORTUNITY_STAGE_CHANGED:
                 opportunity = run.opportunity
                 if opportunity:
@@ -95,23 +122,35 @@ def process_automation_run(run_or_id):
                             opportunity=opportunity, status=CrmFollowUp.STATUS_PENDING
                         ).update(status=CrmFollowUp.STATUS_CANCELLED, updated_at=timezone.now())
                     else:
-                        next_action = (opportunity.next_action or "").strip()
-                        title = next_action or f"پیگیری فرصت: {opportunity.title}"
-                        CrmTask.objects.get_or_create(
-                            idempotency_key=f"{run.event_key}:stage-follow-up"[:180],
-                            defaults={
-                                "customer": opportunity.customer,
-                                "opportunity": opportunity,
-                                "source_order_id": opportunity.source_id
-                                if opportunity.source_type == CrmOpportunity.SOURCE_STORE_ORDER
-                                else "",
-                                "owner": owner,
-                                "title": title[:240],
-                                "description": f"مرحله فعلی فرصت: {opportunity.get_stage_display()}",
-                                "trigger": run.trigger,
-                                "due_at": opportunity.next_follow_up_at,
-                            },
+                        history_id = run.event_key.rpartition(":")[2]
+                        phone_intake_already_created_task = (
+                            history_id.isdigit()
+                            and CrmOpportunityStageHistory.objects.filter(
+                                pk=history_id,
+                                opportunity=opportunity,
+                                event="CRM_OPPORTUNITY_CREATED",
+                                metadata__origin="phone_intake",
+                            ).exists()
                         )
+                        # The intake endpoint already created the operator's explicit action.
+                        if not phone_intake_already_created_task:
+                            next_action = (opportunity.next_action or "").strip()
+                            title = next_action or f"پیگیری فرصت: {opportunity.title}"
+                            CrmTask.objects.get_or_create(
+                                idempotency_key=f"{run.event_key}:stage-follow-up"[:180],
+                                defaults={
+                                    "customer": opportunity.customer,
+                                    "opportunity": opportunity,
+                                    "source_order_id": opportunity.source_id
+                                    if opportunity.source_type == CrmOpportunity.SOURCE_STORE_ORDER
+                                    else "",
+                                    "owner": owner,
+                                    "title": title[:240],
+                                    "description": f"مرحله فعلی فرصت: {opportunity.get_stage_display()}",
+                                    "trigger": run.trigger,
+                                    "due_at": opportunity.next_follow_up_at,
+                                },
+                            )
             else:
                 raise ValueError(f"unsupported_crm_automation_trigger:{run.trigger}")
 

@@ -54,6 +54,7 @@ class RoleCode(models.TextChoices):
     STRUCTURAL_DESIGNER = "STRUCTURAL_DESIGNER", _("Structural Designer")
     ADMIN = "ADMIN", _("Admin")
     MARKETER = "MARKETER", _("Marketer")
+    CRM_SALES = "CRM_SALES", _("CRM Sales")
 
 
 class UserRole(models.Model):

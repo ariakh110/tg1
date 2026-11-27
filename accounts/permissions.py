@@ -3,6 +3,13 @@ from .admin_sections import ALL, effective_admin_sections
 from .models import RoleCode, UserRole
 
 
+def _is_limited_crm_sales(user):
+    return (
+        not user.is_superuser
+        and UserRole.objects.filter(user=user, role=RoleCode.CRM_SALES, is_active=True).exists()
+    )
+
+
 class HasActiveRole(permissions.BasePermission):
     message = "Required role is not active."
 
@@ -13,7 +20,7 @@ class HasActiveRole(permissions.BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_staff or user.is_superuser:
+        if user.is_superuser or (user.is_staff and not _is_limited_crm_sales(user)):
             return True
         return UserRole.objects.filter(
             user=user, role=self.role_code, is_active=True
@@ -30,7 +37,7 @@ class HasRole(permissions.BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_staff or user.is_superuser:
+        if user.is_superuser or (user.is_staff and not _is_limited_crm_sales(user)):
             return True
         return UserRole.objects.filter(user=user, role=self.role_code).exists()
 
@@ -52,7 +59,7 @@ class IsAdminOrActiveAdminRole(permissions.BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_staff or user.is_superuser:
+        if user.is_superuser:
             return True
 
         sections = effective_admin_sections(user)
@@ -89,6 +96,6 @@ class IsFullAdminUser(permissions.BasePermission):
         user = request.user
         if not user or not user.is_authenticated or not user.is_active:
             return False
-        if user.is_staff or user.is_superuser:
+        if user.is_superuser:
             return True
         return effective_admin_sections(user) == ALL

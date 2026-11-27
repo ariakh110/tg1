@@ -7,6 +7,7 @@ from rest_framework import routers
 from core import views as core_views
 from rest_framework_simplejwt.views import TokenRefreshView
 from accounts.auth_views import ActiveUserTokenObtainPairView
+from customers.mobile_api import MobileCallCaptureStatusView, MobileCallCaptureView, MobilePolicyView
 from django.conf import settings
 if settings.DEBUG:
     try:
@@ -29,12 +30,21 @@ urlpatterns += [
     path('api/assistant/', include('assistant.urls')),
     path('api/seo-assistant/', include('seo_assistant.urls')),
     path('api/crm/', include('customers.urls')),
+    path('api/crm/mobile-admin/', include('customers.mobile_admin_urls')),
     path('api/messaging/', include('messaging.urls')),
     # include accounts URL patterns directly under /api/ so routes like
     # /api/auth/profile/ and /api/auth/register/ match frontend expectations
     path("api/", include("accounts.urls")),
     path("api/v1/", include("accounts.urls_v1")),
     path("api/v1/", include("orders.urls_v1")),
+    path("api/v1/crm/mobile/", include("customers.mobile_urls")),
+    path("api/v1/crm/mobile-call-policy/", MobilePolicyView.as_view(), name="crm-mobile-call-policy"),
+    path("api/v1/crm/mobile-call-captures/", MobileCallCaptureView.as_view(), name="crm-mobile-call-captures"),
+    path(
+        "api/v1/crm/mobile-call-captures/<uuid:event_uuid>/",
+        MobileCallCaptureStatusView.as_view(),
+        name="crm-mobile-call-capture-status",
+    ),
     path("api/v1/", include("sales.urls_v1")),
     path("api/v1/", include("offline_payments.urls")),
     path("api/token/", ActiveUserTokenObtainPairView.as_view(), name="token_obtain_pair"),

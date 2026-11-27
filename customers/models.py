@@ -65,7 +65,17 @@ class Customer(models.Model):
         (SOURCE_OTHER, "سایر"),
     ]
 
+    class DecisionRole(models.TextChoices):
+        UNKNOWN = "unknown", "نامشخص"
+        YES = "yes", "تصمیم‌گیرندهٔ نهایی"
+        NO = "no", "تصمیم‌گیرندهٔ نهایی نیست"
+
     name = models.CharField(max_length=160, verbose_name="نام")
+    job_title = models.CharField(max_length=160, blank=True, default="", verbose_name="سمت در مجموعه")
+    decision_role = models.CharField(
+        max_length=7, choices=DecisionRole.choices, default=DecisionRole.UNKNOWN,
+        verbose_name="نقش در تصمیم خرید",
+    )
     phone = models.CharField(max_length=32, unique=True, db_index=True, verbose_name="موبایل")
     company = models.CharField(max_length=200, blank=True, default="", verbose_name="شرکت")
     city = models.CharField(max_length=100, blank=True, default="", verbose_name="شهر")
@@ -110,6 +120,14 @@ class Customer(models.Model):
         verbose_name="ثبت‌کننده",
         help_text="کاربری که این مشتری را ثبت کرده؛ خالی یعنی به‌صورتِ خودکار (سیستم) ساخته شده.",
     )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_crm_customers",
+        verbose_name="کارشناس فروش",
+    )
     is_active = models.BooleanField(default=True, db_index=True, verbose_name="فعال")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -141,6 +159,38 @@ class Customer(models.Model):
         payment = agg["payment"] or 0
         adjustment = agg["adjustment"] or 0
         return purchase - payment + adjustment
+
+
+class CustomerAssignmentHistory(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="assignment_history")
+    previous_assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_assignment_history_from",
+    )
+    assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_assignment_history_to",
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="crm_assignment_changes",
+    )
+    reason = models.CharField(max_length=255, blank=True, default="")
+    changed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-changed_at", "-id"]
+        verbose_name = "تاریخچهٔ واگذاری مشتری"
+        verbose_name_plural = "تاریخچهٔ واگذاری مشتری"
 
 
 class CustomerTransaction(models.Model):
@@ -226,6 +276,21 @@ class CustomerActivity(models.Model):
         (KIND_STAGE, "تغییر مرحله"),
     ]
 
+    CHANNEL_PHONE = "phone"
+    CHANNEL_WHATSAPP = "whatsapp"
+    CHANNEL_TELEGRAM = "telegram"
+    CHANNEL_BALE = "bale"
+    CHANNEL_RUBIKA = "rubika"
+    CHANNEL_OTHER = "other"
+    CHANNEL_CHOICES = [
+        (CHANNEL_PHONE, "تلفن"),
+        (CHANNEL_WHATSAPP, "واتساپ"),
+        (CHANNEL_TELEGRAM, "تلگرام"),
+        (CHANNEL_BALE, "بله"),
+        (CHANNEL_RUBIKA, "روبیکا"),
+        (CHANNEL_OTHER, "سایر"),
+    ]
+
     customer = models.ForeignKey(
         Customer,
         on_delete=models.CASCADE,
@@ -247,6 +312,13 @@ class CustomerActivity(models.Model):
         db_index=True,
         verbose_name="نوع",
     )
+    channel = models.CharField(
+        max_length=16,
+        choices=CHANNEL_CHOICES,
+        blank=True,
+        default="",
+        verbose_name="کانال ارتباط",
+    )
     body = models.TextField(
         blank=True,
         default="",
@@ -267,6 +339,12 @@ class CustomerActivity(models.Model):
         default="",
         db_index=True,
         verbose_name="شناسه پیام بیرونی",
+    )
+    mobile_event_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        verbose_name="شناسه ثبت موبایل",
     )
     occurred_at = models.DateTimeField(
         default=timezone.now,
@@ -317,6 +395,38 @@ class CustomerActivity(models.Model):
 
     def __str__(self):
         return f"{self.get_kind_display()} - {self.customer.name}"
+
+
+class CrmCustomerMobilePreference(models.Model):
+    """Per-user mobile CRM favorites and direct chat links."""
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.CASCADE,
+        related_name="mobile_preferences",
+        verbose_name="مشتری",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="crm_mobile_customer_preferences",
+        verbose_name="کاربر CRM",
+    )
+    is_favorite = models.BooleanField(default=False, db_index=True, verbose_name="مشتری ویژه")
+    bale_chat_url = models.CharField(max_length=500, blank=True, default="", verbose_name="لینک چت بله")
+    rubika_chat_url = models.CharField(max_length=500, blank=True, default="", verbose_name="لینک چت روبیکا")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "customer"], name="uniq_crm_mobile_customer_pref"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "is_favorite"], name="crm_mobile_favorite_idx"),
+        ]
+        verbose_name = "ترجیحات CRM موبایل"
+        verbose_name_plural = "ترجیحات CRM موبایل"
 
     @property
     def has_open_follow_up(self):
@@ -472,13 +582,19 @@ class CrmFollowUp(models.Model):
     ]
     CHANNEL_CALL = "call"
     CHANNEL_SMS = "sms"
+    CHANNEL_WHATSAPP = "whatsapp"
+    CHANNEL_TELEGRAM = "telegram"
     CHANNEL_BALE = "bale"
+    CHANNEL_RUBIKA = "rubika"
     CHANNEL_MEETING = "meeting"
     CHANNEL_OTHER = "other"
     CHANNEL_CHOICES = [
         (CHANNEL_CALL, "تماس"),
         (CHANNEL_SMS, "پیامک"),
+        (CHANNEL_WHATSAPP, "واتساپ"),
+        (CHANNEL_TELEGRAM, "تلگرام"),
         (CHANNEL_BALE, "بله"),
+        (CHANNEL_RUBIKA, "روبیکا"),
         (CHANNEL_MEETING, "جلسه"),
         (CHANNEL_OTHER, "سایر"),
     ]
@@ -519,7 +635,7 @@ class CrmFollowUp(models.Model):
 
 
 class CrmTask(models.Model):
-    """Internal CRM work. Tasks never send an external message."""
+    """Internal CRM work; only the responsible operator can receive due reminders."""
 
     STATUS_OPEN = "open"
     STATUS_COMPLETED = "completed"
@@ -712,3 +828,111 @@ class CrmSyncEvent(models.Model):
 
     def __str__(self):
         return f"{self.source_type}:{self.source_id} ({self.status})"
+
+
+class CrmMobileCallPolicy(models.Model):
+    MODE_ASK = "ASK"
+    MODE_OFF = "OFF"
+    MODE_CHOICES = [(MODE_ASK, "پرسش"), (MODE_OFF, "خاموش")]
+    ACTION_REGISTER = "REGISTER"
+    ACTION_DISCARD = "DISCARD"
+    ACTION_CHOICES = [(ACTION_REGISTER, "ثبت"), (ACTION_DISCARD, "ثبت نکن")]
+
+    role_code = models.CharField(max_length=32, unique=True)
+    mode = models.CharField(max_length=8, choices=MODE_CHOICES, default=MODE_ASK)
+    default_action = models.CharField(max_length=8, choices=ACTION_CHOICES, default=ACTION_DISCARD)
+    revision = models.PositiveIntegerField(default=1)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "سیاست ثبت تماس CRM موبایل"
+        verbose_name_plural = "سیاست‌های ثبت تماس CRM موبایل"
+
+
+class CrmMobileCallPolicyRevision(models.Model):
+    policy = models.ForeignKey(CrmMobileCallPolicy, on_delete=models.PROTECT, related_name="history")
+    revision = models.PositiveIntegerField()
+    mode = models.CharField(max_length=8, choices=CrmMobileCallPolicy.MODE_CHOICES)
+    default_action = models.CharField(max_length=8, choices=CrmMobileCallPolicy.ACTION_CHOICES)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-revision"]
+        constraints = [
+            models.UniqueConstraint(fields=["policy", "revision"], name="customers_mobile_policy_revision_unique")
+        ]
+
+
+class CrmMobileCallCapture(models.Model):
+    STATUS_LINKED = "linked"
+    STATUS_PENDING_REVIEW = "pending_review"
+    STATUS_REJECTED = "rejected"
+    STATUS_CHOICES = [
+        (STATUS_LINKED, "متصل"),
+        (STATUS_PENDING_REVIEW, "در انتظار بررسی"),
+        (STATUS_REJECTED, "ردشده و پاک‌سازی‌شده"),
+    ]
+    DIRECTION_CHOICES = [("inbound", "دریافتی"), ("outbound", "ارسالی")]
+
+    event_uuid = models.UUIDField(unique=True)
+    customer_profile = models.JSONField(default=dict, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="crm_mobile_call_captures"
+    )
+    role_code = models.CharField(max_length=32)
+    policy_revision = models.ForeignKey(CrmMobileCallPolicyRevision, on_delete=models.PROTECT)
+    source = models.CharField(max_length=12, default="MANUAL")
+    phone = models.CharField(max_length=32, blank=True, default="")
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    outcome = models.CharField(max_length=32, blank=True, default="other")
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    call_at = models.DateTimeField()
+    consented_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    summary = models.TextField()
+    next_action = models.CharField(max_length=255, blank=True, default="")
+    next_due_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING_REVIEW, db_index=True)
+    customer = models.ForeignKey(
+        Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name="mobile_call_captures"
+    )
+    activity = models.OneToOneField(
+        CustomerActivity, null=True, blank=True, on_delete=models.SET_NULL, related_name="mobile_call_capture"
+    )
+    task = models.OneToOneField(CrmTask, null=True, blank=True, on_delete=models.SET_NULL, related_name="mobile_call_capture")
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="crm_mobile_call_resolutions"
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["actor", "status", "created_at"])]
+        verbose_name = "ثبت تماس CRM موبایل"
+        verbose_name_plural = "ثبت‌های تماس CRM موبایل"
+
+
+class CrmDueReminder(models.Model):
+    """One private Bale delivery attempt per work item, responsible user and deadline."""
+
+    kind = models.CharField(max_length=12)
+    work_id = models.PositiveBigIntegerField()
+    due_at = models.DateTimeField()
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    status = models.CharField(max_length=10, default="sending")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "work_id", "due_at", "recipient"],
+                name="customers_unique_due_reminder",
+            ),
+        ]

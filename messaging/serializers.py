@@ -3,7 +3,7 @@ import hashlib
 
 from rest_framework import serializers
 
-from accounts.admin_sections import ALL, effective_admin_sections
+from customers.bale_reminders import can_receive_crm_bale_reminders
 
 from .models import (
     BaleUserBinding,
@@ -243,14 +243,13 @@ class BaleUserBindingSerializer(serializers.ModelSerializer):
 
     def validate_bale_user_id(self, value):
         normalized = str(value or "").strip()
-        if not normalized or len(normalized) > 40 or not normalized.isascii() or not normalized.isdigit():
+        if not re.fullmatch(r"[1-9][0-9]{0,39}", normalized):
             raise serializers.ValidationError("شناسه کاربر بله معتبر نیست.")
         return normalized
 
     def validate_user(self, user):
         if not user.is_active:
             raise serializers.ValidationError("کاربر سایت غیرفعال است.")
-        sections = effective_admin_sections(user)
-        if sections != ALL and not ({"crm", "crm-funnel"} & sections):
+        if not can_receive_crm_bale_reminders(user):
             raise serializers.ValidationError("کاربر سایت دسترسی فعال CRM ندارد.")
         return user
