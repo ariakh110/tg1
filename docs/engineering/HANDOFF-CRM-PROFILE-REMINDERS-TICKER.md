@@ -21,14 +21,20 @@
 - Django check و بررسی سازگاری migration، ESLint فایل‌های تغییرکرده و ترتیب عددی نوار در دادهٔ نمونه موفق شدند. Flutter analyze بدون خطا تمام شد.
 
 
-## بستهٔ WinSCP و فرمان PuTTY
+## WinSCP and PuTTY
 
-از پوشهٔ `C:/Users/aria/deploy/crm-profile-reminders-ticker-20261127` هر سه فایل `backend.tar.gz`، `frontend.tar.gz` و `update.sh` را در `/home/deploy/kavehmetal-release/` جایگزین کنید. هر سه فایل باید از همین نسخه باشند. بررسی SHA-256 در اسکریپت قرار دارد.
+Upload these three files from C:/Users/aria/deploy/crm-profile-reminders-ticker-20261127-r2 to /home/deploy/kavehmetal-release/ in binary mode:
+
+- crm-profile-20261127-backend.tar.gz
+- crm-profile-20261127-frontend.tar.gz
+- deploy-crm-profile-20261127.sh
+
+Run this single command in PuTTY:
 
 ```bash
-cd /home/deploy/kavehmetal-release && sudo systemd-run --unit=tirexa-crm-profile-deploy-20261127 --collect /bin/bash "$PWD/update.sh" && sudo journalctl -u tirexa-crm-profile-deploy-20261127 -n 40 -f
+cd /home/deploy/kavehmetal-release && sudo systemd-run --unit=tirexa-crm-profile-deploy-20261127-r2 --collect /bin/bash "$PWD/deploy-crm-profile-20261127.sh" && sudo journalctl -u tirexa-crm-profile-deploy-20261127-r2 -n 40 -f
 ```
 
-پس از دیدن `CRM_PROFILE_DEPLOY_EXIT=0`، برای برگشت به خط فرمان Ctrl+C بزنید. اگر PuTTY قطع شد، فرمان `sudo journalctl -u tirexa-crm-profile-deploy-20261127 -n 100 --no-pager` گزارش را نشان می‌دهد.
+The release prints "CRM profile 20261127 r2: verifying package" and finishes successfully with CRM_PROFILE_DEPLOY_EXIT=0. Ctrl+C exits the log view. The service continues if the terminal disconnects.
 
-اسکریپت از PostgreSQL و فایل‌های بک‌اند نسخهٔ پشتیبان می‌گیرد و محل آن را در گزارش چاپ می‌کند. فرانت از روی سورس فعلی سرور و فایل‌های تغییرکرده در staging ساخته می‌شود. بسته و سینتکس Bash و Python محلی بررسی شدند. اجرای واقعی روی سرور در این مرحله انجام نشده است.
+The original attempt invoked the legacy update.sh and stopped before frontend deployment with exit 2. "No migrations to apply" from that run did not verify customers.0012. The revised filenames identify the scoped release. Archive digests and Bash syntax were checked locally. Production execution of r2 is pending.
